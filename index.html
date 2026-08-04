@@ -9,6 +9,19 @@
 <body>
   <canvas id="bg-canvas" class="pixel"></canvas>
   <div id="app">
+    <!-- 상단 HUD: 진행도(조각)·현재 위치·지도·가방·설정 (타이틀에선 숨김) -->
+    <header id="hud" hidden>
+      <div class="hud-left">
+        <span id="hud-stage" class="hud-chip">출항 준비</span>
+      </div>
+      <div class="hud-right">
+        <span id="hud-pieces" class="hud-chip gold" title="모은 도안 조각">📜 0/7</span>
+        <button id="btn-map" class="hud-btn" title="지도">🗺️</button>
+        <button id="btn-inv" class="hud-btn" title="가방">🎒</button>
+        <button id="btn-hud-settings" class="hud-btn" title="설정">⚙️</button>
+      </div>
+    </header>
+
     <!-- 타이틀 화면 -->
     <section id="screen-title" class="screen active">
       <div class="title-wrap">
@@ -16,19 +29,16 @@
         <h1 class="game-title">그리는 자의<br/>바다</h1>
         <p class="game-desc">진심을 담아 그린 그림은 실체가 된다.</p>
       </div>
-      <button id="btn-start" class="btn-primary btn-start">▶ 모험 시작</button>
+      <div class="title-menu">
+        <button id="btn-continue" class="btn-primary" hidden>▶ 이어하기</button>
+        <button id="btn-start" class="btn-primary btn-start">▶ 새 모험</button>
+        <button id="btn-title-settings" class="btn-tool">⚙ 설정</button>
+      </div>
       <p class="title-credit">NAN 2026 · TEAM RIVER</p>
     </section>
 
-    <!-- 스토리(대사) 화면 -->
-    <section id="screen-story" class="screen story-screen">
-      <div id="story-visual" class="story-visual">🌊</div>
-      <div class="story-box">
-        <div id="story-name" class="story-name">???</div>
-        <div id="story-text" class="story-text"></div>
-        <div class="story-hint">▼ 클릭해서 계속</div>
-      </div>
-    </section>
+    <!-- 컷씬 화면 (배경 + 대화 오버레이만) -->
+    <section id="screen-scene" class="screen"></section>
 
     <!-- 배 그리기 화면 -->
     <section id="screen-ship" class="screen">
@@ -39,10 +49,27 @@
         <canvas id="ship-canvas"></canvas>
         <div id="ship-log" class="battle-log">돛과 선체, 키를 갖추면 더 튼튼한 배가 된다.</div>
         <div class="draw-tools">
+          <button id="btn-guide" class="btn-tool">📐 도안</button>
           <button id="btn-ship-clear" class="btn-tool">지우기</button>
           <button id="btn-ship-submit" class="btn-primary">출항!</button>
         </div>
       </div>
+    </section>
+
+    <!-- 항해 화면 -->
+    <section id="screen-sail" class="screen screen-canvas">
+      <canvas id="sail-canvas" class="pixel"></canvas>
+      <div id="sail-objective" class="float-chip top"></div>
+      <button id="sail-prompt" class="prompt-chip" hidden></button>
+      <div class="key-hint">방향키/WASD 항해 · Space 상륙</div>
+    </section>
+
+    <!-- 섬 탐험 화면 -->
+    <section id="screen-island" class="screen screen-canvas">
+      <canvas id="island-canvas" class="pixel"></canvas>
+      <div id="island-name" class="float-chip top"></div>
+      <button id="island-prompt" class="prompt-chip" hidden></button>
+      <div class="key-hint">←→/AD 이동 · Space 말 걸기</div>
     </section>
 
     <!-- 전투 화면 -->
@@ -79,14 +106,39 @@
       </div>
     </section>
 
-    <!-- 승리 화면 -->
+    <!-- 승리(조각 획득) 화면 -->
     <section id="screen-victory" class="screen">
-      <h1>🏆 승리!</h1>
-      <p class="game-desc">가르가 제정신을 찾았다!<br/>수호자가 도안 조각을 건네준다.</p>
-      <div class="blueprint-piece">📜 도안 조각 ① — 강화 선체</div>
-      <p class="game-desc small">— 사전 과제 데모는 여기까지! 다음 바다에서 계속... —</p>
-      <button id="btn-restart" class="btn-primary">처음부터 다시</button>
+      <h1 id="victory-title">🏆 승리!</h1>
+      <p id="victory-desc" class="game-desc"></p>
+      <div id="victory-piece" class="blueprint-piece"></div>
+      <p id="victory-sub" class="game-desc small"></p>
+      <button id="btn-victory-next" class="btn-primary">⛵ 항해를 계속한다</button>
     </section>
+  </div>
+
+  <!-- 대화 오버레이 — 어느 화면 위에서든 뜬다 (스타듀밸리식 하단 대화창) -->
+  <div id="dialogue-layer" hidden>
+    <div id="dlg-visual" class="dlg-visual"></div>
+    <div class="dlg-box">
+      <div id="dlg-portrait" class="dlg-portrait" hidden></div>
+      <div class="dlg-body">
+        <div id="dlg-name" class="dlg-name">???</div>
+        <div id="dlg-text" class="dlg-text"></div>
+        <div class="dlg-hint">▼ Space / 클릭</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 모달(설정/지도/가방) -->
+  <div id="modal-root" hidden>
+    <div id="modal-backdrop" class="modal-backdrop"></div>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <span id="modal-title">설정</span>
+        <button id="modal-close" class="btn-tool small">✕</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
   </div>
 
   <script type="module" src="src/main.js"></script>

@@ -313,3 +313,238 @@ body::after {
   font-size: 18px;
   color: var(--accent);
 }
+
+/* ---- 상단 HUD ---- */
+#hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  pointer-events: none;
+}
+#hud .hud-left, #hud .hud-right { display: flex; gap: 8px; align-items: center; pointer-events: auto; }
+
+.hud-chip {
+  padding: 5px 12px;
+  font-size: 13px;
+  background: var(--panel);
+  border: 2px solid var(--panel-border);
+  box-shadow: 0 0 0 2px var(--ink);
+  white-space: nowrap;
+}
+.hud-chip.gold { color: var(--accent); }
+
+.hud-btn {
+  width: 38px;
+  height: 38px;
+  font-size: 17px;
+  font-family: inherit;
+  background: var(--panel);
+  border: 2px solid var(--panel-border);
+  box-shadow: 0 3px 0 var(--ink);
+  cursor: pointer;
+  line-height: 1;
+}
+.hud-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+
+body.hud-on #app { padding-top: 50px; }
+
+/* ---- 타이틀 메뉴 ---- */
+.title-menu { display: flex; flex-direction: column; gap: 12px; align-items: center; min-width: 240px; }
+.title-menu .btn-primary, .title-menu .btn-tool { width: 100%; }
+
+/* ---- 전체 캔버스 화면 (항해/섬 탐험) ---- */
+.screen-canvas { padding: 0; position: relative; }
+.screen-canvas canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.float-chip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  font-size: 13px;
+  background: var(--panel);
+  border: 2px solid var(--panel-border);
+  box-shadow: 0 0 0 2px var(--ink);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.float-chip.top { top: 10px; }
+body.hud-on .float-chip.top { top: 54px; }
+
+.prompt-chip {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  padding: 12px 22px;
+  font-size: 16px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--accent);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  animation: hint-bounce 1.2s step-end infinite;
+}
+.prompt-chip:active { transform: translate(-50%, 3px); box-shadow: 0 1px 0 var(--ink); }
+
+.key-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  opacity: .55;
+  text-shadow: 2px 2px 0 var(--ink);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ---- 대화 오버레이 (스타듀밸리식 하단 대화창) ---- */
+#dialogue-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 18px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dlg-visual {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(80px, 18vw, 150px);
+  pointer-events: none;
+}
+
+.dlg-box {
+  width: min(720px, 100%);
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  background: var(--panel);
+  border: 3px solid var(--panel-border);
+  box-shadow: 0 0 0 3px var(--ink), 6px 6px 0 rgba(0,0,0,.45);
+  padding: 14px 18px 10px;
+  min-height: 120px;
+}
+
+.dlg-portrait {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: rgba(9, 12, 34, .6);
+  border: 2px solid var(--panel-border);
+  box-shadow: 0 0 0 2px var(--ink);
+  align-self: center;
+}
+
+.dlg-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.dlg-name {
+  align-self: flex-start;
+  padding: 2px 10px;
+  margin-bottom: 8px;
+  background: var(--accent);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  font-size: 14px;
+}
+.dlg-text { min-height: 3em; line-height: 1.7; font-size: 17px; flex: 1; }
+.dlg-hint { text-align: right; font-size: 12px; opacity: .55; animation: hint-bounce 1.2s step-end infinite; }
+
+/* ---- 모달 (설정/지도/가방) ---- */
+#modal-root { position: fixed; inset: 0; z-index: 45; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); }
+
+.modal-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 3px solid var(--panel-border);
+  box-shadow: 0 0 0 3px var(--ink), 8px 8px 0 rgba(0,0,0,.5);
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 2px solid var(--panel-border);
+  font-size: 17px;
+  color: var(--accent);
+}
+.btn-tool.small { padding: 6px 12px; font-size: 14px; }
+
+.modal-body { padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+
+.setting-row { display: flex; align-items: center; gap: 12px; font-size: 15px; }
+.setting-row label { flex: 0 0 92px; }
+.setting-row input[type="range"] { flex: 1; accent-color: var(--accent); height: 22px; }
+.setting-row .val { flex: 0 0 44px; text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.map-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 2px solid rgba(59, 74, 140, .5);
+  background: rgba(9, 12, 34, .4);
+}
+.map-row .map-status { flex: 0 0 auto; }
+.map-row .map-name { flex: 1; }
+.map-row.next { border-color: var(--accent); }
+.map-row.next .map-name { color: var(--accent); }
+.map-row.locked { opacity: .45; }
+
+.inv-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.inv-slot {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+  text-align: center;
+  border: 2px solid rgba(59, 74, 140, .5);
+  background: rgba(9, 12, 34, .4);
+  padding: 4px;
+}
+.inv-slot .ico { font-size: 22px; }
+.inv-slot.empty { opacity: .35; }
+.inv-slot.got { border-color: var(--accent); }
+
+.inv-item { display: flex; gap: 10px; align-items: center; font-size: 13px; padding: 6px 8px; background: rgba(9,12,34,.4); border: 2px solid rgba(59,74,140,.5); }
+.inv-item .ico { font-size: 20px; }
+.inv-item .desc { opacity: .7; font-size: 12px; }
+
+.modal-sep { border: none; border-top: 2px dashed rgba(59, 74, 140, .6); margin: 2px 0; }
+.modal-note { font-size: 12px; opacity: .6; line-height: 1.6; }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
