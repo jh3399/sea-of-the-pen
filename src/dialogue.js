@@ -1,8 +1,9 @@
-// 대사(스토리 씬) 엔진.
-// runDialogue(lines) — 한 줄씩 타자기 효과로 출력, 클릭하면 다음으로. 끝나면 resolve.
-// line: { speaker: '세렌', sprite?: 'seren', visual?: '🌊', text: '...', image?: dataUrl, imageCls?: 'broken', bg?: 'harbor' }
-// sprite(픽셀아트) > image(그린 그림) > visual(이모지) > 없음(배경만) 순으로 표시.
-// bg가 있으면 그 줄에서 배경 씬이 크로스페이드로 바뀐다 (씬 키는 bgscenes.js 참고).
+// 대사 엔진 — 화면 위에 뜨는 오버레이(#dialogue-layer). 어느 화면에서든 쓸 수 있다.
+// runDialogue(lines) — 한 줄씩 타자기 효과, 클릭/Space/Enter로 진행. 끝나면 resolve.
+// line: { speaker, sprite?, visual?, image?, imageCls?, bg?, text }
+// - sprite  → 대화창 왼쪽 초상화 (스타듀밸리식)
+// - image/visual → 화면 중앙 큰 비주얼 (컷씬용: 그린 배 등)
+// - bg → 그 줄에서 배경 씬 크로스페이드 (bgscenes.js 키)
 
 import { spriteCanvas } from './sprites.js';
 import { setScene } from './pixelbg.js';
@@ -10,15 +11,20 @@ import { setScene } from './pixelbg.js';
 const TYPE_SPEED_MS = 22;
 
 let els = null;
-let clickHandler = null;
+let blipFn = null;   // 타자기 효과음 (main.js가 audio.sfx를 꽂아준다)
+
+export function setDialogueBlip(fn) {
+  blipFn = fn;
+}
 
 function ensureEls() {
   if (els) return;
   els = {
-    screen: document.querySelector('#screen-story'),
-    visual: document.querySelector('#story-visual'),
-    name: document.querySelector('#story-name'),
-    text: document.querySelector('#story-text'),
+    layer: document.querySelector('#dialogue-layer'),
+    visual: document.querySelector('#dlg-visual'),
+    portrait: document.querySelector('#dlg-portrait'),
+    name: document.querySelector('#dlg-name'),
+    text: document.querySelector('#dlg-text'),
   };
 }
 
@@ -34,11 +40,19 @@ export function runDialogue(lines) {
       els.name.textContent = line.speaker || '';
       els.name.style.visibility = line.speaker ? 'visible' : 'hidden';
 
-      els.visual.innerHTML = '';
+      // 초상화 (대화창 안)
+      els.portrait.innerHTML = '';
       if (line.sprite) {
-        const c = spriteCanvas(line.sprite, 8);
-        if (c) { c.classList.add('story-sprite'); els.visual.appendChild(c); }
-      } else if (line.image) {
+        const c = spriteCanvas(line.sprite, 4);
+        if (c) els.portrait.appendChild(c);
+        els.portrait.hidden = !c;
+      } else {
+        els.portrait.hidden = true;
+      }
+
+      // 중앙 비주얼 (컷씬용 이미지/이모지)
+      els.visual.innerHTML = '';
+      if (line.image) {
         const img = document.createElement('img');
         img.src = line.image;
         img.className = `story-img pixel ${line.imageCls || ''}`;
@@ -54,6 +68,7 @@ export function runDialogue(lines) {
       typingId = setInterval(() => {
         i += 1;
         els.text.textContent = fullText.slice(0, i);
+        if (i % 3 === 1 && blipFn) blipFn();
         if (i >= fullText.length) clearInterval(typingId);
       }, TYPE_SPEED_MS);
     };
@@ -67,18 +82,36 @@ export function runDialogue(lines) {
       }
       idx += 1;
       if (idx >= lines.length) {
-        els.screen.removeEventListener('click', clickHandler);
+        cleanup();
         resolve();
         return;
       }
       showLine(lines[idx]);
     };
 
-    clickHandler = advance;
-    els.screen.addEventListener('click', clickHandler);
+    const onClick = () => advance();
+    const onKey = (e) => {
+      if (e.code === 'Space' || e.code === 'Enter') {
+        e.preventDefault();
+        advance();
+      }
+    };
 
-    document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
-    els.screen.classList.add('active');
+    const cleanup = () => {
+      clearInterval(typingId);
+      els.layer.removeEventListener('click', onClick);
+      window.removeEventListener('keydown', onKey);
+      els.layer.hidden = true;
+    };
+
+    els.layer.addEventListener('click', onClick);
+    window.addEventListener('keydown', onKey);
+    els.layer.hidden = false;
     advance(); // 첫 줄 표시
   });
+}
+
+export function isDialogueOpen() {
+  ensureEls();
+  return !els.layer.hidden;
 }
