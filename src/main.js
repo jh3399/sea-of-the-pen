@@ -10,14 +10,14 @@ const $ = (sel) => document.querySelector(sel);
 
 const DRAW_TIME = 20; // 전투 드로잉 제한 시간(초)
 
-const BOSS_ORO = {
-  name: '황금 재규어 오로',
-  sprite: 'oro',
+const BOSS_GAR = {
+  name: '황금 재규어 가르',
+  sprite: 'gar',
   maxHp: 300,
   weaknesses: ['weapon'],
   resists: [],
   drawPrompt: '⚔️ 무기를 그려라!',
-  introLog: '피기: "저 재규어는 무기에 약해! 뭐든 무기를 그려봐!"',
+  introLog: '세렌: "저 재규어는 무기에 약해! 뭐든 무기를 그려봐!"',
   attackName: '할퀴기',
   attackMin: 12,
   attackMax: 26,
@@ -34,7 +34,7 @@ const state = {
   judging: false,
   battleResolve: null,
   shipResolve: null,
-  boss: BOSS_ORO,
+  boss: BOSS_GAR,
 };
 
 const shipCanvas = new DrawingCanvas($('#ship-canvas'));
@@ -64,7 +64,7 @@ function drawShip({ prompt, hint, button, judged }) {
 async function onShipSubmit() {
   if (!state.shipResolve) return;
   if (shipCanvas.isEmpty()) {
-    $('#ship-log').textContent = '피기: "빈 바다에 몸만 띄울 셈이야? 뭐라도 그려!"';
+    $('#ship-log').textContent = '세렌: "빈 바다에 몸만 띄울 셈이야? 뭐라도 그려!"';
     return;
   }
   const { resolve, judged } = state.shipResolve;
@@ -79,7 +79,7 @@ async function onShipSubmit() {
 
   $('#btn-ship-submit').disabled = true;
   shipCanvas.enabled = false;
-  $('#ship-log').textContent = '피기: "어디 보자... (감정 중)"';
+  $('#ship-log').textContent = '세렌: "어디 보자... (감정 중)"';
   const result = await judge(
     shipCanvas.stats(), png,
     '배 그리기 — 배로서의 완성도(선체·돛·키가 갖춰졌는지)를 평가하라. 배가 아니면 낮은 점수.',
@@ -162,12 +162,12 @@ async function submitAttack(auto = false) {
   // 시간 초과인데 빈 캔버스면: 공격 실패, 보스만 반격
   if (battleCanvas.isEmpty()) {
     if (!auto) {
-      log('피기: "아무것도 안 그렸잖아! 뭐라도 그려봐!"');
+      log('세렌: "아무것도 안 그렸잖아! 뭐라도 그려봐!"');
       return;
     }
     state.judging = true;
     clearInterval(state.timerId);
-    log('피기: "시간 초과야! 정신 차려!"');
+    log('세렌: "시간 초과야! 정신 차려!"');
     setTimeout(() => bossCounterattack(), 700);
     return;
   }
@@ -176,7 +176,7 @@ async function submitAttack(auto = false) {
   clearInterval(state.timerId);
   battleCanvas.enabled = false;
   $('#btn-submit').disabled = true;
-  log('피기: "어디 보자... (감정 중)"');
+  log('세렌: "어디 보자... (감정 중)"');
 
   const result = await judge(battleCanvas.stats(), battleCanvas.toPngDataUrl(), state.boss.situation);
   const damage = calcDamage(result, state.boss);
@@ -188,7 +188,7 @@ async function submitAttack(auto = false) {
 
   state.bossHp -= damage;
   updateBars();
-  log(`피기: "${result.comment}" (${result.label} · ${result.score}점 · ${damage} 데미지!)`);
+  log(`세렌: "${result.comment}" (${result.label} · ${result.score}점 · ${damage} 데미지!)`);
 
   if (state.bossHp <= 0) {
     endBattle(true);
@@ -242,21 +242,21 @@ const nailAttack = (shipPixel) => [
 
 const PIGGY_MEET = [
   { speaker: '???', text: '이봐! 정신 차려! 일어나라고!' },
-  { speaker: '피기', sprite: 'piggy', text: '나는 피기. 전설의 배 "바람호"의 뱃머리... 였던 몸이지. 지금은 보다시피 통나무 신세지만.' },
-  { speaker: '피기', sprite: 'piggy', text: '네가 그린 배, 봤어. 솜씨는 솔직히 엉망인데... 이상하게 진심이 담겨 있더라.' },
-  { speaker: '피기', sprite: 'piggy', text: '"손이 아니라 마음으로 그리는 자가 나타나면, 바람호는 다시 떠오른다" — 모루 영감의 예언이야. 어쩌면 너일지도.' },
-  { speaker: '피기', sprite: 'piggy', text: '배를 다시 그려봐. 이번엔 진심을 담아서 — 선체, 돛, 키까지 제대로!' },
+  { speaker: '세렌', sprite: 'seren', text: '나는 세렌. 전설의 배 "바람호"의 뱃머리... 였던 몸이지. 지금은 보다시피 통나무 신세지만.' },
+  { speaker: '세렌', sprite: 'seren', text: '네가 그린 배, 봤어. 솜씨는 솔직히 엉망인데... 이상하게 진심이 담겨 있더라.' },
+  { speaker: '세렌', sprite: 'seren', text: '"손이 아니라 마음으로 그리는 자가 나타나면, 바람호는 다시 떠오른다" — 모루 영감의 예언이야. 어쩌면 너일지도.' },
+  { speaker: '세렌', sprite: 'seren', text: '배를 다시 그려봐. 이번엔 진심을 담아서 — 선체, 돛, 키까지 제대로!' },
 ];
 
 const sailLines = (result, shipPixel) => [
-  { speaker: '피기', sprite: 'piggy', text: `오오...! ${result ? `"${result.comment}"` : '좋아, 이 정도면 바다에 띄울 만해!'}` },
+  { speaker: '세렌', sprite: 'seren', text: `오오...! ${result ? `"${result.comment}"` : '좋아, 이 정도면 바다에 띄울 만해!'}` },
   { speaker: '', image: shipPixel, text: '좋아, 출항이다! 첫 목적지는 황금 수풀섬 — 도안 조각의 기운이 느껴져!' },
-  { speaker: '피기', sprite: 'piggy', text: '조심해. 섬의 수호자 오로가 네일의 저주로 폭주하고 있어. 무기를 그려서 정신 차리게 해주자!' },
+  { speaker: '세렌', sprite: 'seren', text: '조심해. 섬의 수호자 가르가 네일의 저주로 폭주하고 있어. 무기를 그려서 정신 차리게 해주자!' },
 ];
 
 const DEFEAT = [
-  { speaker: '피기', sprite: 'piggy', text: '배가 버티질 못해! 일단 후퇴다!' },
-  { speaker: '피기', sprite: 'piggy', text: '괜찮아. 우리에겐 펜이 있잖아? 다시 그리면 돼 — 이번엔 더 튼튼하게!' },
+  { speaker: '세렌', sprite: 'seren', text: '배가 버티질 못해! 일단 후퇴다!' },
+  { speaker: '세렌', sprite: 'seren', text: '괜찮아. 우리에겐 펜이 있잖아? 다시 그리면 돼 — 이번엔 더 튼튼하게!' },
 ];
 
 async function gameFlow() {
@@ -272,7 +272,7 @@ async function gameFlow() {
   state.shipPng = first.png;
   state.shipPixel = first.pixel;
 
-  // 2) 네일의 습격 → 피기 등장
+  // 2) 네일의 습격 → 세렌 등장
   await runDialogue(nailAttack(first.pixel));
   await runDialogue(PIGGY_MEET);
 
@@ -290,7 +290,7 @@ async function gameFlow() {
   await runDialogue(sailLines(second.result, second.pixel));
 
   // 4) 보스전 — 질 때마다 배를 다시 그리고 재도전
-  let won = await runBattle(BOSS_ORO);
+  let won = await runBattle(BOSS_GAR);
   while (!won) {
     await runDialogue(DEFEAT);
     const retry = await drawShip({
@@ -302,7 +302,7 @@ async function gameFlow() {
     state.shipPng = retry.png;
     state.shipPixel = retry.pixel;
     state.shipMaxHp = 100 + (retry.result?.score ?? 50);
-    won = await runBattle(BOSS_ORO);
+    won = await runBattle(BOSS_GAR);
   }
 
   showScreen('#screen-victory');

@@ -1,16 +1,16 @@
-// 그림 판정(피기의 감정) 모듈.
+// 그림 판정(세렌의 감정) 모듈.
 // 우선순위: 프록시(JUDGE_ENDPOINT) → 로컬 개발 키(직접 Gemini 호출) → mock(스트로크 통계).
 // 판정 결과 형식:
 //   { label: '검', element: 'weapon'|'fire'|'water'|'ice'|'light'|'shield'|'wind'|'none',
-//     score: 0~100, comment: '피기의 한마디', source: 'ai'|'mock' }
+//     score: 0~100, comment: '세렌의 한마디', source: 'ai'|'mock' }
 
 import { CONFIG, devKey } from './config.js';
 
 // situation: 지금 뭘 그리라고 했는지 (판정 문맥). 예: '보스전 — 무기를 그리라고 요청함'
 function buildPrompt(situation) {
-  return `너는 게임 '그리는 자의 바다'의 그림 감정 정령 '피기'다.
+  return `너는 게임 '그리는 자의 바다'의 그림 감정 정령 '세렌'다.
 플레이어(대부분 그림 초보)가 캔버스에 그린 낙서 이미지를 보고, 반드시 아래 JSON 형식으로만 답하라.
-{"label":"<그린 것의 이름, 한국어 명사 1~6글자>","element":"<weapon|fire|water|ice|light|shield|wind|none>","score":<0~100 정수>,"comment":"<피기의 반응 한 문장, 반말, 유쾌하게>"}
+{"label":"<그린 것의 이름, 한국어 명사 1~6글자>","element":"<weapon|fire|water|ice|light|shield|wind|none>","score":<0~100 정수>,"comment":"<세렌의 반응 한 문장, 반말, 유쾌하게>"}
 
 규칙:
 - 낙서 수준이어도 최대한 관대하게 무엇인지 추측하라. 도저히 모르겠으면 label은 "낙서", element는 "none".
