@@ -7,13 +7,17 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <canvas id="bg-canvas" class="pixel"></canvas>
   <div id="app">
     <!-- 타이틀 화면 -->
     <section id="screen-title" class="screen active">
-      <h1 class="game-title">그리는 자의 바다</h1>
-      <p class="game-subtitle">Draw the Sea</p>
-      <p class="game-desc">진심을 담아 그린 그림은 실체가 된다.<br/>그림을 그려 항해하고, 싸우고, 전설의 보물을 찾아라!</p>
-      <button id="btn-start" class="btn-primary">모험 시작</button>
+      <div class="title-wrap">
+        <p class="game-subtitle">~ DRAW THE SEA ~</p>
+        <h1 class="game-title">그리는 자의<br/>바다</h1>
+        <p class="game-desc">진심을 담아 그린 그림은 실체가 된다.</p>
+      </div>
+      <button id="btn-start" class="btn-primary btn-start">▶ 모험 시작</button>
+      <p class="title-credit">NAN 2026 · TEAM RIVER</p>
     </section>
 
     <!-- 스토리(대사) 화면 -->
@@ -49,7 +53,7 @@
             <span id="boss-name" class="boss-name">???</span>
             <div class="hp-bar"><div id="boss-hp" class="hp-fill"></div></div>
           </div>
-          <div id="boss-sprite" class="boss-sprite">🐆</div>
+          <div id="boss-sprite" class="boss-sprite"></div>
           <div id="damage-float" class="damage-float"></div>
         </div>
         <div class="ship-row">

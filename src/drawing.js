@@ -95,6 +95,32 @@ export class DrawingCanvas {
     };
   }
 
+  // 그림 → 도트 스프라이트 변환: 저해상도로 축소 후 잉크 픽셀을 지정 색으로 리컬러.
+  // 확대 표시는 CSS(image-rendering: pixelated)가 담당.
+  toPixelDataUrl(targetW = 72, ink = '#f5e6c8') {
+    if (this.canvas.width === 0 || this.canvas.height === 0) this._resize();
+    const srcW = Math.max(1, this.canvas.width);
+    const srcH = Math.max(1, this.canvas.height);
+    const w = targetW;
+    const h = Math.max(10, Math.round(targetW * (srcH / srcW)));
+    const small = document.createElement('canvas');
+    small.width = w;
+    small.height = h;
+    const sctx = small.getContext('2d');
+    if (this.canvas.width > 0) sctx.drawImage(this.canvas, 0, 0, w, h);
+    const img = sctx.getImageData(0, 0, w, h);
+    const [r, g, b] = [parseInt(ink.slice(1, 3), 16), parseInt(ink.slice(3, 5), 16), parseInt(ink.slice(5, 7), 16)];
+    for (let i = 0; i < img.data.length; i += 4) {
+      if (img.data[i + 3] > 50) {
+        img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b; img.data[i + 3] = 255;
+      } else {
+        img.data[i + 3] = 0;
+      }
+    }
+    sctx.putImageData(img, 0, 0);
+    return small.toDataURL();
+  }
+
   // AI 판정에 보낼 이미지 (흰 배경 합성 PNG)
   toPngDataUrl() {
     if (this.canvas.width === 0 || this.canvas.height === 0) this._resize();

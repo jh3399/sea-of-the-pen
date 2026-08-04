@@ -1,6 +1,10 @@
 import { DrawingCanvas } from './drawing.js';
 import { judge, calcDamage } from './judge.js';
 import { runDialogue } from './dialogue.js';
+import { spriteCanvas } from './sprites.js';
+import { startPixelBg } from './pixelbg.js';
+
+startPixelBg(document.querySelector('#bg-canvas'));
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -8,7 +12,7 @@ const DRAW_TIME = 20; // 전투 드로잉 제한 시간(초)
 
 const BOSS_ORO = {
   name: '황금 재규어 오로',
-  sprite: '🐆',
+  sprite: 'oro',
   maxHp: 300,
   weaknesses: ['weapon'],
   resists: [],
@@ -65,10 +69,11 @@ async function onShipSubmit() {
   }
   const { resolve, judged } = state.shipResolve;
   const png = shipCanvas.toPngDataUrl();
+  const pixel = shipCanvas.toPixelDataUrl(); // 도트 스프라이트 버전 (게임 내 표시용)
 
   if (!judged) {
     state.shipResolve = null;
-    resolve({ png, result: null });
+    resolve({ png, pixel, result: null });
     return;
   }
 
@@ -80,7 +85,7 @@ async function onShipSubmit() {
     '배 그리기 — 배로서의 완성도(선체·돛·키가 갖춰졌는지)를 평가하라. 배가 아니면 낮은 점수.',
   );
   state.shipResolve = null;
-  resolve({ png, result });
+  resolve({ png, pixel, result });
 }
 
 // ---------------- 전투 씬 ----------------
@@ -127,9 +132,11 @@ function runBattle(boss) {
     state.battleResolve = resolve;
 
     $('#boss-name').textContent = boss.name;
-    $('#boss-sprite').textContent = boss.sprite;
+    const bossEl = $('#boss-sprite');
+    bossEl.innerHTML = '';
+    bossEl.appendChild(spriteCanvas(boss.sprite, 8));
     $('#draw-prompt').textContent = boss.drawPrompt;
-    $('#battle-ship').src = state.shipPng;
+    $('#battle-ship').src = state.shipPixel;
     updateBars();
     log(boss.introLog);
 
@@ -218,38 +225,38 @@ function bossCounterattack() {
 // ---------------- 스토리 진행 ----------------
 
 const INTRO = [
-  { speaker: '', visual: '⛵', text: '이 세계에서, 진심을 담아 그린 그림은 실체가 된다.' },
-  { speaker: '시험관', visual: '🧭', text: '지금부터 항해사 시험의 최종 과제를 시작한다.' },
-  { speaker: '시험관', visual: '🧭', text: '과제는 단 하나. 너의 배를 그려 바다에 띄우고 — 전설의 황금섬, 그 단서를 가져와라.' },
-  { speaker: '루', visual: '🧑‍🎨', text: '(그림엔 자신 없지만... 해보자. 나의 배다!)' },
+  { speaker: '', text: '이 세계에서, 진심을 담아 그린 그림은 실체가 된다.' },
+  { speaker: '시험관', sprite: 'examiner', text: '지금부터 항해사 시험의 최종 과제를 시작한다.' },
+  { speaker: '시험관', sprite: 'examiner', text: '과제는 단 하나. 너의 배를 그려 바다에 띄우고 — 전설의 황금섬, 그 단서를 가져와라.' },
+  { speaker: '루', sprite: 'ru', text: '(그림엔 자신 없지만... 해보자. 나의 배다!)' },
 ];
 
-const nailAttack = (shipPng) => [
-  { speaker: '', visual: '🌊', text: '출항! 순조로운 항해... 였는데.' },
-  { speaker: '', visual: '🌫️', text: '갑자기 검은 안개가 바다를 뒤덮는다.' },
-  { speaker: '???', visual: '🏴‍☠️', text: '크크크... 그 낡은 배로 어딜 가시겠다?' },
-  { speaker: '검은 함장 네일', visual: '🏴‍☠️', text: '황금섬으로 가는 바다는 전부 내 것이다. 그 배, 부숴주지!' },
-  { speaker: '', image: shipPng, imageCls: 'broken', text: '콰지직—!! 네일의 포격에 배가 산산조각 났다...' },
-  { speaker: '루', visual: '😵', text: '(가라앉는다... 여기까지인가...)' },
+const nailAttack = (shipPixel) => [
+  { speaker: '', image: shipPixel, text: '출항! 순조로운 항해... 였는데.' },
+  { speaker: '', text: '갑자기 검은 안개가 바다를 뒤덮는다.' },
+  { speaker: '???', sprite: 'nail', text: '크크크... 그 낡은 배로 어딜 가시겠다?' },
+  { speaker: '검은 함장 네일', sprite: 'nail', text: '황금섬으로 가는 바다는 전부 내 것이다. 그 배, 부숴주지!' },
+  { speaker: '', image: shipPixel, imageCls: 'broken', text: '콰지직—!! 네일의 포격에 배가 산산조각 났다...' },
+  { speaker: '루', sprite: 'ru', text: '(가라앉는다... 여기까지인가...)' },
 ];
 
 const PIGGY_MEET = [
-  { speaker: '???', visual: '🐷', text: '이봐! 정신 차려! 일어나라고!' },
-  { speaker: '피기', visual: '🐷', text: '나는 피기. 전설의 배 "바람호"의 뱃머리... 였던 몸이지. 지금은 보다시피 통나무 신세지만.' },
-  { speaker: '피기', visual: '🐷', text: '네가 그린 배, 봤어. 솜씨는 솔직히 엉망인데... 이상하게 진심이 담겨 있더라.' },
-  { speaker: '피기', visual: '🐷', text: '"손이 아니라 마음으로 그리는 자가 나타나면, 바람호는 다시 떠오른다" — 모루 영감의 예언이야. 어쩌면 너일지도.' },
-  { speaker: '피기', visual: '🐷', text: '배를 다시 그려봐. 이번엔 진심을 담아서 — 선체, 돛, 키까지 제대로!' },
+  { speaker: '???', text: '이봐! 정신 차려! 일어나라고!' },
+  { speaker: '피기', sprite: 'piggy', text: '나는 피기. 전설의 배 "바람호"의 뱃머리... 였던 몸이지. 지금은 보다시피 통나무 신세지만.' },
+  { speaker: '피기', sprite: 'piggy', text: '네가 그린 배, 봤어. 솜씨는 솔직히 엉망인데... 이상하게 진심이 담겨 있더라.' },
+  { speaker: '피기', sprite: 'piggy', text: '"손이 아니라 마음으로 그리는 자가 나타나면, 바람호는 다시 떠오른다" — 모루 영감의 예언이야. 어쩌면 너일지도.' },
+  { speaker: '피기', sprite: 'piggy', text: '배를 다시 그려봐. 이번엔 진심을 담아서 — 선체, 돛, 키까지 제대로!' },
 ];
 
-const sailLines = (result) => [
-  { speaker: '피기', visual: '🐷', text: `오오...! ${result ? `"${result.comment}"` : '좋아, 이 정도면 바다에 띄울 만해!'}` },
-  { speaker: '피기', visual: '⛵', text: '좋아, 출항이다! 첫 목적지는 황금 수풀섬 — 도안 조각의 기운이 느껴져!' },
-  { speaker: '피기', visual: '🏝️', text: '조심해. 섬의 수호자 오로가 네일의 저주로 폭주하고 있어. 무기를 그려서 정신 차리게 해주자!' },
+const sailLines = (result, shipPixel) => [
+  { speaker: '피기', sprite: 'piggy', text: `오오...! ${result ? `"${result.comment}"` : '좋아, 이 정도면 바다에 띄울 만해!'}` },
+  { speaker: '', image: shipPixel, text: '좋아, 출항이다! 첫 목적지는 황금 수풀섬 — 도안 조각의 기운이 느껴져!' },
+  { speaker: '피기', sprite: 'piggy', text: '조심해. 섬의 수호자 오로가 네일의 저주로 폭주하고 있어. 무기를 그려서 정신 차리게 해주자!' },
 ];
 
 const DEFEAT = [
-  { speaker: '피기', visual: '💦', text: '배가 버티질 못해! 일단 후퇴다!' },
-  { speaker: '피기', visual: '🐷', text: '괜찮아. 우리에겐 펜이 있잖아? 다시 그리면 돼 — 이번엔 더 튼튼하게!' },
+  { speaker: '피기', sprite: 'piggy', text: '배가 버티질 못해! 일단 후퇴다!' },
+  { speaker: '피기', sprite: 'piggy', text: '괜찮아. 우리에겐 펜이 있잖아? 다시 그리면 돼 — 이번엔 더 튼튼하게!' },
 ];
 
 async function gameFlow() {
@@ -263,9 +270,10 @@ async function gameFlow() {
     judged: false,
   });
   state.shipPng = first.png;
+  state.shipPixel = first.pixel;
 
   // 2) 네일의 습격 → 피기 등장
-  await runDialogue(nailAttack(first.png));
+  await runDialogue(nailAttack(first.pixel));
   await runDialogue(PIGGY_MEET);
 
   // 3) 배 다시 그리기 (판정 O — 점수가 배의 내구도가 된다)
@@ -276,9 +284,10 @@ async function gameFlow() {
     judged: true,
   });
   state.shipPng = second.png;
+  state.shipPixel = second.pixel;
   state.shipMaxHp = 100 + (second.result?.score ?? 50);
 
-  await runDialogue(sailLines(second.result));
+  await runDialogue(sailLines(second.result, second.pixel));
 
   // 4) 보스전 — 질 때마다 배를 다시 그리고 재도전
   let won = await runBattle(BOSS_ORO);
@@ -291,6 +300,7 @@ async function gameFlow() {
       judged: true,
     });
     state.shipPng = retry.png;
+    state.shipPixel = retry.pixel;
     state.shipMaxHp = 100 + (retry.result?.score ?? 50);
     won = await runBattle(BOSS_ORO);
   }
