@@ -3,6 +3,7 @@
 
 import { DrawingCanvas } from './drawing.js';
 import { judge, calcDamage } from './judge.js';
+import { shipQuality } from './localjudge.js';
 import { runDialogue, setDialogueBlip } from './dialogue.js';
 import { spriteCanvas } from './sprites.js';
 import { startPixelBg, setScene } from './pixelbg.js';
@@ -227,29 +228,48 @@ async function onShipSubmit() {
     return;
   }
   const { resolve, judged } = shipResolve;
+
+  // 진행 판정은 로컬로 — 네트워크 없이 즉시, 시연 중에도 절대 멈추지 않는다.
+  // 크기는 캔버스가 스트로크를 받을 때 쓴 CSS 좌표계(cssW/cssH)를 그대로 써야 한다.
+  const quality = shipQuality(shipCanvas.strokes, shipCanvas.cssW, shipCanvas.cssH);
+
+  // 배로 성립하지 않으면 띄워주지 않는다 (박살 판정)
+  if (judged && quality.verdict === 'wreck') {
+    $('#ship-log').textContent = `세렌: "${quality.reason}... 이건 바다에 나가면 그대로 가라앉아. 다시!"`;
+    sfx('cancel');
+    return;
+  }
+
   const png = shipCanvas.toPngDataUrl();
   const pixel = shipCanvas.toPixelDataUrl(); // 도트 스프라이트 버전 (게임 내 표시용)
   sfx('submit');
 
   if (!judged) {
     shipResolve = null;
-    resolve({ png, pixel, result: null });
+    resolve({ png, pixel, quality, result: null });
     return;
   }
 
   $('#btn-ship-submit').disabled = true;
   shipCanvas.enabled = false;
   $('#ship-log').textContent = '세렌: "어디 보자... (감정 중)"';
+  // AI는 진행을 막지 않는 곁가지 — 무엇을 그렸는지 알아보고 한마디 거드는 역할
   const result = await judge(
     shipCanvas.stats(), png,
     '배 그리기 — 배로서의 완성도(선체·돛·키가 갖춰졌는지)를 평가하라. 배가 아니면 낮은 점수.',
   );
   shipResolve = null;
-  resolve({ png, pixel, result });
+  resolve({ png, pixel, quality, result });
 }
 
-function keepShip(drawn, maxHp) {
-  state.ship = { png: drawn.png, pixel: drawn.pixel, maxHp };
+/** 배 저장 — 내구도는 로컬 판정 점수로 결정한다 (AI가 없어도 항상 같은 결과) */
+function keepShip(drawn, baseHp = 100) {
+  state.ship = {
+    png: drawn.png,
+    pixel: drawn.pixel,
+    maxHp: baseHp + (drawn.quality?.score ?? 50),
+    quality: drawn.quality?.verdict ?? 'ok',
+  };
   saveGame();
 }
 
@@ -418,7 +438,7 @@ const INTRO = [
 ];
 
 const nailAttack = (shipPixel) => [
-  { speaker: '', bg: 'sea_day', image: shipPixel, text: '출항! 순조로운 항해... 였는데.' },
+  { speaker: '', bg: 'sea_day', image: shipPixel, imageCls: 'sailing', text: '출항! 순조로운 항해... 였는데.' },
   { speaker: '', bg: 'fog_black', text: '갑자기 검은 안개가 바다를 뒤덮는다.' },
   { speaker: '???', sprite: 'nail', text: '크크크... 그 낡은 배로 어딜 가시겠다?' },
   { speaker: '검은 함장 네일', sprite: 'nail', text: '황금섬으로 가는 바다는 전부 내 것이다. 그 배, 부숴주지!' },
@@ -436,8 +456,8 @@ const SEREN_MEET = [
 
 const sailLines = (result, shipPixel) => [
   { speaker: '세렌', sprite: 'seren', text: `오오...! ${result ? `"${result.comment}"` : '좋아, 이 정도면 바다에 띄울 만해!'}` },
-  { speaker: '', bg: 'sea_day', image: shipPixel, text: '좋아, 출항이다! 이제 이 배는 네 손에 달렸어 — 방향키로 직접 몰아 봐!' },
-  { speaker: '세렌', sprite: 'seren', text: '나침반이 다음 목적지를 가리킬 거야. 첫 목적지는 황금 수풀섬 — 도안 조각의 기운이 느껴져!' },
+  { speaker: '', bg: 'sea_day', image: shipPixel, imageCls: 'sailing', text: '좋아, 출항이다! 이제 이 배는 네 손에 달렸어 — 방향키로 직접 몰아 봐!' },
+  { speaker: '세렌', sprite: 'seren', text: '나침반이 다음 목적지를 가리킬 거야. 첫 목적지는 시작의 섬 — 도안 조각의 기운이 느껴져!' },
 ];
 
 const DEFEAT = [
@@ -471,13 +491,13 @@ async function intro() {
   // 1) 첫 배 그리기 (판정 없음 — 어차피 부서질 운명)
   const first = await drawShip({
     prompt: '🚢 너의 배를 자유롭게 그려라!',
-    hint: '어떤 배든 좋다. 너만의 배를 그려서 출항하자! (📐 도안을 켜면 밑그림을 따라 그릴 수 있다)',
+    hint: '어떤 배든 좋다. 너만의 배를 그려서 출항하자! (막히면 📐 도안으로 밑그림을 깔 수 있다)',
     button: '출항!',
     judged: false,
     bg: 'harbor',
     guide: false,
   });
-  keepShip(first, 150);
+  keepShip(first, 120);
 
   // 2) 네일의 습격 → 세렌 등장
   playBgm('tension');
@@ -489,13 +509,13 @@ async function intro() {
   // 3) 배 다시 그리기 (판정 O — 점수가 배의 내구도가 된다)
   const second = await drawShip({
     prompt: '⛵ 이번엔 진심을 담아 — 선체·돛·키를 갖춰 그려라!',
-    hint: '잘 그린 배일수록 튼튼하다. (판정 점수 = 배의 내구도)',
+    hint: '잘 그린 배일수록 튼튼하다. 너무 부실하면 아예 뜨지 않으니 선체·돛대는 갖추자.',
     button: '다시 출항!',
     judged: true,
     bg: 'dawn_wreck',
-    guide: true,
+    guide: false,
   });
-  keepShip(second, 100 + (second.result?.score ?? 50));
+  keepShip(second);
 
   showScreen('#screen-scene');
   await runDialogue(sailLines(second.result, second.pixel));
@@ -514,9 +534,9 @@ async function redrawShip() {
     button: '재출항!',
     judged: true,
     bg: 'dawn_wreck',
-    guide: true,
+    guide: false,
   });
-  keepShip(retry, 100 + (retry.result?.score ?? 50));
+  keepShip(retry);
 }
 
 async function sailLoop() {
