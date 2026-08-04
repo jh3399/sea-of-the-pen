@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>배경 씬 갤러리 — 그리는 자의 바다</title>
+  <style>
+    body { margin: 0; padding: 16px; background: #0d0f1a; color: #d8dcf0; font-family: monospace; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    p { font-size: 12px; color: #8b93b8; margin: 0 0 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    figure { margin: 0; }
+    canvas { width: 100%; display: block; image-rendering: pixelated; border: 1px solid #2a3050; }
+    figcaption { font-size: 12px; padding: 4px 2px; color: #9fe0c0; }
+  </style>
+</head>
+<body>
+  <h1>배경 씬 갤러리</h1>
+  <p>src/bgscenes.js의 모든 씬을 한 화면에서 애니메이션째 확인한다. (도트 작업용 개발 페이지)</p>
+  <div class="grid" id="grid"></div>
+
+  <script type="module">
+    import { SCENES } from '../src/bgscenes.js';
+
+    const W = 356, H = 200;
+    const items = Object.entries(SCENES).map(([key, draw]) => {
+      const fig = document.createElement('figure');
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const cap = document.createElement('figcaption');
+      cap.textContent = key;
+      fig.append(c, cap);
+      grid.append(fig);
+      return { draw, ctx: c.getContext('2d') };
+    });
+
+    function frame(t) {
+      const env = { w: W, h: H, sec: t / 1000 };
+      for (const it of items) {
+        it.ctx.save();
+        it.draw(it.ctx, env);
+        it.ctx.restore();
+      }
+      requestAnimationFrame(frame);
+    }
+    frame(performance.now());
+  </script>
+</body>
+</html>
