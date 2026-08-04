@@ -23,6 +23,7 @@ const SEA_ROWS = ['#3990b8', '#2f83ab', '#2a769c', '#24688b', '#1e5a7a', '#184c6
 // 섬 bg 키별 색 (모래톱 / 땅 / 능선)
 const ISLAND_STYLES = {
   jungle_gold:    { beach: '#e5c878', land: '#7a8f2a', ridge: '#4f6a1e' },
+  jungle_green:   { beach: '#dcc9a0', land: '#3f7a3a', ridge: '#1a3a1c' },
   volcano:        { beach: '#8a6a52', land: '#5a4038', ridge: '#33241f' },
   night_storm:    { beach: '#4a5470', land: '#2c3550', ridge: '#1d2438' },
   iceberg:        { beach: '#e8f6fa', land: '#cfe8f2', ridge: '#9cc8dc' },

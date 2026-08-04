@@ -156,6 +156,35 @@ function jungle_gold(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.08);
 }
 
+// ---------------- jungle_green — 1섬 시작의 섬 (초록 수풀) ----------------
+// 금빛은 엔딩의 황금섬(=고인 황금 잉크)에만 쓴다. 첫 섬은 평범한 초록 섬이어야
+// 마지막에 바다가 금빛으로 물드는 장면이 산다.
+
+function jungle_green(ctx, { w, h, sec }) {
+  const hz = R(h * 0.66);
+  skyGradient(ctx, w, 0, hz, ['#1f6f9e', '#3a92bd', '#66b3d3', '#98cfe1', '#c8e8ee']);
+  sun(ctx, w * 0.72, hz * 0.24, 9, sec, {});
+  clouds(ctx, w, sec, { y: hz * 0.2, color: '#ffffff', alpha: 0.7, count: 5, speed: 2.2, scale: 1.4, seed: 161 });
+  clouds(ctx, w, sec, { y: hz * 0.44, color: '#e8f6ff', alpha: 0.45, count: 4, speed: 4, scale: 1, seed: 162 });
+  // 정글 능선 3겹 (멀리→가까이)
+  hills(ctx, w, hz + 2, '#3f7a3a', { amp: 26, freq: 1.0, seed: 163 });
+  hills(ctx, w, hz + 6, '#2c5a2a', { amp: 20, freq: 1.6, seed: 164, offsetX: 40, base: 4 });
+  hills(ctx, w, hz + 12, '#1a3a1c', { amp: 14, freq: 2.4, seed: 165, offsetX: 90, base: 10 });
+  // 야자수 숲
+  for (let i = 0; i < 9; i++) {
+    const x = w * (0.04 + i * 0.115) + hash(i, 166) * 8;
+    const s = 0.9 + hash(i, 167) * 0.7;
+    const sway = Math.sin(sec * 0.9 + i) * 1.2;
+    palm(ctx, x + sway, hz + 10 + hash(i, 168) * 6, s, '#3b2a16', '#16401a');
+  }
+  const bands = seaBands(ctx, w, h, hz + 12, ['#2f93a6', '#2a8496', '#257686', '#206776', '#1a5866', '#154956']);
+  glitter(ctx, w * 0.72, hz + 12, h, sec, '#dff6ff', { alpha: 0.45, count: 80, seed: 169 });
+  waves(ctx, w, bands, sec, '#9fe4ee', { alpha: 0.42, speed: 7, seed: 170 });
+  // 숲에서 날리는 홀씨
+  particles(ctx, w, h, sec, { count: 34, color: '#eaffd8', speed: 6, dir: -1, sway: 12, alpha: 0.6, seed: 171, y0: 0.3, y1: 1, twinkle: true });
+  vignette(ctx, w, h, 0.06);
+}
+
 // ---------------- volcano — 2섬 피라 (붉은 화산) ----------------
 
 function volcano(ctx, { w, h, sec }) {
@@ -512,6 +541,7 @@ export const SCENES = {
   sea_day,
   fog_black,
   dawn_wreck,
+  jungle_green,
   jungle_gold,
   volcano,
   night_storm,

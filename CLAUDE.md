@@ -96,7 +96,8 @@ npx http-server -p 5210 -c-1
 | `sea_day` | S-02 출항 | 맑은 낮 바다, 순항 |
 | `fog_black` | S-02 습격 | 검은 안개, 붉은 포격 |
 | `dawn_wreck` | S-03 세렌 만남 | 새벽, 난파 잔해 |
-| `jungle_gold` | 1섬 가르 | 금빛 정글 |
+| `jungle_green` | 1섬 시작의 섬 | 초록 정글, 낮 |
+| `jungle_gold` | (예비) | 금빛 정글 |
 | `volcano` | 2섬 피라 | 붉은 화산, 재 |
 | `night_storm` | 3섬 나르 | 캄캄한 밤바다, 번개 |
 | `iceberg` | 4섬 툰 | 빙산, 얼어붙은 배들 |
