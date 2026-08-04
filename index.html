@@ -9,16 +9,16 @@
 <body>
   <canvas id="bg-canvas" class="pixel"></canvas>
   <div id="app">
-    <!-- 상단 HUD: 진행도(조각)·현재 위치·지도·가방·설정 (타이틀에선 숨김) -->
-    <header id="hud" hidden>
+    <!-- 상단 HUD: 설정 톱니는 항상, 나머지(진행도·지도·가방)는 게임 중에만 (.play-only) -->
+    <header id="hud">
       <div class="hud-left">
-        <span id="hud-stage" class="hud-chip">출항 준비</span>
+        <span id="hud-stage" class="hud-chip play-only" hidden></span>
       </div>
       <div class="hud-right">
-        <span id="hud-pieces" class="hud-chip gold" title="모은 도안 조각">📜 0/7</span>
-        <button id="btn-map" class="hud-btn" title="지도">🗺️</button>
-        <button id="btn-inv" class="hud-btn" title="가방">🎒</button>
-        <button id="btn-hud-settings" class="hud-btn" title="설정">⚙️</button>
+        <span id="hud-pieces" class="hud-chip gold play-only" title="모은 도안 조각">📜 0/7</span>
+        <button id="btn-map" class="hud-btn play-only" title="지도">🗺️</button>
+        <button id="btn-inv" class="hud-btn play-only" title="가방">🎒</button>
+        <button id="btn-settings" class="hud-btn" title="설정">⚙️</button>
       </div>
     </header>
 
@@ -30,9 +30,8 @@
         <p class="game-desc">진심을 담아 그린 그림은 실체가 된다.</p>
       </div>
       <div class="title-menu">
+        <button id="btn-start" class="btn-primary btn-start">▶ 시작하기</button>
         <button id="btn-continue" class="btn-primary" hidden>▶ 이어하기</button>
-        <button id="btn-start" class="btn-primary btn-start">▶ 새 모험</button>
-        <button id="btn-title-settings" class="btn-tool">⚙ 설정</button>
       </div>
       <p class="title-credit">NAN 2026 · TEAM RIVER</p>
     </section>

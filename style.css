@@ -8,6 +8,11 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* hidden 속성은 항상 이긴다.
+   (#id 선택자에 display를 주면 브라우저 기본 [hidden]{display:none}을 덮어써서
+   숨겨야 할 오버레이가 화면을 덮고 클릭을 다 먹어버린다 — 실제로 겪은 버그다.) */
+[hidden] { display: none !important; }
+
 :root {
   --ink: #1a1423;
   --paper: #fffdf6;
@@ -352,7 +357,9 @@ body::after {
 }
 .hud-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
 
-body.hud-on #app { padding-top: 50px; }
+/* 진행도·지도·가방은 게임을 시작한 뒤에만 (타이틀에는 설정 톱니만 남는다) */
+body:not(.playing) .play-only { display: none !important; }
+body.playing #app { padding-top: 50px; }
 
 /* ---- 타이틀 메뉴 ---- */
 .title-menu { display: flex; flex-direction: column; gap: 12px; align-items: center; min-width: 240px; }
@@ -380,7 +387,7 @@ body.hud-on #app { padding-top: 50px; }
   white-space: nowrap;
 }
 .float-chip.top { top: 10px; }
-body.hud-on .float-chip.top { top: 54px; }
+body.playing .float-chip.top { top: 54px; }
 
 .prompt-chip {
   position: absolute;

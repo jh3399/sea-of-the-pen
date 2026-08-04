@@ -47,13 +47,15 @@ playBgm('title'); // init 전 호출은 기억됐다가 첫 제스처에 재생�
 // ---------------- HUD ----------------
 
 function hudShow(on) {
-  $('#hud').hidden = !on;
-  document.body.classList.toggle('hud-on', on);
+  document.body.classList.toggle('playing', on);
 }
 
 function hudUpdate(stageText) {
   $('#hud-pieces').textContent = `📜 ${state.pieces.length}/7`;
-  if (stageText) $('#hud-stage').textContent = stageText;
+  if (stageText !== undefined) {
+    $('#hud-stage').textContent = stageText;
+    $('#hud-stage').hidden = !stageText;   // 보여줄 게 없으면 칩 자체를 감춘다
+  }
 }
 
 // ---------------- 모달 (설정 / 지도 / 가방) ----------------
@@ -187,8 +189,7 @@ function renderInventory(body) {
 
 $('#btn-map').addEventListener('click', () => openModal('🗺️ 항해도', renderMap));
 $('#btn-inv').addEventListener('click', () => openModal('🎒 가방', renderInventory));
-$('#btn-hud-settings').addEventListener('click', () => openModal('⚙ 설정', renderSettings));
-$('#btn-title-settings').addEventListener('click', () => openModal('⚙ 설정', renderSettings));
+$('#btn-settings').addEventListener('click', () => openModal('⚙ 설정', renderSettings));
 
 // ---------------- 배 그리기 씬 ----------------
 
@@ -462,7 +463,7 @@ function showVictory(island) {
 // ---------------- 메인 루프 ----------------
 
 async function intro() {
-  hudUpdate('출항 준비');
+  hudUpdate('');
   playBgm('harbor');
   showScreen('#screen-scene');
   await runDialogue(INTRO);
@@ -597,7 +598,7 @@ async function gameFlow(fresh) {
     saveGame();
   }
   hudShow(true);
-  hudUpdate();
+  hudUpdate('');
   if (!state.flags.introDone || !state.ship) await intro();
   await sailLoop();
 }
