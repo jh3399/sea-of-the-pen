@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>그리는 자의 바다 — Draw the Sea (Prototype)</title>
+  <title>그리는 자의 바다 — Draw the Sea</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,9 +11,34 @@
     <!-- 타이틀 화면 -->
     <section id="screen-title" class="screen active">
       <h1 class="game-title">그리는 자의 바다</h1>
-      <p class="game-subtitle">Draw the Sea — 코어 루프 프로토타입 v0</p>
-      <p class="game-desc">진심을 담아 그린 그림은 실체가 된다.<br/>그림을 그려 보스를 물리쳐라!</p>
-      <button id="btn-start" class="btn-primary">출항하기</button>
+      <p class="game-subtitle">Draw the Sea</p>
+      <p class="game-desc">진심을 담아 그린 그림은 실체가 된다.<br/>그림을 그려 항해하고, 싸우고, 전설의 보물을 찾아라!</p>
+      <button id="btn-start" class="btn-primary">모험 시작</button>
+    </section>
+
+    <!-- 스토리(대사) 화면 -->
+    <section id="screen-story" class="screen story-screen">
+      <div id="story-visual" class="story-visual">🌊</div>
+      <div class="story-box">
+        <div id="story-name" class="story-name">???</div>
+        <div id="story-text" class="story-text"></div>
+        <div class="story-hint">▼ 클릭해서 계속</div>
+      </div>
+    </section>
+
+    <!-- 배 그리기 화면 -->
+    <section id="screen-ship" class="screen">
+      <div class="draw-area ship-draw">
+        <div class="draw-header">
+          <span id="ship-prompt">🚢 너의 배를 그려라!</span>
+        </div>
+        <canvas id="ship-canvas"></canvas>
+        <div id="ship-log" class="battle-log">돛과 선체, 키를 갖추면 더 튼튼한 배가 된다.</div>
+        <div class="draw-tools">
+          <button id="btn-ship-clear" class="btn-tool">지우기</button>
+          <button id="btn-ship-submit" class="btn-primary">출항!</button>
+        </div>
+      </div>
     </section>
 
     <!-- 전투 화면 -->
@@ -21,18 +46,25 @@
       <div class="battle-stage">
         <div class="boss-area">
           <div class="boss-hp-wrap">
-            <span class="boss-name">황금 재규어 오로</span>
+            <span id="boss-name" class="boss-name">???</span>
             <div class="hp-bar"><div id="boss-hp" class="hp-fill"></div></div>
           </div>
           <div id="boss-sprite" class="boss-sprite">🐆</div>
           <div id="damage-float" class="damage-float"></div>
         </div>
-        <div id="battle-log" class="battle-log">피기: "저 재규어는 무기에 약해! 뭐든 무기를 그려봐!"</div>
+        <div class="ship-row">
+          <img id="battle-ship" class="battle-ship" alt="나의 배" />
+          <div class="ship-hp-wrap">
+            <span class="boss-name">나의 배</span>
+            <div class="hp-bar ship"><div id="ship-hp" class="hp-fill ship"></div></div>
+          </div>
+        </div>
+        <div id="battle-log" class="battle-log"></div>
       </div>
 
       <div class="draw-area">
         <div class="draw-header">
-          <span id="draw-prompt">⚔️ 무기를 그려라!</span>
+          <span id="draw-prompt">✏️ 그려라!</span>
           <span id="draw-timer" class="draw-timer">20</span>
         </div>
         <canvas id="draw-canvas"></canvas>
@@ -46,9 +78,10 @@
     <!-- 승리 화면 -->
     <section id="screen-victory" class="screen">
       <h1>🏆 승리!</h1>
-      <p class="game-desc">오로가 제정신을 찾았다!<br/>도안 조각 ①을 손에 넣었다.</p>
+      <p class="game-desc">오로가 제정신을 찾았다!<br/>수호자가 도안 조각을 건네준다.</p>
       <div class="blueprint-piece">📜 도안 조각 ① — 강화 선체</div>
-      <button id="btn-restart" class="btn-primary">다시 도전</button>
+      <p class="game-desc small">— 사전 과제 데모는 여기까지! 다음 바다에서 계속... —</p>
+      <button id="btn-restart" class="btn-primary">처음부터 다시</button>
     </section>
   </div>
 

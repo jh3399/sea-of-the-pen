@@ -104,7 +104,7 @@ export class DrawingCanvas {
     const octx = out.getContext('2d');
     octx.fillStyle = '#ffffff';
     octx.fillRect(0, 0, out.width, out.height);
-    octx.drawImage(this.canvas, 0, 0);
+    if (this.canvas.width > 0 && this.canvas.height > 0) octx.drawImage(this.canvas, 0, 0);
     return out.toDataURL('image/png');
   }
 }

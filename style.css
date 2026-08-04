@@ -156,7 +156,7 @@ html, body {
 .draw-timer.low { color: var(--danger); animation: timer-blink .5s infinite; }
 @keyframes timer-blink { 50% { opacity: .4; } }
 
-#draw-canvas {
+#draw-canvas, #ship-canvas {
   width: 100%;
   flex: 1;
   min-height: 200px;
@@ -168,6 +168,82 @@ html, body {
 
 .draw-tools { display: flex; gap: 10px; }
 .draw-tools .btn-primary { flex: 1; }
+
+/* ---- 스토리(대사) 화면 ---- */
+.story-screen { justify-content: flex-end; cursor: pointer; user-select: none; }
+
+.story-visual {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(80px, 18vw, 150px);
+  filter: drop-shadow(0 8px 12px rgba(0,0,0,.4));
+}
+
+.story-img {
+  max-width: min(360px, 70vw);
+  max-height: 40vh;
+  background: #fffdf6;
+  border-radius: 14px;
+  border: 3px solid rgba(0,0,0,.25);
+}
+.story-img.broken {
+  animation: ship-break 1s ease-in forwards;
+}
+@keyframes ship-break {
+  0% { transform: rotate(0) translateY(0); filter: none; }
+  20% { transform: rotate(-6deg) translateY(4px); }
+  40% { transform: rotate(8deg) translateY(10px); filter: grayscale(.4); }
+  100% { transform: rotate(14deg) translateY(60px); filter: grayscale(1) brightness(.6); opacity: .55; }
+}
+
+.story-box {
+  width: min(680px, 100%);
+  background: rgba(0,0,0,.55);
+  border: 2px solid rgba(255,255,255,.25);
+  border-radius: 16px;
+  padding: 18px 22px 14px;
+  margin-bottom: 8px;
+}
+.story-name {
+  display: inline-block;
+  font-weight: 800;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.story-text { min-height: 3em; line-height: 1.65; font-size: 17px; }
+.story-hint { text-align: right; font-size: 12px; opacity: .55; animation: hint-bounce 1.2s infinite; }
+@keyframes hint-bounce { 50% { transform: translateY(3px); opacity: .8; } }
+
+/* ---- 배 그리기 화면 ---- */
+.ship-draw { padding-top: 12px; }
+
+/* ---- 전투: 내 배 ---- */
+.ship-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+}
+.battle-ship {
+  width: 84px;
+  height: 60px;
+  object-fit: contain;
+  background: #fffdf6;
+  border-radius: 10px;
+  border: 2px solid rgba(0,0,0,.25);
+}
+.battle-ship.ship-hit { animation: ship-hit-anim .5s; }
+@keyframes ship-hit-anim {
+  0%, 100% { transform: translateY(0); filter: none; }
+  30% { transform: translateY(6px) rotate(-4deg); filter: brightness(1.6) sepia(1) hue-rotate(-50deg); }
+  60% { transform: translateY(-3px) rotate(2deg); }
+}
+.ship-hp-wrap { flex: 1; display: flex; align-items: center; gap: 12px; }
+.hp-fill.ship { background: linear-gradient(90deg, #3fd27f, #ffd23f); }
+
+.game-desc.small { font-size: 13px; opacity: .6; }
 
 .blueprint-piece {
   padding: 14px 24px;
