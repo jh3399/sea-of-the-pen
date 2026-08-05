@@ -3,6 +3,7 @@
 // 설계 문서의 카메라 규칙: 위치는 추적하고 줌은 허용하되 **회전은 금지**한다.
 // 화면이 같이 돌면 플레이어가 심적 회전을 강요당해 "내 배가 어느 쪽으로 미끄러지는지"를
 // 읽지 못하게 되고, 그러면 저항 타원을 체감할 수 없다.
+import { bounds } from '../geom/poly.js';
 
 export class View {
   constructor(canvas) {
@@ -62,6 +63,39 @@ export class View {
   snapTo(target) {
     this.center.x = target.x;
     this.center.y = target.y;
+  }
+
+  /**
+   * 주어진 점들이 전부 화면에 들어오도록 **줌만** 조절한다 (세 척 동시 주행용).
+   * 회전은 여전히 건드리지 않는다 — 카메라 규칙은 비교 모드에서도 예외가 없다.
+   *
+   * @param {Array<{x,y}>} points 월드 좌표
+   * @param {{padding?:number, alpha?:number, minPpm?:number, maxPpm?:number}} options
+   *        padding 은 CSS 픽셀 (상단바·패널에 가려지는 영역을 감안해 넉넉히 준다).
+   */
+  fitTo(points, options = {}) {
+    if (points.length === 0) return;
+    const { padding = 90, alpha = 0.08, minPpm = 3, maxPpm = 60 } = options;
+    const bb = bounds(points);
+
+    const availW = Math.max(this.width - padding * 2, 40);
+    const availH = Math.max(this.height - padding * 2, 40);
+    const target = Math.min(availW / Math.max(bb.width, 1e-3), availH / Math.max(bb.height, 1e-3));
+
+    this.ppm += (Math.min(Math.max(target, minPpm), maxPpm) - this.ppm) * alpha;
+    this.follow({ x: (bb.minX + bb.maxX) / 2, y: (bb.minY + bb.maxY) / 2 }, alpha);
+  }
+
+  /**
+   * 화면 좌표계(CSS px, Y-down)로 잠깐 되돌아가 그린다.
+   * 월드 변환은 Y 가 뒤집혀 있어 텍스트를 그대로 그리면 거꾸로 나온다.
+   */
+  screenSpace(draw) {
+    const { ctx, dpr } = this;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw(ctx);
+    ctx.restore();
   }
 }
 

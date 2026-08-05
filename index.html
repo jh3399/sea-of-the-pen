@@ -3,18 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>조선소 (Shipwright) — D0 기술 스파이크</title>
+  <title>조선소 (Shipwright) — D1 코어 필</title>
 </head>
 <body data-mode="design">
   <canvas id="stage"></canvas>
 
   <header class="topbar">
-    <h1>조선소 <span class="tag">D0 기술 스파이크</span></h1>
+    <h1>조선소 <span class="tag">D1 코어 필</span></h1>
     <div class="tools">
       <select id="corpus" title="재현 가능한 테스트 형상"></select>
       <button id="btn-load" class="btn">코퍼스 불러오기</button>
       <button id="btn-reset" class="btn">다시 그리기</button>
       <button id="btn-sail" class="btn primary" disabled>출항 ▶</button>
+      <button id="btn-compare" class="btn primary">세 척 비교 (C)</button>
       <button id="btn-stress" class="btn">연속 차감 20회</button>
       <button id="btn-clear-worst" class="btn ghost">최대치 리셋</button>
     </div>
@@ -31,9 +32,11 @@
 
   <footer class="hint">
     <span><b>설계</b> 드래그로 폐곡선 그리기</span>
-    <span><b>항해</b> ↑↓ 추력 · ←→ 선미 횡추력(요잉 창발)</span>
-    <span><b>파손</b> 선체 클릭 = 그 지점 차감</span>
-    <span><b>F3</b> 계측 HUD</span>
+    <span><b>노</b> ↑ 젓기 / ↓ 역젓기</span>
+    <span><b>키</b> ←→ (정지 상태에서는 듣지 않는다)</span>
+    <span><b>닻</b> Space</span>
+    <span><b>T</b> 예측 궤적선 · <b>C</b> 세 척 비교</span>
+    <span><b>파손</b> 선체 클릭 · <b>F3</b> 계측 HUD</span>
   </footer>
 
   <script type="module" src="/src/main.js"></script>

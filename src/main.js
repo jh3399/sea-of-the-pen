@@ -1,12 +1,16 @@
-// D0 검증 하니스 — 세 스파이크를 한 화면에서 동시에 계측한다.
+// D0/D1 하니스 — 설계 ↔ 항해 ↔ 파손을 한 화면에서 돌리며 계측한다.
 //
-// 스파이크를 세 개의 독립 데모로 나누지 않은 이유: 프레임 드랍은 각 모듈이 아니라 셋이 함께
-// 돌 때 나타난다. 그리고 D1 부터 이 화면이 그대로 설계-항해 루프로 자란다.
+// D0 은 "세 스파이크가 프레임 드랍 없이 도는가"를 물었고, D1 은 가설 A —
+// **"배를 그리는 것 자체가 재미있는가"** 를 묻는다. 그래서 이 화면의 주역이 바뀌었다:
+// 계측 HUD 옆에 **세 척 동시 주행**이 붙는다. 같은 입력을 세 척에 그대로 흘려보내고
+// 조작감 차이가 눈에 보이면 가설 A 가 선다.
 import './ui/harness.css';
 import { createWorld, FixedStepper, Vec2 } from './physics/world.js';
 import { applyHydroToWorld } from './physics/hydro.js';
-import { applySternThrust, inputFromKeys } from './physics/thrust.js';
+import { applyDevices, inputFromKeys, DEVICE_TUNING } from './physics/devices.js';
+import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
+import { defaultDevices, deviceExtraMass } from './items/defaults.js';
 import { strokeToHull, HULL_DEFAULTS } from './hull/polygon.js';
 import { computeHullParams } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
@@ -18,6 +22,19 @@ import { rotate, translate, bounds } from './geom/poly.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
 const IMPACT_RADIUS = 0.8;
+
+/** 세 척 비교의 출연진. 같은 입력을 받고 형상만 다르다. */
+const COMPARE_CAST = [
+  { corpus: 'sloop', label: '길쭉한 배', color: '#f0c987' },
+  { corpus: 'round', label: '둥근 배', color: '#8ce99a' },
+  { corpus: 'lopsided', label: '비대칭 배', color: '#ff9f7f' },
+];
+/** 세 척을 세로로 벌려 놓는 간격 (m). */
+const COMPARE_SPACING = 14;
+/** 설계 중 실시간 오버레이 갱신 간격 (입력 점 수). 2000점 낙서가 17ms 라 매 프레임은 위험하다. */
+const LIVE_PREVIEW_EVERY = 15;
+/** 흘수 게이지의 만수위 기준 (m). 나무 단일 재질이면 0.30 m 근처가 정상이다. */
+const DRAFT_GAUGE_MAX = 1.0;
 
 /** 스트레스 테스트용 결정론적 난수 — 매 실행 같은 지점을 깎아야 수치를 비교할 수 있다. */
 function lcg(seed) {
@@ -41,7 +58,7 @@ class Harness {
     // 이게 틀리면 D1·D2 의 모든 조종감이 화면 주사율에 따라 달라진다.
     this.stepper = new FixedStepper(this.world, {
       onPreStep: (dt) => {
-        this.applyThrust();
+        this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
       },
     });
@@ -51,6 +68,8 @@ class Harness {
     this.design = null;
     this.bodies = new Set();
     this.keys = new Set();
+    this.compare = false;
+    this.showTrajectory = true;
     this.stress = { remaining: 0, rng: null, samples: [] };
     this.lastFrame = performance.now();
     this.status = '선체를 그리세요 — 폐곡선 하나면 됩니다.';
@@ -60,9 +79,17 @@ class Harness {
         if (this.mode !== 'design') return;
         this.stroke = [];
         this.design = null;
+        this.liveMark = 0;
       },
       onUpdate: (pts) => {
-        if (this.mode === 'design') this.stroke = pts;
+        if (this.mode !== 'design') return;
+        this.stroke = pts;
+        // 그리는 도중에도 오버레이(G · 저항 타원 · 흘수)를 갱신한다 — §2.3 이 요구하는
+        // "그리면서 보는" 피드백. 매 프레임 변환은 낙서에서 17ms 를 먹으므로 점 수로 throttle.
+        if (pts.length - this.liveMark >= LIVE_PREVIEW_EVERY) {
+          this.liveMark = pts.length;
+          this.buildFromStroke(pts, { live: true });
+        }
       },
       onComplete: (pts) => {
         if (this.mode === 'design') this.buildFromStroke(pts);
@@ -94,15 +121,25 @@ class Harness {
     document.getElementById('btn-load').onclick = () => this.loadCorpus(select.value);
     document.getElementById('btn-reset').onclick = () => this.enterDesign();
     document.getElementById('btn-sail').onclick = () => this.enterSail();
+    document.getElementById('btn-compare').onclick = () => this.enterCompare();
     document.getElementById('btn-stress').onclick = () => this.startStress();
     document.getElementById('btn-clear-worst').onclick = () => this.metrics.resetWorst();
   }
 
   onKey(e, down) {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-      e.preventDefault();
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+      e.preventDefault(); // Space 는 버튼 재활성화, 방향키는 스크롤을 유발한다
       if (down) this.keys.add(e.key);
       else this.keys.delete(e.key);
+      return;
+    }
+    if (!down) return;
+    const k = e.key.toLowerCase();
+    if (k === 't') {
+      this.showTrajectory = !this.showTrajectory;
+      this.setStatus(`예측 궤적선 ${this.showTrajectory ? '켬' : '끔'} — 실제 경로와 겹치는지 보세요.`, 'ok');
+    } else if (k === 'c') {
+      this.enterCompare();
     }
   }
 
@@ -122,20 +159,26 @@ class Harness {
     this.buildFromStroke(pts);
   }
 
-  buildFromStroke(points) {
+  /** @param {{live?: boolean}} options live 는 그리는 도중의 미리보기 — 확정 문구를 쓰지 않는다. */
+  buildFromStroke(points, options = {}) {
     const result = strokeToHull(points, { pixelsPerMeter: PPM });
-    this.metrics.push('hull', result.diagnostics.ms);
+    if (!options.live) this.metrics.push('hull', result.diagnostics.ms);
     this.design = result;
 
     if (!result.ok) {
-      this.setStatus(`변환 실패 — ${result.message} (${result.reason})`, 'bad');
+      // 미리보기 단계에서는 "아직 면적이 안 나왔다" 정도라 실패를 붉게 띄우지 않는다.
+      if (options.live) this.setStatus('그리는 중…', '');
+      else this.setStatus(`변환 실패 — ${result.message} (${result.reason})`, 'bad');
       document.getElementById('btn-sail').disabled = true;
-      this.renderParams(null, result);
+      this.renderParams(null, options.live ? null : result);
       return;
     }
 
     const warn = result.warnings.length ? ` · 경고: ${result.warnings.join(', ')}` : '';
-    this.setStatus(`선체 확정 — 정점 ${result.diagnostics.verts}개${warn}`, warn ? 'warn' : 'ok');
+    // §2.3 — 자기교차는 그리는 즉시 알려야 손이 아직 움직이는 동안 고칠 수 있다.
+    this.setStatus(options.live
+      ? `그리는 중 — 면적 ${result.diagnostics.area.toFixed(1)} m²${warn}`
+      : `선체 확정 — 정점 ${result.diagnostics.verts}개${warn}`, warn ? 'warn' : 'ok');
     document.getElementById('btn-sail').disabled = false;
     this.renderParams(this.previewCache(), result);
   }
@@ -143,11 +186,12 @@ class Harness {
   // ------------------------------------------------------- 모드 전환
 
   enterDesign() {
-    for (const body of this.bodies) this.world.destroyBody(body);
-    this.bodies.clear();
+    this.clearBodies();
     this.stroke = [];
     this.design = null;
     this.mode = 'design';
+    this.compare = false;
+    this.liveMark = 0;
     this.stress.remaining = 0;
     this.capture.enabled = true;
     this.capture.clear();
@@ -155,41 +199,95 @@ class Harness {
     this.view.snapTo({ x: this.view.width / 2 / PPM, y: -this.view.height / 2 / PPM });
     document.getElementById('btn-sail').disabled = true;
     document.body.dataset.mode = 'design';
-    this.setStatus('선체를 그리세요 — 폐곡선 하나면 됩니다. (또는 코퍼스 불러오기)');
+    this.setStatus('선체를 그리세요 — 폐곡선 하나면 됩니다. (또는 코퍼스 불러오기 / C = 세 척 비교)');
     this.renderParams(null, null);
+  }
+
+  clearBodies() {
+    for (const body of this.bodies) this.world.destroyBody(body);
+    this.bodies.clear();
+  }
+
+  /** 선체 로컬 폴리곤 하나를 기본 3종 장치를 얹은 강체로 만든다. */
+  launch(outline, placement = {}) {
+    // ★ 여기가 §5.1 "선체 확정 시 자동 장착". 장치 질량은 extraMass 로 흘수에 반영된다.
+    const items = defaultDevices(outline);
+    const body = createHullBody(
+      this.world,
+      { outline, holes: [], items, tag: placement.tag ?? null },
+      {
+        position: placement.position ?? { x: 0, y: 0 },
+        angle: placement.angle ?? 0,
+        material: 'wood',
+        extraMass: deviceExtraMass(items),
+      },
+    );
+    if (body) this.bodies.add(body);
+    return body;
   }
 
   enterSail() {
     if (!this.design?.ok) return;
 
     // 정규화된 선체를 원점에 세운다. 뱃머리가 +X 를 향한다.
-    const items = markerItems(this.design.outline);
-    const body = createHullBody(
-      this.world,
-      { outline: this.design.outline, holes: [], items },
-      { position: { x: 0, y: 0 }, angle: 0, material: 'wood' },
-    );
+    this.clearBodies();
+    const body = this.launch(this.design.outline);
     if (!body) {
       this.setStatus('강체 생성 실패 — 분해 결과가 비었습니다.', 'bad');
       return;
     }
 
-    this.bodies.add(body);
     this.initialItemCount = body.getUserData().hull.items.length;
+    this.compare = false;
     this.mode = 'sail';
     this.capture.enabled = false;
     this.view.ppm = PPM * 0.7;
     this.view.snapTo({ x: 0, y: 0 });
     document.body.dataset.mode = 'sail';
-    this.setStatus('방향키로 추력 · 선체를 클릭하면 그 지점이 깎입니다.', 'ok');
+    this.setStatus('↑ 노 · ←→ 키 · Space 닻 · T 궤적선 · 선체 클릭 = 그 지점 차감', 'ok');
     this.renderParams(body.getUserData().hull.params, this.design);
   }
 
-  // ------------------------------------------------------- 스파이크 ③
+  /**
+   * ★ 가설 A 판정 장치 — 세 척을 나란히 띄우고 **같은 입력**을 흘려보낸다.
+   * 조작감 차이를 말로 설명할 수 있으면 D1 통과다.
+   */
+  enterCompare() {
+    this.clearBodies();
+    const spawned = [];
+    for (const [i, cast] of COMPARE_CAST.entries()) {
+      const result = strokeToHull(CORPUS[cast.corpus](0, 0), { pixelsPerMeter: PPM });
+      if (!result.ok) continue;
+      const body = this.launch(result.outline, {
+        position: { x: 0, y: (1 - i) * COMPARE_SPACING },
+        tag: { label: cast.label, color: cast.color },
+      });
+      if (body) spawned.push(body);
+    }
 
-  applyThrust() {
+    if (spawned.length === 0) {
+      this.setStatus('비교 선체 생성 실패.', 'bad');
+      return;
+    }
+
+    this.design = null;
+    this.initialItemCount = spawned.reduce((s, b) => s + b.getUserData().hull.items.length, 0);
+    this.compare = true;
+    this.mode = 'sail';
+    this.capture.enabled = false;
+    // 설계 화면의 카메라(캔버스 좌상단 기준)에서 곧장 fitTo 로 넘어가면 첫 1초가 흔들린다.
+    this.view.snapTo({ x: 0, y: 0 });
+    this.view.ppm = PPM * 0.4;
+    document.body.dataset.mode = 'sail';
+    this.setStatus(`세 척 동시 주행 — 같은 입력, 다른 형상. ↑ 를 계속 눌러 속도 차를, ` +
+      `그다음 ← 로 선회 반경 차를 보세요.`, 'ok');
+  }
+
+  // ------------------------------------------------------- 장치 · 저항
+
+  applyControls(dt) {
     const input = inputFromKeys(this.keys);
-    for (const body of this.bodies) applySternThrust(body, input);
+    for (const body of this.bodies) applyDevices(body, input, dt);
   }
 
   // ------------------------------------------------------- 스파이크 ②
@@ -291,15 +389,36 @@ class Harness {
       const { ms } = this.stepper.advance(elapsed);
       this.metrics.push('physics', ms);
       this.stepStress();
-
-      const primary = [...this.bodies][0];
-      if (primary) this.view.follow(primary.getPosition());
+      this.updateCamera();
+      // 패널은 계측 HUD 와 같은 이유로 초당 몇 번이면 충분하다 — 매 프레임 innerHTML 을
+      // 새로 쓰면 비교 화면이 재려는 그 프레임 예산을 패널이 갉아먹는다.
+      if (this.compare && now - (this._lastTable ?? 0) > 150) {
+        this._lastTable = now;
+        this.renderCompareTable();
+      }
     }
 
     this.render();
     this.metrics.push('frame', performance.now() - frameStart);
     this.metrics.render(now);
     requestAnimationFrame((t) => this.loop(t));
+  }
+
+  /** 비교 모드는 세 척을 모두 담도록 줌만 조절하고, 단독 항해는 그 배를 추적한다. */
+  updateCamera() {
+    if (this.bodies.size === 0) return;
+    if (!this.compare) {
+      const primary = [...this.bodies][0];
+      if (primary) this.view.follow(primary.getPosition());
+      return;
+    }
+    const points = [];
+    for (const body of this.bodies) {
+      const c = body.getWorldCenter();
+      const r = body.getUserData().hull.params.length * 0.6;
+      points.push({ x: c.x - r, y: c.y - r }, { x: c.x + r, y: c.y + r });
+    }
+    this.view.fitTo(points, { padding: 120 });
   }
 
   render() {
@@ -333,22 +452,60 @@ class Harness {
     tracePolygon(ctx, world);
     ctx.stroke();
 
-    this.drawOverlays(ctx, view, this.design.origin, this.design.angle, this.previewCache());
+    const params = this.previewCache();
+    this.drawOverlays(ctx, view, this.design.origin, this.design.angle, params);
     this.drawVertices(ctx, view, world);
+    this.drawDraftGauge(view, params);
+  }
+
+  /**
+   * 흘수 게이지 (§2.3 오버레이 요구사항). 값은 패널에도 있지만, 숫자보다 "물에 얼마나
+   * 잠겼는가"가 눈에 먼저 들어와야 재질·장치 질량의 대가가 체감된다.
+   */
+  drawDraftGauge(view, params) {
+    if (!params) return;
+    const ratio = Math.min(params.draft / DRAFT_GAUGE_MAX, 1);
+    const H = 150;
+    const W = 22;
+    const x = 20;
+    const y = Math.max((view.height - H) / 2, 90);
+
+    view.screenSpace((c) => {
+      c.fillStyle = 'rgba(8, 20, 32, 0.8)';
+      c.fillRect(x, y, W, H);
+      c.fillStyle = 'rgba(127, 227, 255, 0.45)';
+      c.fillRect(x, y + H * (1 - ratio), W, H * ratio);
+      c.strokeStyle = ratio >= 1 ? '#ff6b6b' : 'rgba(240, 201, 135, 0.6)';
+      c.lineWidth = 2;
+      c.strokeRect(x, y, W, H);
+
+      c.font = "12px 'NeoDunggeunmo', monospace";
+      c.textAlign = 'center';
+      c.fillStyle = '#f5e6c8';
+      c.fillText('흘수', x + W / 2, y - 8);
+      c.fillText(`${params.draft.toFixed(2)}`, x + W / 2, y + H + 15);
+      c.fillText('m', x + W / 2, y + H + 28);
+    });
   }
 
   renderSail(ctx, view) {
+    const input = inputFromKeys(this.keys);
+    const labels = [];
+
     for (const body of this.bodies) {
       const hull = body.getUserData().hull;
       const pos = body.getPosition();
       const angle = body.getAngle();
+      const accent = hull.tag?.color ?? '#f0c987';
+
+      if (this.showTrajectory) this.drawTrajectory(ctx, view, body, input, accent);
 
       const world = translate(rotate(hull.outline, angle), pos.x, pos.y);
       const worldHoles = hull.holes.map((h) => translate(rotate(h, angle), pos.x, pos.y));
 
       fillPolygonWithHoles(ctx, world, worldHoles, hull.params.material.color + 'aa');
       ctx.lineWidth = view.px(2);
-      ctx.strokeStyle = '#f0c987';
+      ctx.strokeStyle = accent;
       tracePolygon(ctx, world);
       ctx.stroke();
       for (const hole of worldHoles) {
@@ -364,14 +521,7 @@ class Harness {
         ctx.stroke();
       }
 
-      // 부착물 마커 — 절단 시 소속 조각을 따라가는지 눈으로 확인한다.
-      ctx.fillStyle = '#7fe3ff';
-      for (const item of hull.items) {
-        const w = translate(rotate([item], angle), pos.x, pos.y)[0];
-        ctx.beginPath();
-        ctx.arc(w.x, w.y, view.px(4), 0, Math.PI * 2);
-        ctx.fill();
-      }
+      this.drawDevices(ctx, view, hull, pos, angle);
 
       const com = body.getWorldCenter();
       this.drawOverlays(ctx, view, { x: com.x, y: com.y }, angle, hull.params);
@@ -386,6 +536,79 @@ class Harness {
         ctx.lineTo(com.x + v.x * 0.4, com.y + v.y * 0.4);
         ctx.stroke();
       }
+
+      if (hull.tag) {
+        labels.push({
+          at: view.worldToScreen({ x: com.x, y: com.y + hull.params.beam * 0.5 + 1.2 }),
+          color: accent,
+          text: `${hull.tag.label}  ${v.length().toFixed(2)} m/s  ` +
+            `${(body.getAngularVelocity() * 180 / Math.PI).toFixed(0)}°/s`,
+        });
+      }
+    }
+
+    if (labels.length) {
+      view.screenSpace((c) => {
+        c.font = "13px 'NeoDunggeunmo', monospace";
+        c.textAlign = 'center';
+        for (const l of labels) {
+          c.fillStyle = 'rgba(8, 20, 32, 0.75)';
+          const w = c.measureText(l.text).width + 12;
+          c.fillRect(l.at.x - w / 2, l.at.y - 15, w, 19);
+          c.fillStyle = l.color;
+          c.fillText(l.text, l.at.x, l.at.y);
+        }
+      });
+    }
+  }
+
+  /**
+   * 예측 궤적선 — predict.js 가 hydro·devices 의 순수 함수로 적분한 경로를 그대로 그린다.
+   * 실제 항적과 어긋나 보이면 그것은 UI 버그가 아니라 예측이 거짓말을 하고 있다는 뜻이다.
+   */
+  drawTrajectory(ctx, view, body, input, color) {
+    const path = predictPath(body, input);
+    if (path.length < 2) return;
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = view.px(1.6);
+    ctx.strokeStyle = color;
+    ctx.setLineDash([view.px(5), view.px(5)]);
+    traceOpenPath(ctx, path);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 끝점 — 2.5초 뒤 무게중심이 있을 자리
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(path.at(-1).x, path.at(-1).y, view.px(3), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** 기본 3종 장치. 키는 실제 타각만큼 꺾여 그려진다 — 조타 지연이 눈에 보여야 한다. */
+  drawDevices(ctx, view, hull, pos, angle) {
+    const rudderAngle = hull.control?.rudder ?? 0;
+    for (const item of hull.items) {
+      const w = translate(rotate([item], angle), pos.x, pos.y)[0];
+      const anchored = item.type === 'anchor' && hull.anchorJoint != null;
+
+      if (item.type === 'rudder') {
+        // 타판을 선분으로 — 길이는 팔길이가 아니라 보기용 고정값.
+        const len = Math.max(hull.params.length * 0.12, 0.3);
+        const a = angle + Math.PI + rudderAngle;
+        ctx.lineWidth = view.px(3);
+        ctx.strokeStyle = '#ffd35c';
+        ctx.beginPath();
+        ctx.moveTo(w.x, w.y);
+        ctx.lineTo(w.x + Math.cos(a) * len, w.y + Math.sin(a) * len);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = anchored ? '#ff6b6b' : item.type ? '#7fe3ff' : 'rgba(127,227,255,0.5)';
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, view.px(anchored ? 6 : 4), 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -440,7 +663,11 @@ class Harness {
   previewCache() {
     if (!this.design?.ok) return null;
     if (this._previewFor !== this.design) {
-      this._previewParams = computeHullParams(this.design.outline, { material: 'wood' });
+      // 설계 화면의 흘수도 **장치를 얹은 뒤**의 값이어야 정직하다 (§5.1 자동 장착).
+      this._previewParams = computeHullParams(this.design.outline, {
+        material: 'wood',
+        extraMass: deviceExtraMass(defaultDevices(this.design.outline)),
+      });
       this._previewFor = this.design;
     }
     return this._previewParams;
@@ -449,6 +676,27 @@ class Harness {
   renderParamsFromBodies() {
     const primary = [...this.bodies][0];
     this.renderParams(primary?.getUserData().hull.params ?? null, this.design);
+  }
+
+  /** 세 척 비교 패널 — 같은 입력 아래 세 배가 지금 어떻게 다른지를 한 표에 놓는다. */
+  renderCompareTable() {
+    const rows = [...this.bodies]
+      .filter((b) => b.getUserData().hull.tag)
+      .map((b) => {
+        const hull = b.getUserData().hull;
+        const v = b.getLinearVelocity();
+        const drift = Math.abs(b.getLocalVector(v).y); // 뱃머리와 진행 방향의 어긋남
+        return `
+          <div class="p-sep" style="color:${hull.tag.color}">${hull.tag.label}
+            <span style="opacity:.6">· 세장비 ${hull.params.slenderness.toFixed(2)}</span></div>
+          <div class="p-row"><span>속도</span><b>${v.length().toFixed(2)} m/s</b></div>
+          <div class="p-row"><span>선회율</span><b>${(b.getAngularVelocity() * 180 / Math.PI).toFixed(1)} °/s</b></div>
+          <div class="p-row"><span>옆밀림</span><b>${drift.toFixed(2)} m/s</b></div>
+          <div class="p-row"><span>타각</span><b>${((hull.control?.rudder ?? 0) * 180 / Math.PI).toFixed(0)}°</b></div>`;
+      });
+
+    document.getElementById('params').innerHTML = rows.join('')
+      || '<div class="p-row dim">배가 없습니다</div>';
   }
 
   renderParams(params, result) {
@@ -463,13 +711,39 @@ class Harness {
       <div class="p-row"><span>면적</span><b>${params.area.toFixed(2)} m²</b></div>
       <div class="p-row"><span>길이 × 선폭</span><b>${params.length.toFixed(2)} × ${params.beam.toFixed(2)} m</b></div>
       <div class="p-row"><span>세장비</span><b>${params.slenderness.toFixed(2)}</b></div>
-      <div class="p-row"><span>질량</span><b>${(params.mass / 1000).toFixed(2)} t</b></div>
+      <div class="p-row"><span>질량</span><b>${(params.mass / 1000).toFixed(2)} t
+        <span style="opacity:.55">(장치 ${params.extraMass.toFixed(0)} kg)</span></b></div>
       <div class="p-row"><span>관성 모멘트</span><b>${params.inertia.toFixed(0)} kg·m²</b></div>
       <div class="p-row"><span>흘수</span><b>${params.draft.toFixed(3)} m</b></div>
       <div class="p-row hl"><span>저항 전/후</span><b>${params.drag.x.toFixed(0)}</b></div>
       <div class="p-row hl"><span>저항 좌/우</span><b>${params.drag.y.toFixed(0)}</b></div>
       <div class="p-row hl"><span>이방성 비</span><b>${(params.drag.y / Math.max(params.drag.x, 1e-6)).toFixed(1)} : 1</b></div>
+      ${this.deviceRows()}
       ${result ? diagRows(result) : ''}`;
+  }
+
+  /**
+   * 기본 3종 장치(§5.1)와 그 부착점. **선미 오프셋 y 가 0이 아니면 그 배는 직진만 해도
+   * 저절로 돈다** — 비대칭 창발이 수치로 드러나는 자리라 패널에 띄워 둔다.
+   */
+  deviceRows() {
+    const outline = this.design?.ok
+      ? this.design.outline
+      : [...this.bodies][0]?.getUserData().hull.outline;
+    if (!outline) return '';
+
+    const devices = defaultDevices(outline);
+    const oar = devices.find((d) => d.type === 'oar');
+    const rows = devices.map((d) =>
+      `<div class="p-row"><span>${d.name} <span style="opacity:.5">${d.bind}</span></span>` +
+      `<b>(${d.x.toFixed(2)}, ${d.y.toFixed(2)}) · ${d.mass} kg</b></div>`).join('');
+
+    const lever = Math.abs(oar?.y ?? 0);
+    const emergent = lever > 0.02
+      ? `<div class="p-row hl"><span>노 팔길이</span><b>${lever.toFixed(3)} m → 자동 선회</b></div>`
+      : '<div class="p-row"><span>노 팔길이</span><b>0 — 대칭, 직진</b></div>';
+
+    return `<div class="p-sep">기본 장치 (§5.1) · 종단 ${DEVICE_TUNING.oarMaxSpeed} m/s 이하</div>${rows}${emergent}`;
   }
 }
 
@@ -483,16 +757,6 @@ function diagRows(result) {
     <div class="p-row"><span>단순화</span><b>${d.vertsBeforeSimplify ?? '-'} → ${d.verts ?? '-'} (ε ${(d.epsilonUsed ?? 0).toFixed(3)})</b></div>
     <div class="p-row"><span>폐곡선 간극</span><b>${(d.closeGap ?? 0).toFixed(2)} m</b></div>
     <div class="p-row"><span>변환 시간</span><b>${(d.ms ?? 0).toFixed(2)} ms</b></div>`;
-}
-
-/** 선체에 임시로 얹는 마커 3개 — §7.5 "아이템은 소속 폴리곤을 따라간다" 검증용. */
-function markerItems(outline) {
-  const bb = bounds(outline);
-  return [
-    { key: 'A', x: bb.minX + bb.width * 0.2, y: 0 },
-    { key: 'B', x: bb.minX + bb.width * 0.5, y: 0 },
-    { key: 'C', x: bb.minX + bb.width * 0.8, y: 0 },
-  ];
 }
 
 // 디버그 핸들 — 콘솔·자동화 테스트에서 물리 상태를 직접 들여다보기 위한 것.
