@@ -1,11 +1,13 @@
 // 대사 엔진 — 화면 위에 뜨는 오버레이(#dialogue-layer). 어느 화면에서든 쓸 수 있다.
 // runDialogue(lines) — 한 줄씩 타자기 효과, 클릭/Space/Enter로 진행. 끝나면 resolve.
-// line: { speaker, sprite?, visual?, image?, imageCls?, bg?, text }
+// line: { speaker, sprite?, visual?, image?, imageCls?, bg?, pen?, text }
 // - sprite  → 대화창 왼쪽 초상화 (스타듀밸리식)
 // - image/visual → 화면 중앙 큰 비주얼 (컷씬용: 그린 배 등)
 // - bg → 그 줄에서 배경 씬 크로스페이드 (bgscenes.js 키)
+// - pen → 화면 중앙에 펜 맞대기 컷 (penscene.js). 이 줄에서만 뜨고 다음 줄에 사라진다
 
 import { spriteCanvas } from './sprites.js';
+import { penTouchCanvas } from './penscene.js';
 import { setScene } from './pixelbg.js';
 
 const TYPE_SPEED_MS = 22;
@@ -34,6 +36,13 @@ export function runDialogue(lines) {
     let idx = -1;
     let typingId = null;
     let fullText = '';
+    let penCanvas = null;
+
+    // 펜 컷은 requestAnimationFrame으로 계속 도니까 반드시 멈춰준다
+    const stopPen = () => {
+      if (penCanvas) penCanvas.stop();
+      penCanvas = null;
+    };
 
     const showLine = (line) => {
       if (line.bg) setScene(line.bg);
@@ -51,8 +60,13 @@ export function runDialogue(lines) {
       }
 
       // 중앙 비주얼 (컷씬용 이미지/이모지)
+      stopPen();
       els.visual.innerHTML = '';
-      if (line.image) {
+      if (line.pen) {
+        // 펜 맞대기 — 말하는 쪽이 네일이면 400년 만에 펜을 쥐는 그 컷이다
+        penCanvas = penTouchCanvas(line.sprite === 'nail' ? 'nail' : 'seren');
+        els.visual.appendChild(penCanvas);
+      } else if (line.image) {
         const img = document.createElement('img');
         img.src = line.image;
         img.className = `story-img pixel ${line.imageCls || ''}`;
@@ -99,6 +113,7 @@ export function runDialogue(lines) {
 
     const cleanup = () => {
       clearInterval(typingId);
+      stopPen();
       els.layer.removeEventListener('click', onClick);
       window.removeEventListener('keydown', onKey);
       els.layer.hidden = true;
