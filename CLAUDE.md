@@ -93,5 +93,12 @@ docs/                 shipwright_design_doc.md(설계) · dev_plan.md(5일 계�
   저절로 안전하지만, **파손으로 생긴 작은 파편은 발산 임계가 79 m/s까지 내려와** 상한 아래다.
   그래서 `hydro.js` 의 감쇠 충격량 클램프가 반드시 필요하다.
 - planck 의 fixture 정점 한계는 8이 아니라 **12**(`Settings.maxPolygonVertices`).
+- 선미 추력의 모멘트 팔은 선체 길이에 비례하므로, **형상 그대로 두면 길쭉한 배가 더 민첩해진다**
+  (§2.1 의도와 반대). `params.js` 의 과장 계수 둘이 이를 뒤집는다 —
+  `yawAddedMassGain`(주력, 시작·정지를 모두 둔하게) 과 `angularSlendernessGain`(보조, 최고
+  선회율만 낮춤). **불변식: 후자 < 전자.** 넘기면 회전 감속률(dragW/I)이 뒤집혀 길쭉한 배가
+  오히려 빨리 멈춘다. `npm run bench` 가 이 불변식과 §2.1 표 전체를 회귀 검사한다.
+- 추력·저항은 반드시 **물리 스텝마다**(`onPreStep`) 넣는다. 렌더 프레임마다 넣으면 planck 이
+  스텝 후 힘 누산기를 비우는 탓에 조종감이 모니터 주사율에 좌우된다 (240Hz 장비에서 발견).
 - `clipper2-js` 는 `@angular/core` 를 peerDependency 로 선언하지만 런타임 import 은 없다.
   `npm audit` 의 high 경고는 이 프로젝트에선 무해 (번들에 Angular 미포함, 확인 완료).

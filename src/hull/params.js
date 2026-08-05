@@ -16,6 +16,30 @@ export const HYDRO_TUNING = {
   slendernessGain: 0.9,
   /** 회전 저항 계수. 크면 제자리 회전이 둔해진다. */
   angularDrag: 0.5,
+  /**
+   * ★ 과장 계수 A — 요잉 부가질량(added mass). **"회전 둔함"의 주력 노브.**
+   *
+   * 형상만으로 구한 관성 모멘트는 슬루프와 둥근 배 사이에 1.4배 차이밖에 못 만드는데,
+   * 선미 추력의 모멘트 팔은 선체 길이에 비례해 2.1배로 벌어진다. 그래서 그대로 두면
+   * 길쭉한 배가 오히려 더 민첩해진다 (D0 브라우저 실측에서 확인한 역전).
+   *
+   * 물리적 근거: 선회하는 선체는 옆면을 따라 물을 함께 끌고 돌기 때문에 실제 회전 관성이
+   * 기하학적 값보다 크고(부가질량), 이 효과는 길쭉할수록 강하다. 관성이 커지면 §2.1 이
+   * 말하는 "회전 시작·정지가 **모두** 어려움"이 한 항으로 동시에 성립한다.
+   */
+  yawAddedMassGain: 0.45,
+  /**
+   * ★ 과장 계수 B — 길쭉함이 회전 **저항**을 키우는 정도. 최고 선회율만 낮추는 보조 노브.
+   *
+   * 물리적 근거: 회전 저항 토크는 ∫r³dA 라서 끝단이 지배하는데 dragW 는 Rg²(2승)만 쓰므로
+   * 길쭉한 배의 끝단 저항을 과소평가한다. 이 항이 없으면 지속 선회의 종단 각속도가
+   * 오히려 길쭉한 배 쪽이 높아진다.
+   *
+   * ⚠ 밸런싱 불변식: **yawAddedMassGain 보다 작게 유지할 것.** 회전 감속률은 dragW/I 이므로
+   * 이 값이 부가질량 계수를 넘어서면 길쭉한 배가 더 빨리 멈춰버려 "정지도 어렵다"가 깨진다.
+   * 벤치가 이 불변식을 검사한다.
+   */
+  angularSlendernessGain: 0.2,
 };
 
 /**
@@ -49,9 +73,10 @@ export function computeHullParams(outline, options = {}) {
   const hullMass = area * material.areaDensity;
   const mass = hullMass + extraMass;
 
-  // 극관성 모멘트 (무게중심 기준). 면적 2차 모멘트 × 면밀도.
+  // 극관성 모멘트 (무게중심 기준). 면적 2차 모멘트 × 면밀도 × 요잉 부가질량 계수.
   const polarSecondMoment = m.ixx + m.iyy;
-  const inertia = material.areaDensity * polarSecondMoment;
+  const yawInertiaScale = 1 + HYDRO_TUNING.yawAddedMassGain * Math.max(0, slenderness - 1);
+  const inertia = material.areaDensity * polarSecondMoment * yawInertiaScale;
   const radiusOfGyration = Math.sqrt(Math.max(polarSecondMoment / area, 1e-9));
 
   // 흘수 = 총 질량 ÷ (선체 면적 × 물 밀도) — 부력의 스칼라 축약(§2.1). 아이템을 얹을수록 깊어진다.
@@ -64,14 +89,19 @@ export function computeHullParams(outline, options = {}) {
   const cdForward = t.dragBase / (1 + t.slendernessGain * Math.max(0, slenderness - 1));
   const cdLateral = t.dragBase;
 
+  // 회전: 길쭉할수록 끝단이 물을 넓게 훑으므로 저항이 급격히 커진다.
+  const cdAngular = t.angularDrag * (1 + t.angularSlendernessGain * Math.max(0, slenderness - 1));
+
   const draftFactor = Math.max(draft, 1e-3);
   const dragX = 0.5 * t.waterDensity * cdForward * beam * draftFactor;
   const dragY = 0.5 * t.waterDensity * cdLateral * length * draftFactor;
-  const dragW = 0.5 * t.waterDensity * t.angularDrag * draftFactor * area * radiusOfGyration * radiusOfGyration;
+  const dragW = 0.5 * t.waterDensity * cdAngular * draftFactor * area * radiusOfGyration * radiusOfGyration;
 
   return {
     area, length, beam, slenderness,
     mass, hullMass, extraMass, inertia, radiusOfGyration, draft,
+    /** physics/body.js 가 planck 이 산출한 관성에 곱해 줘야 하는 값. */
+    yawInertiaScale,
     material,
     drag: { x: dragX, y: dragY, w: dragW },
     /** 오버레이용 — 방향별 저항의 크기를 반지름으로 표현한 타원. */

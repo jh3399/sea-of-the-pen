@@ -5,6 +5,7 @@
 import './ui/harness.css';
 import { createWorld, FixedStepper, Vec2 } from './physics/world.js';
 import { applyHydroToWorld } from './physics/hydro.js';
+import { applySternThrust, inputFromKeys } from './physics/thrust.js';
 import { createHullBody } from './physics/body.js';
 import { strokeToHull, HULL_DEFAULTS } from './hull/polygon.js';
 import { computeHullParams } from './hull/params.js';
@@ -16,8 +17,6 @@ import { Metrics } from './ui/metrics.js';
 import { rotate, translate, bounds } from './geom/poly.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
-/** 추력은 선체 면적에 비례 — 큰 배엔 큰 기관을 달아준 셈이고, 형상 비교가 공정해진다. */
-const THRUST_PER_AREA = 300;
 const IMPACT_RADIUS = 0.8;
 
 /** 스트레스 테스트용 결정론적 난수 — 매 실행 같은 지점을 깎아야 수치를 비교할 수 있다. */
@@ -189,27 +188,8 @@ class Harness {
   // ------------------------------------------------------- 스파이크 ③
 
   applyThrust() {
-    for (const body of this.bodies) {
-      const hull = body.getUserData()?.hull;
-      if (!hull) continue;
-      const thrust = THRUST_PER_AREA * hull.params.area;
-
-      let fx = 0;
-      let fy = 0;
-      if (this.keys.has('ArrowUp')) fx += thrust;
-      if (this.keys.has('ArrowDown')) fx -= thrust * 0.5;
-      if (this.keys.has('ArrowLeft')) fy += thrust * 0.6;
-      if (this.keys.has('ArrowRight')) fy -= thrust * 0.6;
-      if (fx === 0 && fy === 0) continue;
-
-      // 선미에 힘을 준다 — 횡추력이 곧 요잉 토크가 되어 조향이 창발한다(D2 의 예고편).
-      const stern = new Vec2(-hull.params.length * 0.4, 0);
-      body.applyForce(
-        body.getWorldVector(new Vec2(fx, fy)),
-        body.getWorldPoint(stern),
-        true,
-      );
-    }
+    const input = inputFromKeys(this.keys);
+    for (const body of this.bodies) applySternThrust(body, input);
   }
 
   // ------------------------------------------------------- 스파이크 ②

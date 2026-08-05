@@ -41,6 +41,15 @@ export function createHullBody(world, piece, placement) {
     });
   }
 
+  // 요잉 부가질량 — planck 은 fixture 기하로 관성을 산출하므로, 물을 끌고 도는 몫은
+  // 여기서 더해 준다. 질량과 무게중심은 엔진이 낸 값을 그대로 둔다.
+  if (params.yawInertiaScale > 1.0001) {
+    const md = { mass: 0, center: new Vec2(0, 0), I: 0 };
+    body.getMassData(md);
+    md.I *= params.yawInertiaScale;
+    body.setMassData(md);
+  }
+
   body.setUserData({
     hull: {
       outline: piece.outline,

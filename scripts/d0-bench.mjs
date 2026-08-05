@@ -3,13 +3,14 @@
 // 세 스파이크를 DOM 없이 돌려 수치로 판정한다. 브라우저 HUD 는 육안 확인용이고,
 // 통과/미달의 근거는 이 스크립트의 출력이다. 코퍼스가 고정돼 있어 매 실행 결과가 재현된다.
 import { strokeToHull } from '../src/hull/polygon.js';
-import { computeHullParams } from '../src/hull/params.js';
+import { computeHullParams, HYDRO_TUNING } from '../src/hull/params.js';
 import { decomposeHull } from '../src/hull/decompose.js';
 import { CORPUS, CORPUS_LABELS } from '../src/hull/corpus.js';
 import { Settings } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
 import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
+import { applySternThrust } from '../src/physics/thrust.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { bounds } from '../src/geom/poly.js';
 
@@ -149,6 +150,61 @@ const forwardAfter = Math.abs(forward.body.getLinearVelocity().x);
 check('1초 후 횡속도가 전진속도보다 훨씬 많이 죽는다',
   lateralAfter < forwardAfter * 0.6,
   `횡 6.00 → ${lateralAfter.toFixed(2)} · 전진 6.00 → ${forwardAfter.toFixed(2)} m/s`);
+
+// ── 형상별 조종 특성 (§2.1 표의 의도를 회귀 테스트로 고정) ───────────────
+// 조향 코드는 한 줄도 없다. 아래 차이는 전부 형상 → 저항·관성 → 토크에서 창발한다.
+console.log('\n  조향 코드 0줄 — 아래 차이는 전부 형상 → 저항·관성 → 토크에서 창발한다');
+console.log(`  ${pad('', 14)}${pad('세장비', 8)}${pad('3초 전진', 11)}${pad('횡속 잔존', 11)}${pad('3초 선회', 10)}회전 정지`);
+
+/** 선미 추력을 주고 seconds 초 뒤 상태. */
+function drive(key, input, seconds = 3) {
+  const { world, body } = spawn(key);
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => { applySternThrust(body, input); applyHydroToWorld(world, dt); },
+  });
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) s.advance(FIXED_DT);
+  return { body, turned: Math.abs(body.getAngle() * 180 / Math.PI) };
+}
+
+/** 초기 상태만 주고 감쇠를 본다 — 회전이 섞이지 않아 이방성을 깨끗하게 잰다. */
+function decay(key, { v = null, w = 0 }, seconds = 1) {
+  const { world, body } = spawn(key);
+  if (v) body.setLinearVelocity(new Vec2(v.x, v.y));
+  if (w) body.setAngularVelocity(w);
+  const s = new FixedStepper(world, { onPreStep: (dt) => applyHydroToWorld(world, dt) });
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) s.advance(FIXED_DT);
+  return { speed: body.getLinearVelocity().length(), w: Math.abs(body.getAngularVelocity()) };
+}
+
+const feel = {};
+for (const key of ['sloop', 'round']) {
+  const p = paramTable[key].p;
+  feel[key] = {
+    fwd: drive(key, { forward: 1 }).body.getLinearVelocity().length(),
+    slip: decay(key, { v: { x: 0, y: 6 } }).speed,   // 순수 횡속 6 m/s 를 1초 뒤에 얼마나 남기는가
+    turn: drive(key, { lateral: 1 }).turned,
+    stop: decay(key, { w: 1.0 }, 2).w,               // 각속도 1 rad/s 를 2초 뒤에 얼마나 남기는가
+  };
+  const f = feel[key];
+  console.log(`  ${pad(CORPUS_LABELS[key], 14)}${num(p.slenderness, 2, 6)}  ${num(f.fwd, 2, 8)} m/s` +
+    `${num(f.slip, 2, 8)} m/s${num(f.turn, 1, 8)}°  ${num(f.stop, 3, 8)} rad/s`);
+}
+
+check('길쭉한 배가 더 빠르다 (§2.1 "직진 빠름")',
+  feel.sloop.fwd > feel.round.fwd,
+  `${feel.sloop.fwd.toFixed(2)} > ${feel.round.fwd.toFixed(2)} m/s`);
+check('길쭉한 배가 옆으로 덜 밀린다 (§2.1 "옆밀림 적음")',
+  feel.sloop.slip < feel.round.slip * 0.7,
+  `횡속 6 m/s → 1초 뒤 ${feel.sloop.slip.toFixed(2)} vs ${feel.round.slip.toFixed(2)} m/s`);
+check('길쭉한 배가 회전 시작이 둔하다 (§2.1 "회전 둔함" — 부가질량 과장)',
+  feel.sloop.turn < feel.round.turn * 0.8,
+  `같은 조작 3초 ${feel.sloop.turn.toFixed(1)}° vs ${feel.round.turn.toFixed(1)}°`);
+check('길쭉한 배가 회전 정지도 어렵다 (§2.1 "시작·정지가 모두 어려움")',
+  feel.sloop.stop > feel.round.stop,
+  `1 rad/s → 2초 뒤 ${feel.sloop.stop.toFixed(3)} vs ${feel.round.stop.toFixed(3)} rad/s`);
+check('밸런싱 불변식: 회전 저항 과장 < 부가질량 과장 (넘으면 "정지도 어렵다"가 깨진다)',
+  HYDRO_TUNING.angularSlendernessGain < HYDRO_TUNING.yawAddedMassGain,
+  `저항 ${HYDRO_TUNING.angularSlendernessGain} < 부가질량 ${HYDRO_TUNING.yawAddedMassGain}`);
 
 // ★ 발산 방지 클램프 검증.
 //
