@@ -42,11 +42,15 @@ export class Metrics {
     this.el = element;
     this.visible = true;
     this.series = {
-      frame: new Series('frame', 'ms', 16.6),
+      // 프레임 "작업 시간"과 "간격"은 다른 값이다. 작업 시간만 보고 fps 를 역산하면
+      // 실제로는 30fps 로 돌면서 "7000 fps" 라고 표시하게 된다.
+      frame: new Series('프레임 작업', 'ms', 16.6),
+      interval: new Series('프레임 간격', 'ms', 17.5),
       physics: new Series('physics', 'ms', 4),
       hull: new Series('hull 변환', 'ms', 30),
       carve: new Series('carve', 'ms', 8),
     };
+    this._lastBeat = 0;
     this.notes = {};
     this._lastRender = 0;
 
@@ -60,6 +64,12 @@ export class Metrics {
 
   push(key, ms) {
     this.series[key]?.push(ms);
+  }
+
+  /** rAF 콜백 간격 — 실제 프레임률의 유일한 근거. */
+  beat(now) {
+    if (this._lastBeat) this.series.interval.push(now - this._lastBeat);
+    this._lastBeat = now;
   }
 
   note(key, value) {
@@ -83,7 +93,7 @@ export class Metrics {
     const rows = Object.entries(this.series).map(([key, s]) => {
       const { avg, p95, worst } = s.stats();
       const over = p95 > s.budget;
-      const fps = key === 'frame' && avg > 0 ? ` · ${(1000 / avg).toFixed(0)} fps` : '';
+      const fps = key === 'interval' && avg > 0 ? ` · ${(1000 / avg).toFixed(0)} fps` : '';
       return `<div class="m-row${over ? ' over' : ''}">
         <span class="m-key">${s.label}</span>
         <span class="m-val">${avg.toFixed(2)} / p95 ${p95.toFixed(2)} / max ${worst.toFixed(2)} ${s.unit}</span>

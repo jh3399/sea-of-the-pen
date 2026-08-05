@@ -36,8 +36,15 @@ class Harness {
     this.metrics = new Metrics(document.getElementById('metrics'));
 
     this.world = createWorld();
+    // 추력도 저항과 같이 **물리 스텝마다** 넣어야 한다. 렌더 프레임마다 넣으면 한 프레임이
+    // 2스텝을 돌 때 둘째 스텝은 힘이 0이 되고(planck 은 스텝 후 힘 누산기를 비운다), 반대로
+    // 스텝이 안 도는 프레임에서는 힘이 중복 누적된다. 조향이 전부 힘에서 나오는 게임이라
+    // 이게 틀리면 D1·D2 의 모든 조종감이 화면 주사율에 따라 달라진다.
     this.stepper = new FixedStepper(this.world, {
-      onPreStep: (dt) => applyHydroToWorld(this.world, dt),
+      onPreStep: (dt) => {
+        this.applyThrust();
+        applyHydroToWorld(this.world, dt);
+      },
     });
 
     this.mode = 'design';
@@ -296,11 +303,11 @@ class Harness {
 
   loop(now) {
     const frameStart = performance.now();
+    this.metrics.beat(now);
     const elapsed = Math.min((now - this.lastFrame) / 1000, 0.25);
     this.lastFrame = now;
 
     if (this.mode === 'sail') {
-      this.applyThrust();
       const { ms } = this.stepper.advance(elapsed);
       this.metrics.push('physics', ms);
       this.stepStress();
@@ -508,4 +515,5 @@ function markerItems(outline) {
   ];
 }
 
-new Harness();
+// 디버그 핸들 — 콘솔·자동화 테스트에서 물리 상태를 직접 들여다보기 위한 것.
+window.shipwright = new Harness();
