@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "bench": "node scripts/d0-bench.mjs"
+    "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
     "clipper2-js": "^1.2.4",
