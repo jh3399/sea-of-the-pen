@@ -16,7 +16,7 @@ export const SONG = [
   '섬 끝에 살던 형제가 하나',
   '아우는 배를 다 못 그렸대요',
   '뱃머리 하나만 남았대요',
-  '가지 마 가지 마 흰 숲엔 가지 마',
+  '가지 마 가지 마 유리 숲엔 가지 마',
 ];
 
 /** 엔딩에서 마지막 줄만 바뀐다 */
@@ -38,7 +38,7 @@ export const SCRIPT = {
     { speaker: '', bg: 'village_pale', text: '이 바다에서는, 진심을 담아 그린 그림이 진짜가 된다.' },
     { speaker: '', text: '다들 그걸 당연하게 여긴다. 왜 그런지는 아무도 모른다.' },
     ...songLines(SONG),
-    { speaker: '촌장', sprite: 'examiner', text: '루야. 이번 달에도 저 골목까지 색이 빠졌다.' },
+    { speaker: '촌장', sprite: 'examiner', text: '루야. 이번 달에도 저 골목까지 굳었다.' },
     { speaker: '촌장', sprite: 'examiner', text: '이제 정말 섬을 떠날 때가 됐어.' },
     { speaker: '루', sprite: 'ru', text: '떠나면요? 그럼 여긴 어떻게 되는데요.' },
     { speaker: '촌장', sprite: 'examiner', text: '…그냥 그렇게 되는 거지. 400년째 그래 왔으니까.' },
@@ -51,9 +51,9 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '(다들 그리면 진짜가 되는데, 내 것만 종이에 남는다.)' },
   ],
 
-  // [S-02] 흰 숲 — 세렌과의 만남
+  // [S-02] 유리 숲 — 세렌과의 만남
   SEREN_MEET: [
-    { speaker: '루', sprite: 'ru', bg: 'white_forest', text: '(색이 없어. 소리도 없고.)' },
+    { speaker: '루', sprite: 'ru', bg: 'crystal_forest', text: '(전부 자주색이야. 소리도 없고.)' },
     { speaker: '루', sprite: 'ru', text: '(여기서부터는… 아무것도 안 움직이네.)' },
     { speaker: '', text: '숲 한가운데에 무너진 집이 하나 있다. 오래된 신전처럼 보인다.' },
     { speaker: '???', text: '―― 야.' },
@@ -71,7 +71,7 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '원래 이름은요?' },
     { speaker: '세렌', sprite: 'seren', text: '…몰라. 기억이 없어.' },
     { speaker: '세렌', sprite: 'seren', text: '웃기지? 400년을 굴러다녔는데 내가 누군지는 몰라.' },
-    { speaker: '루', sprite: 'ru', text: '우리 마을, 색이 빠지고 있어요. 여기서 시작된 거죠?' },
+    { speaker: '루', sprite: 'ru', text: '우리 마을, 자주빛으로 굳어가고 있어요. 여기서 시작된 거죠?' },
     { speaker: '세렌', sprite: 'seren', text: '응. 그리고 되돌릴 방법도 있어.' },
     { speaker: '세렌', sprite: 'seren', text: '세상 끝에 섬이 하나 있어. 거기 아주 맑은 물이 고여 있는데,' },
     { speaker: '세렌', sprite: 'seren', text: '성수라고 해.' },
@@ -134,10 +134,10 @@ export const SCRIPT = {
     { speaker: '', text: '포탄이 몇 발 명중한다. 검은 돛의 배가 기울기 시작한다.' },
     { speaker: '루', sprite: 'ru', text: '맞았어요! 기울어요!' },
     { speaker: '세렌', sprite: 'seren', text: '조금만 더―' },
-    { speaker: '', text: '흰 안개가 갑판 위로 퍼진다. 배에서 색이 빠지기 시작한다.' },
-    { speaker: '루', sprite: 'ru', text: '배가… 색이 빠져요.' },
-    { speaker: '세렌', sprite: 'seren', text: '그 색 빼앗기면 배는 끝이야. 뛰어내려!!' },
-    { speaker: '', image: shipPixel, imageCls: 'broken', text: '(내가 그린 배가… 하얗게―)' },
+    { speaker: '', text: '자주빛 안개가 갑판 위로 퍼진다. 배가 굳기 시작한다.' },
+    { speaker: '루', sprite: 'ru', text: '배가… 굳어가요. 무거워져요.' },
+    { speaker: '세렌', sprite: 'seren', text: '굳으면 그대로 가라앉아. 뛰어내려!!' },
+    { speaker: '', image: shipPixel, imageCls: 'broken', text: '(내가 그린 배가… 자주색으로―)' },
     { speaker: '', text: '실력으로 진 게 아니었다.' },
   ],
 
@@ -288,33 +288,33 @@ export const SCRIPT = {
   ],
 
   ICE_KORI: [
-    { speaker: '코리', text: '저 위에 흰 새가 살아. 아주 오래됐대.' },
+    { speaker: '코리', text: '저 위에 큰 새가 살아. 아주 오래됐대.' },
     { speaker: '코리', text: '근데 이상한 게 뭔 줄 알아?' },
-    { speaker: '코리', text: '저 새는 원래도 흰색이었거든.' },
-    { speaker: '코리', text: '그래서 색이 빠졌는지 아닌지, 아무도 몰라.' },
+    { speaker: '코리', text: '결정에 하도 오래 덮여 있어서,' },
+    { speaker: '코리', text: '원래 무슨 색이었는지 아무도 몰라.' },
     { speaker: '코리', text: '…본인도 모를걸.' },
   ],
 
   TUN_INTRO_EXTRA: [
-    { speaker: '루', sprite: 'ru', text: '원래 흰색이에요, 아니면 색이 빠진 거예요?' },
-    { speaker: '세렌', sprite: 'seren', text: '…구분이 안 되네.' },
-    { speaker: '툰', sprite: 'tun', text: '둘 다다.' },
-    { speaker: '툰', sprite: 'tun', text: '나는 흰 새였고, 지금은 색이 빠진 흰 새다.' },
-    { speaker: '툰', sprite: 'tun', text: '아무도 차이를 모른다. 400년 동안 아무도.' },
+    { speaker: '루', sprite: 'ru', text: '저게… 원래 무슨 색이었을까요.' },
+    { speaker: '세렌', sprite: 'seren', text: '결정에 다 덮여서 모르겠는데.' },
+    { speaker: '툰', sprite: 'tun', text: '나도 모른다.' },
+    { speaker: '툰', sprite: 'tun', text: '400년을 이러고 있었더니 내가 무슨 색이었는지 잊었다.' },
+    { speaker: '툰', sprite: 'tun', text: '흰색이었던 것도 같고, 아니었던 것도 같다.' },
   ],
 
   // [S-14] 툰의 거부
   TUN_WIN: [
-    { speaker: '', text: '색이 돌아오려는 순간, 툰이 날개로 막는다.' },
+    { speaker: '', text: '결정에 금이 가려는 순간, 툰이 날개로 막는다.' },
     { speaker: '툰', sprite: 'tun', text: '그만해라.' },
     { speaker: '루', sprite: 'ru', text: '네? 다 왔는데요. 조금만 더 하면―' },
     { speaker: '툰', sprite: 'tun', text: '그러니까 그만하라는 거다.' },
-    { speaker: '툰', sprite: 'tun', text: '색이 돌아오면 나는 제정신으로 돌아온다.' },
+    { speaker: '툰', sprite: 'tun', text: '이게 깨지면 나는 제정신으로 돌아온다.' },
     { speaker: '툰', sprite: 'tun', text: '그러면 400년 동안 내가 무슨 짓을 했는지 전부 기억해야 한다.' },
     { speaker: '툰', sprite: 'tun', text: '이 얼음에 박힌 배들이 왜 여기 있는지,' },
     { speaker: '툰', sprite: 'tun', text: '누가 그렇게 만들었는지.' },
     { speaker: '루', sprite: 'ru', text: '……' },
-    { speaker: '툰', sprite: 'tun', text: '지금은 아무것도 모른다. 편하다.' },
+    { speaker: '툰', sprite: 'tun', text: '지금은 내 색도 잊었다. 편하다.' },
     { speaker: '툰', sprite: 'tun', text: '그러니 이대로 두어라.' },
     { speaker: '루', sprite: 'ru', text: '(…뭐라고 해야 하지.)' },
     { speaker: '루', sprite: 'ru', text: '(되돌리는 게 좋은 거라고 생각했는데.)' },
@@ -348,7 +348,7 @@ export const SCRIPT = {
     { speaker: '세렌', sprite: 'seren', text: '하나는 잉크를 바다에 버리려 했고, 하나는 막았고.' },
     { speaker: '루', sprite: 'ru', text: '그러다 하나가 죽었고…' },
     { speaker: '루', sprite: 'ru', text: '남은 하나가 피 묻은 손으로 잉크병을 열었고.' },
-    { speaker: '루', sprite: 'ru', text: '그래서 색이 빠지기 시작한 거예요.' },
+    { speaker: '루', sprite: 'ru', text: '그래서 전부 굳기 시작한 거예요.' },
     { speaker: '세렌', sprite: 'seren', text: '노래 그대로네.' },
     { speaker: '루', sprite: 'ru', text: '아니요. 노래가 더 정확해요.' },
     { speaker: '루', sprite: 'ru', text: '어른들은 "죽였다"고 하는데, 그림에는 놓친 걸로 그려져 있어요.' },
@@ -400,6 +400,9 @@ export const SCRIPT = {
   ],
 
   NAIL_INTRO: [
+    { speaker: '루', sprite: 'ru', text: '(가까이서 보니…)' },
+    { speaker: '루', sprite: 'ru', text: '(검은 게 아니네. 자주색이잖아.)' },
+    { speaker: '루', sprite: 'ru', text: '(피가 섞인 색. 그 밤의 색이야.)' },
     { speaker: '네일', sprite: 'nail', text: '고맙다.' },
     { speaker: '루', sprite: 'ru', text: '…누구세요.' },
     { speaker: '네일', sprite: 'nail', text: '나는 400년 동안 그 종이를 한 장도 못 가져왔다.' },
@@ -475,7 +478,7 @@ export const SCRIPT = {
     { speaker: '네일', sprite: 'nail', text: '놓쳤으면 잡았어야지.' },
     { speaker: '', text: '네일이 품에서 오래된 펜을 꺼낸다. 400년간 쓰지 않은 것이다.' },
     { speaker: '네일', sprite: 'nail', pen: true, text: '…400년 만이다.' },
-    { speaker: '', text: '굳어 있던 몸에 색이 돌아온다. 그리고 처음으로, 늙기 시작한다.' },
+    { speaker: '', text: '굳어 있던 몸의 자주빛이 갈라지고, 색이 돌아온다. 그리고 처음으로, 늙기 시작한다.' },
     { speaker: '네일', sprite: 'nail', text: '이제 죽을 수 있겠군.' },
     { speaker: '네일', sprite: 'nail', text: '얘야.' },
     { speaker: '네일', sprite: 'nail', text: '내가 굳힌 바다는 너무 넓어서 네 힘으로 안 된다.' },
@@ -513,7 +516,7 @@ export const SCRIPT = {
   // ══════════ 에필로그 ══════════
 
   EPILOGUE: [
-    { speaker: '촌장', sprite: 'examiner', bg: 'village_alive', text: '지붕이… 지붕 색이 돌아왔어!' },
+    { speaker: '촌장', sprite: 'examiner', bg: 'village_alive', text: '지붕이… 지붕 결정이 깨졌어! 색이 돌아왔어!' },
     { speaker: '리코', text: '야아아! 꽃 폈다! 꽃!!' },
     { speaker: '루', sprite: 'ru', text: '(돌아왔다.)' },
     { speaker: '루', sprite: 'ru', text: '(근데 바다는 아직 하얘.)' },
@@ -543,7 +546,7 @@ export const SCRIPT = {
     { speaker: '촌장', sprite: 'examiner', text: '루야. 또 그림 그리고 있었냐.' },
     { speaker: '촌장', sprite: 'examiner', text: '…뭐, 나쁘다는 건 아니다.' },
     { speaker: '촌장', sprite: 'examiner', text: '색이 저 골목까지 왔어. 다음 달이면 우물까지 오겠지.' },
-    { speaker: '촌장', sprite: 'examiner', text: '흰 숲엔 절대 가지 마라. 들어간 사람 중에 돌아온 사람이 없어.' },
+    { speaker: '촌장', sprite: 'examiner', text: '유리 숲엔 절대 가지 마라. 들어간 사람 중에 돌아온 사람이 없어.' },
   ],
 
   NARU_KID: [

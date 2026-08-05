@@ -215,7 +215,7 @@ function drawVillage(ctx, { w, h, sec }, life) {
     fill(ctx, hx + bw / 4, by + 5, 4, 4, C('#ffe07a', '#b9babc'));                            // 창
   }
 
-  // 꽃 — 색이 빠지면 회색 점만 남는다
+  // 꽃 — 굳으면 자주빛 결정만 남는다  (TODO: 자주빛 재작업)
   for (let i = 0; i < 26; i++) {
     const fx = hash(i, 185) * w;
     const fy = ground + 3 + hash(i, 186) * (h - ground - 5);
@@ -229,10 +229,11 @@ function drawVillage(ctx, { w, h, sec }, life) {
 function village_pale(ctx, env) { drawVillage(ctx, env, 0.35); }
 function village_alive(ctx, env) { drawVillage(ctx, env, 1); }
 
-// ---------------- white_forest — 흰 숲 (오염의 진원지) ----------------
-// 색이 완전히 빠진 숲. 어둡지 않고 하얗게 질려 있다. 아무것도 움직이지 않는다.
+// ---------------- crystal_forest — 유리 숲 (오염의 진원지) ----------------
+// 통째로 자주빛 결정이 된 숲. 아무것도 움직이지 않는다.
+// TODO(다음 세션): 현재는 흰색 팔레트다. 자주빛(#3a1f3f→#7a4a7c, 하이라이트 #c9a0cf)으로 재작업.
 
-function white_forest(ctx, { w, h, sec }) {
+function crystal_forest(ctx, { w, h, sec }) {
   const hz = R(h * 0.72);
   skyGradient(ctx, w, 0, hz, ['#c8ccce', '#d3d6d8', '#dee0e1', '#e8e9ea', '#f2f2f2']);
 
@@ -295,7 +296,7 @@ function fog_pale(ctx, { w, h, sec }) {
   tallShip(ctx, sx, hz - 2, 1.8, { hull: '#2a2e33', deck: '#343940', sail: '#3d434a', mast: '#24282d', flag: '#4a5058' });
   ctx.globalAlpha = 1;
 
-  // 밀려오는 흰 안개 — 닿는 곳의 색이 빠진다
+  // 밀려오는 안개 — 닿는 곳이 굳는다  (TODO: 자주빛 재작업)
   fogBands(ctx, w, sec, { y0: hz * 0.35, y1: h * 0.95, color: '#e8ebed', alpha: 0.28, count: 10, speed: 9, thick: 9, seed: 202 });
   fogBands(ctx, w, sec, { y0: hz * 0.7, y1: h, color: '#ffffff', alpha: 0.22, count: 6, speed: 15, thick: 12, seed: 203 });
 
@@ -690,7 +691,7 @@ export const SCENES = {
   dawn_wreck,
   village_pale,
   village_alive,
-  white_forest,
+  crystal_forest,
   fog_pale,
   jungle_green,
   jungle_gold,
