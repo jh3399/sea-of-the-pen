@@ -1,9 +1,11 @@
 // 대사(스토리 씬) 엔진.
 // runDialogue(lines) — 한 줄씩 타자기 효과로 출력, 클릭하면 다음으로. 끝나면 resolve.
-// line: { speaker: '세렌', sprite?: 'seren', visual?: '🌊', text: '...', image?: dataUrl, imageCls?: 'broken' }
+// line: { speaker: '세렌', sprite?: 'seren', visual?: '🌊', text: '...', image?: dataUrl, imageCls?: 'broken', bg?: 'harbor' }
 // sprite(픽셀아트) > image(그린 그림) > visual(이모지) > 없음(배경만) 순으로 표시.
+// bg가 있으면 그 줄에서 배경 씬이 크로스페이드로 바뀐다 (씬 키는 bgscenes.js 참고).
 
 import { spriteCanvas } from './sprites.js';
+import { setScene } from './pixelbg.js';
 
 const TYPE_SPEED_MS = 22;
 
@@ -28,6 +30,7 @@ export function runDialogue(lines) {
     let fullText = '';
 
     const showLine = (line) => {
+      if (line.bg) setScene(line.bg);
       els.name.textContent = line.speaker || '';
       els.name.style.visibility = line.speaker ? 'visible' : 'hidden';
 

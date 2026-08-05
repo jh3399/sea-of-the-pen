@@ -2,9 +2,11 @@ import { DrawingCanvas } from './drawing.js';
 import { judge, calcDamage } from './judge.js';
 import { runDialogue } from './dialogue.js';
 import { spriteCanvas } from './sprites.js';
-import { startPixelBg } from './pixelbg.js';
+import { startPixelBg, setScene } from './pixelbg.js';
 
 startPixelBg(document.querySelector('#bg-canvas'));
+// 배경 확인용 — 콘솔에서 __bg('volcano') 처럼 호출하면 그 씬으로 전환된다.
+window.__bg = setScene;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -16,6 +18,7 @@ const BOSS_GAR = {
   maxHp: 300,
   weaknesses: ['weapon'],
   resists: [],
+  bg: 'jungle_gold',
   drawPrompt: '⚔️ 무기를 그려라!',
   introLog: '세렌: "저 재규어는 무기에 약해! 뭐든 무기를 그려봐!"',
   attackName: '할퀴기',
@@ -47,8 +50,9 @@ function showScreen(id) {
 
 // ---------------- 배 그리기 씬 ----------------
 
-function drawShip({ prompt, hint, button, judged }) {
+function drawShip({ prompt, hint, button, judged, bg }) {
   return new Promise((resolve) => {
+    if (bg) setScene(bg);
     $('#ship-prompt').textContent = prompt;
     $('#ship-log').textContent = hint;
     $('#btn-ship-submit').textContent = button;
@@ -131,6 +135,7 @@ function runBattle(boss) {
     state.judging = false;
     state.battleResolve = resolve;
 
+    if (boss.bg) setScene(boss.bg);
     $('#boss-name').textContent = boss.name;
     const bossEl = $('#boss-sprite');
     bossEl.innerHTML = '';
@@ -225,15 +230,15 @@ function bossCounterattack() {
 // ---------------- 스토리 진행 ----------------
 
 const INTRO = [
-  { speaker: '', text: '이 세계에서, 진심을 담아 그린 그림은 실체가 된다.' },
+  { speaker: '', bg: 'harbor', text: '이 세계에서, 진심을 담아 그린 그림은 실체가 된다.' },
   { speaker: '시험관', sprite: 'examiner', text: '지금부터 항해사 시험의 최종 과제를 시작한다.' },
   { speaker: '시험관', sprite: 'examiner', text: '과제는 단 하나. 너의 배를 그려 바다에 띄우고 — 전설의 황금섬, 그 단서를 가져와라.' },
   { speaker: '루', sprite: 'ru', text: '(그림엔 자신 없지만... 해보자. 나의 배다!)' },
 ];
 
 const nailAttack = (shipPixel) => [
-  { speaker: '', image: shipPixel, text: '출항! 순조로운 항해... 였는데.' },
-  { speaker: '', text: '갑자기 검은 안개가 바다를 뒤덮는다.' },
+  { speaker: '', bg: 'sea_day', image: shipPixel, text: '출항! 순조로운 항해... 였는데.' },
+  { speaker: '', bg: 'fog_black', text: '갑자기 검은 안개가 바다를 뒤덮는다.' },
   { speaker: '???', sprite: 'nail', text: '크크크... 그 낡은 배로 어딜 가시겠다?' },
   { speaker: '검은 함장 네일', sprite: 'nail', text: '황금섬으로 가는 바다는 전부 내 것이다. 그 배, 부숴주지!' },
   { speaker: '', image: shipPixel, imageCls: 'broken', text: '콰지직—!! 네일의 포격에 배가 산산조각 났다...' },
@@ -241,7 +246,7 @@ const nailAttack = (shipPixel) => [
 ];
 
 const PIGGY_MEET = [
-  { speaker: '???', text: '이봐! 정신 차려! 일어나라고!' },
+  { speaker: '???', bg: 'dawn_wreck', text: '이봐! 정신 차려! 일어나라고!' },
   { speaker: '세렌', sprite: 'seren', text: '나는 세렌. 전설의 배 "바람호"의 뱃머리... 였던 몸이지. 지금은 보다시피 통나무 신세지만.' },
   { speaker: '세렌', sprite: 'seren', text: '네가 그린 배, 봤어. 솜씨는 솔직히 엉망인데... 이상하게 진심이 담겨 있더라.' },
   { speaker: '세렌', sprite: 'seren', text: '"손이 아니라 마음으로 그리는 자가 나타나면, 바람호는 다시 떠오른다" — 모루 영감의 예언이야. 어쩌면 너일지도.' },
@@ -250,12 +255,12 @@ const PIGGY_MEET = [
 
 const sailLines = (result, shipPixel) => [
   { speaker: '세렌', sprite: 'seren', text: `오오...! ${result ? `"${result.comment}"` : '좋아, 이 정도면 바다에 띄울 만해!'}` },
-  { speaker: '', image: shipPixel, text: '좋아, 출항이다! 첫 목적지는 황금 수풀섬 — 도안 조각의 기운이 느껴져!' },
-  { speaker: '세렌', sprite: 'seren', text: '조심해. 섬의 수호자 가르가 네일의 저주로 폭주하고 있어. 무기를 그려서 정신 차리게 해주자!' },
+  { speaker: '', bg: 'sea_day', image: shipPixel, text: '좋아, 출항이다! 첫 목적지는 황금 수풀섬 — 도안 조각의 기운이 느껴져!' },
+  { speaker: '세렌', sprite: 'seren', bg: 'jungle_gold', text: '조심해. 섬의 수호자 가르가 네일의 저주로 폭주하고 있어. 무기를 그려서 정신 차리게 해주자!' },
 ];
 
 const DEFEAT = [
-  { speaker: '세렌', sprite: 'seren', text: '배가 버티질 못해! 일단 후퇴다!' },
+  { speaker: '세렌', sprite: 'seren', bg: 'dawn_wreck', text: '배가 버티질 못해! 일단 후퇴다!' },
   { speaker: '세렌', sprite: 'seren', text: '괜찮아. 우리에겐 펜이 있잖아? 다시 그리면 돼 — 이번엔 더 튼튼하게!' },
 ];
 
@@ -268,6 +273,7 @@ async function gameFlow() {
     hint: '어떤 배든 좋다. 너만의 배를 그려서 출항하자!',
     button: '출항!',
     judged: false,
+    bg: 'harbor',
   });
   state.shipPng = first.png;
   state.shipPixel = first.pixel;
@@ -282,6 +288,7 @@ async function gameFlow() {
     hint: '잘 그린 배일수록 튼튼하다. (판정 점수 = 배의 내구도)',
     button: '다시 출항!',
     judged: true,
+    bg: 'dawn_wreck',
   });
   state.shipPng = second.png;
   state.shipPixel = second.pixel;
@@ -298,6 +305,7 @@ async function gameFlow() {
       hint: '잘 그린 배일수록 튼튼하다. (판정 점수 = 배의 내구도)',
       button: '재출항!',
       judged: true,
+      bg: 'dawn_wreck',
     });
     state.shipPng = retry.png;
     state.shipPixel = retry.pixel;
