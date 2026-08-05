@@ -54,8 +54,14 @@ export function createHullBody(world, piece, placement) {
     hull: {
       outline: piece.outline,
       holes: piece.holes ?? [],
-      // 부착물(§4.1). D0 은 마커 점으로 "아이템은 소속 폴리곤을 따라간다"만 검증한다.
+      // 부착물(§4.1) — D1 부터 여기에 기본 3종 장치가 들어온다. 파손 시 소속 폴리곤을
+      // 따라가므로, 키를 얹은 선미가 잘려나가면 조향을 그대로 잃는다 (§5.2 원칙 3).
       items: piece.items ?? [],
+      /** 조종 상태(타각·닻). devices.js 가 첫 호출에서 채운다. */
+      control: null,
+      anchorJoint: null,
+      /** 비교 주행용 표식 {label, color}. 물리에는 영향이 없다. */
+      tag: piece.tag ?? null,
       parts,
       params,
     },
@@ -74,17 +80,20 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
   const linearVelocity = oldBody.getLinearVelocity().clone();
   const angularVelocity = oldBody.getAngularVelocity();
   const oldCenter = oldBody.getWorldCenter().clone();
-  const material = oldBody.getUserData()?.hull?.params?.material;
+  const oldHull = oldBody.getUserData()?.hull;
+  const material = oldHull?.params?.material;
 
   const created = [];
   for (const piece of pieces) {
     // 조각의 무게중심을 로컬 원점으로 다시 맞춘다 — 회전 저항 클램프가 이를 전제로 한다.
     const m = polygonMoments(piece.outline);
     if (!m) continue;
+    const items = (piece.items ?? []).map((it) => ({ ...it, x: it.x - m.cx, y: it.y - m.cy }));
     const centered = {
       outline: translate(piece.outline, -m.cx, -m.cy),
       holes: (piece.holes ?? []).map((h) => translate(h, -m.cx, -m.cy)),
-      items: (piece.items ?? []).map((it) => ({ ...it, x: it.x - m.cx, y: it.y - m.cy })),
+      items,
+      tag: oldHull?.tag ?? null,
     };
 
     // 로컬 무게중심의 월드 위치를 새 강체의 원점으로 삼는다.
@@ -94,6 +103,8 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       position: { x: worldPos.x, y: worldPos.y },
       angle,
       material: options.material ?? material?.key ?? 'wood',
+      // 흘수는 **살아남은** 장치의 질량만 반영한다 — 떨어져 나간 닻은 더 이상 배를 누르지 않는다.
+      extraMass: items.reduce((s, it) => s + (it.mass ?? 0), 0),
     });
     if (!body) continue;
 

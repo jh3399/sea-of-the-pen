@@ -19,6 +19,43 @@ const ANGULAR_SAFETY = 0.8;
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
 /**
+ * ★ 순수 함수 — 선체 로컬 좌표계에서의 저항력·저항 토크.
+ *
+ * `applyHydroDrag`(실제 시뮬레이션)와 `predict.js`(예측 궤적선)가 **같은 식**을 쓰게 하려고
+ * 분리했다. 예측이 실제와 어긋나면 궤적선은 없느니만 못하다.
+ *
+ * @param {{x:number,y:number,w:number}} drag params.drag
+ * @param {{u:number,v:number,w:number}} vel 로컬 전진·횡·각속도
+ * @param {number} mass 클램프 기준 질량 (planck 이 산출한 값)
+ * @param {number} inertia 클램프 기준 관성
+ * @param {number} dt 고정 타임스텝
+ * @returns {{fx:number, fy:number, torque:number}} 로컬 좌표계
+ */
+export function hydroForcesLocal(drag, vel, mass, inertia, dt) {
+  if (!drag || dt <= 0) return { fx: 0, fy: 0, torque: 0 };
+
+  // --- 병진 저항 ---
+  let fx = -drag.x * Math.abs(vel.u) * vel.u;
+  let fy = -drag.y * Math.abs(vel.v) * vel.v;
+  if (mass > 0) {
+    // |F|·dt ≤ m·|v| — 이 스텝에 속도를 0 아래로 끌어내리지 못하게 한다.
+    const maxFx = (Math.abs(vel.u) * mass) / dt;
+    const maxFy = (Math.abs(vel.v) * mass) / dt;
+    fx = clamp(fx, -maxFx, maxFx);
+    fy = clamp(fy, -maxFy, maxFy);
+  }
+
+  // --- 회전 저항 ---
+  let torque = -drag.w * Math.abs(vel.w) * vel.w;
+  if (inertia > 0) {
+    const maxTorque = (ANGULAR_SAFETY * Math.abs(vel.w) * inertia) / dt;
+    torque = clamp(torque, -maxTorque, maxTorque);
+  }
+
+  return { fx, fy, torque };
+}
+
+/**
  * 강체 하나에 이방성 유체 저항을 적용한다. 매 물리 스텝 직전에 호출.
  * @param {Body} body userData.hull.params.drag 를 가진 선체 강체
  * @param {number} dt 고정 타임스텝
@@ -27,30 +64,17 @@ export function applyHydroDrag(body, dt) {
   const drag = body.getUserData()?.hull?.params?.drag;
   if (!drag || dt <= 0) return;
 
-  // --- 병진 저항 ---
   const vLocal = body.getLocalVector(body.getLinearVelocity());
-  let fx = -drag.x * Math.abs(vLocal.x) * vLocal.x;
-  let fy = -drag.y * Math.abs(vLocal.y) * vLocal.y;
+  const f = hydroForcesLocal(
+    drag,
+    { u: vLocal.x, v: vLocal.y, w: body.getAngularVelocity() },
+    body.getMass(),
+    body.getInertia(),
+    dt,
+  );
 
-  const mass = body.getMass();
-  if (mass > 0) {
-    // |F|·dt ≤ m·|v| — 이 스텝에 속도를 0 아래로 끌어내리지 못하게 한다.
-    const maxFx = (Math.abs(vLocal.x) * mass) / dt;
-    const maxFy = (Math.abs(vLocal.y) * mass) / dt;
-    fx = clamp(fx, -maxFx, maxFx);
-    fy = clamp(fy, -maxFy, maxFy);
-  }
-  body.applyForceToCenter(body.getWorldVector(new Vec2(fx, fy)), true);
-
-  // --- 회전 저항 ---
-  const w = body.getAngularVelocity();
-  let torque = -drag.w * Math.abs(w) * w;
-  const inertia = body.getInertia();
-  if (inertia > 0) {
-    const maxTorque = (ANGULAR_SAFETY * Math.abs(w) * inertia) / dt;
-    torque = clamp(torque, -maxTorque, maxTorque);
-  }
-  body.applyTorque(torque, true);
+  body.applyForceToCenter(body.getWorldVector(new Vec2(f.fx, f.fy)), true);
+  body.applyTorque(f.torque, true);
 }
 
 /** 월드의 모든 선체 강체에 적용. FixedStepper 의 onPreStep 에 물린다. */
