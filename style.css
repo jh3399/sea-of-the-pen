@@ -161,6 +161,27 @@ body::after {
   box-shadow: 0 0 0 3px var(--ink);
   padding: 8px;
 }
+
+/* 출항 연출 — 액자를 벗고 내가 그린 배가 바다 위를 크게 지나간다 */
+.story-img.sailing {
+  max-width: min(720px, 92vw);
+  max-height: 56vh;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, .35));
+  animation: ship-sail 9s linear infinite, ship-bob 2.4s ease-in-out infinite;
+}
+@keyframes ship-sail {
+  0%   { transform: translateX(-64vw); }
+  100% { transform: translateX(64vw); }
+}
+@keyframes ship-bob {
+  0%, 100% { margin-top: 0; }
+  50%      { margin-top: 10px; }
+}
+
 .story-img.broken { animation: ship-break 1.1s ease-in forwards; }
 @keyframes ship-break {
   0% { transform: rotate(0) translateY(0); filter: none; }

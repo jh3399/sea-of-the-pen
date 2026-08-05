@@ -156,6 +156,182 @@ function jungle_gold(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.08);
 }
 
+// ---------------- 나루 마을 (루의 고향) ----------------
+// life: 0 = 색이 다 빠진 상태, 1 = 색이 돌아온 상태.
+// 오염은 검정이 아니라 '바램'이다 — 플레이어가 긋는 선이 검정이라 검정을 악으로 두면 문법이 충돌한다.
+
+/** 두 색을 life 비율로 섞는다 (색 빠짐 표현의 핵심) */
+function fade(alive, dead, life) {
+  const p = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const a = p(alive);
+  const d = p(dead);
+  const m = a.map((v, i) => R(d[i] + (v - d[i]) * life));
+  return `rgb(${m[0]},${m[1]},${m[2]})`;
+}
+
+function drawVillage(ctx, { w, h, sec }, life) {
+  const hz = R(h * 0.62);
+  const C = (alive, dead) => fade(alive, dead, life);
+
+  skyGradient(ctx, w, 0, hz, [
+    C('#3f8fc4', '#7c8288'), C('#63aed6', '#8f9499'), C('#8ecbe4', '#a3a7ab'),
+    C('#bde3ef', '#bcbfc2'), C('#e2f4f7', '#d6d8da'),
+  ]);
+  sun(ctx, w * 0.78, hz * 0.22, 8, sec, {
+    core: C('#fff3c4', '#e8e8e8'), rim: C('#ffd977', '#d2d2d2'), glow: C('#ffbe5c', '#c0c0c0'),
+  });
+  clouds(ctx, w, sec, { y: hz * 0.24, color: C('#ffffff', '#c8cacc'), alpha: 0.7, count: 5, speed: 2, scale: 1.4, seed: 181 });
+
+  // 뒤편 언덕
+  hills(ctx, w, hz + 2, C('#4f8a3e', '#7d8079'), { amp: 18, freq: 1.1, seed: 182 });
+  hills(ctx, w, hz + 8, C('#3a6b2e', '#696c66'), { amp: 12, freq: 1.8, seed: 183, offsetX: 50, base: 4 });
+
+  // 바다
+  const bands = seaBands(ctx, w, h, hz + 8, [
+    C('#2f8fb0', '#75797d'), C('#2a80a0', '#6c7074'), C('#25728f', '#63676b'),
+    C('#20647e', '#5a5e62'), C('#1a556d', '#515559'), C('#15465b', '#484c50'),
+  ]);
+  waves(ctx, w, bands, sec, C('#9fe0ee', '#9a9da0'), { alpha: 0.4, speed: 6, seed: 184 });
+
+  // 마을 집들 (앞 레이어) — 지붕 색이 제일 먼저 빠진다
+  const ground = R(h * 0.82);
+  fill(ctx, 0, ground, w, h - ground, C('#6b5a3a', '#77787a'));
+  fill(ctx, 0, ground, w, 2, C('#8a7448', '#8b8c8e'));
+
+  const houses = [
+    { x: 0.08, s: 1.1, roof: '#c8443c' }, { x: 0.26, s: 0.9, roof: '#d98a2b' },
+    { x: 0.46, s: 1.2, roof: '#3f7ab8' }, { x: 0.68, s: 1.0, roof: '#c8443c' },
+    { x: 0.86, s: 0.85, roof: '#5aa84a' },
+  ];
+  for (const ho of houses) {
+    const hx = R(w * ho.x);
+    const bw = R(26 * ho.s);
+    const bh = R(20 * ho.s);
+    const by = ground - bh;
+    fill(ctx, hx - bw / 2, by, bw, bh, C('#e6d9b8', '#a8a9ab'));          // 벽
+    fill(ctx, hx - bw / 2, by, bw, 2, C('#c9bb96', '#95969a'));
+    fill(ctx, hx - bw / 2 - 2, by - R(7 * ho.s), bw + 4, R(7 * ho.s), C(ho.roof, '#8e8f92')); // 지붕
+    fill(ctx, hx - 3, by + bh - R(9 * ho.s), 6, R(9 * ho.s), C('#6b4a24', '#7a7b7d'));        // 문
+    fill(ctx, hx + bw / 4, by + 5, 4, 4, C('#ffe07a', '#b9babc'));                            // 창
+  }
+
+  // 꽃 — 색이 빠지면 회색 점만 남는다
+  for (let i = 0; i < 26; i++) {
+    const fx = hash(i, 185) * w;
+    const fy = ground + 3 + hash(i, 186) * (h - ground - 5);
+    fill(ctx, fx, fy, 2, 2, C(['#ff7a9c', '#ffd24a', '#9a6cff'][i % 3], '#8d8e90'));
+  }
+
+  if (life < 0.99) overlay(ctx, w, h, '#cfd2d4', (1 - life) * 0.16);
+  vignette(ctx, w, h, 0.05);
+}
+
+function village_pale(ctx, env) { drawVillage(ctx, env, 0.35); }
+function village_alive(ctx, env) { drawVillage(ctx, env, 1); }
+
+// ---------------- white_forest — 흰 숲 (오염의 진원지) ----------------
+// 색이 완전히 빠진 숲. 어둡지 않고 하얗게 질려 있다. 아무것도 움직이지 않는다.
+
+function white_forest(ctx, { w, h, sec }) {
+  const hz = R(h * 0.72);
+  skyGradient(ctx, w, 0, hz, ['#c8ccce', '#d3d6d8', '#dee0e1', '#e8e9ea', '#f2f2f2']);
+
+  // 안개 — 유일하게 움직이는 것
+  fogBands(ctx, w, sec, { y0: hz * 0.2, y1: h * 0.95, color: '#ffffff', alpha: 0.2, count: 8, speed: 2.5, thick: 8, seed: 191 });
+
+  // 흰 나무들 — 뒤에서 앞으로 3겹
+  const trees = (count, base, scale, col, seed) => {
+    for (let i = 0; i < count; i++) {
+      const tx = R(w * ((i + 0.5) / count) + (hash(i, seed) - 0.5) * (w / count));
+      const th = R((30 + hash(i, seed + 1) * 26) * scale);
+      const tw = Math.max(2, R(3 * scale));
+      fill(ctx, tx, base - th, tw, th, col);
+      // 가지
+      for (let k = 0; k < 3; k++) {
+        const by = base - th + (k + 1) * (th / 4);
+        const dir = hash(i * 4 + k, seed + 2) > 0.5 ? 1 : -1;
+        const bl = R((5 + hash(i * 4 + k, seed + 3) * 7) * scale);
+        fill(ctx, dir > 0 ? tx : tx - bl, by, bl, Math.max(1, R(scale)), col);
+      }
+    }
+  };
+  trees(14, hz + 4, 0.8, '#dcdfe0', 192);
+  trees(10, hz + 14, 1.15, '#c6cacc', 193);
+
+  // 바닥
+  fill(ctx, 0, hz + 10, w, h - hz - 10, '#e4e6e7');
+  fill(ctx, 0, hz + 10, w, 2, '#d0d3d5');
+
+  // 무너진 신전 — 400년 전 형제가 살던 집
+  const sx = R(w * 0.5);
+  const sy = hz + 12;
+  fill(ctx, sx - 30, sy - 30, 60, 30, '#b8bcbe');            // 벽
+  fill(ctx, sx - 34, sy - 36, 68, 6, '#a9adaf');             // 처마
+  fill(ctx, sx - 10, sy - 20, 20, 20, '#8f9497');            // 열린 문 (안이 더 하얗다)
+  fill(ctx, sx - 8, sy - 18, 16, 18, '#e8eaeb');
+  for (let i = 0; i < 4; i++) fill(ctx, sx - 26 + i * 16, sy - 26, 3, 22, '#a2a6a8'); // 기둥
+  fill(ctx, sx + 22, sy - 8, 14, 8, '#c0c4c6');              // 무너진 잔해
+  fill(ctx, sx - 40, sy - 6, 10, 6, '#c0c4c6');
+
+  // 앞쪽 흰 나무 (가장 크게)
+  trees(6, h + 6, 1.9, '#eceeef', 194);
+
+  overlay(ctx, w, h, '#ffffff', 0.1);
+  vignette(ctx, w, h, 0.06);
+}
+
+// ---------------- fog_pale — 색을 지우며 밀려오는 안개 (프롤로그 습격) ----------------
+
+function fog_pale(ctx, { w, h, sec }) {
+  const hz = R(h * 0.58);
+  skyGradient(ctx, w, 0, hz, ['#7d858c', '#8e959b', '#a0a6ab', '#b3b8bc', '#c6cacd']);
+
+  const bands = seaBands(ctx, w, h, hz, ['#5c666e', '#556069', '#4e5962', '#47525b', '#404b54', '#39444d']);
+  waves(ctx, w, bands, sec, '#98a2aa', { alpha: 0.35, speed: 10, seed: 201 });
+
+  // 안개 속 검은 돛의 배 — 실루엣만. 얼굴은 절대 안 보인다.
+  const sx = w * 0.66 + Math.sin(sec * 0.4) * 3;
+  ctx.globalAlpha = 0.7;
+  tallShip(ctx, sx, hz - 2, 1.8, { hull: '#2a2e33', deck: '#343940', sail: '#3d434a', mast: '#24282d', flag: '#4a5058' });
+  ctx.globalAlpha = 1;
+
+  // 밀려오는 흰 안개 — 닿는 곳의 색이 빠진다
+  fogBands(ctx, w, sec, { y0: hz * 0.35, y1: h * 0.95, color: '#e8ebed', alpha: 0.28, count: 10, speed: 9, thick: 9, seed: 202 });
+  fogBands(ctx, w, sec, { y0: hz * 0.7, y1: h, color: '#ffffff', alpha: 0.22, count: 6, speed: 15, thick: 12, seed: 203 });
+
+  overlay(ctx, w, h, '#dfe3e6', 0.12 + 0.04 * Math.sin(sec * 1.5));
+  vignette(ctx, w, h, 0.1, 7);
+}
+
+// ---------------- jungle_green — 1섬 시작의 섬 (초록 수풀) ----------------
+// 금빛은 엔딩의 황금섬(=고인 황금 잉크)에만 쓴다. 첫 섬은 평범한 초록 섬이어야
+// 마지막에 바다가 금빛으로 물드는 장면이 산다.
+
+function jungle_green(ctx, { w, h, sec }) {
+  const hz = R(h * 0.66);
+  skyGradient(ctx, w, 0, hz, ['#1f6f9e', '#3a92bd', '#66b3d3', '#98cfe1', '#c8e8ee']);
+  sun(ctx, w * 0.72, hz * 0.24, 9, sec, {});
+  clouds(ctx, w, sec, { y: hz * 0.2, color: '#ffffff', alpha: 0.7, count: 5, speed: 2.2, scale: 1.4, seed: 161 });
+  clouds(ctx, w, sec, { y: hz * 0.44, color: '#e8f6ff', alpha: 0.45, count: 4, speed: 4, scale: 1, seed: 162 });
+  // 정글 능선 3겹 (멀리→가까이)
+  hills(ctx, w, hz + 2, '#3f7a3a', { amp: 26, freq: 1.0, seed: 163 });
+  hills(ctx, w, hz + 6, '#2c5a2a', { amp: 20, freq: 1.6, seed: 164, offsetX: 40, base: 4 });
+  hills(ctx, w, hz + 12, '#1a3a1c', { amp: 14, freq: 2.4, seed: 165, offsetX: 90, base: 10 });
+  // 야자수 숲
+  for (let i = 0; i < 9; i++) {
+    const x = w * (0.04 + i * 0.115) + hash(i, 166) * 8;
+    const s = 0.9 + hash(i, 167) * 0.7;
+    const sway = Math.sin(sec * 0.9 + i) * 1.2;
+    palm(ctx, x + sway, hz + 10 + hash(i, 168) * 6, s, '#3b2a16', '#16401a');
+  }
+  const bands = seaBands(ctx, w, h, hz + 12, ['#2f93a6', '#2a8496', '#257686', '#206776', '#1a5866', '#154956']);
+  glitter(ctx, w * 0.72, hz + 12, h, sec, '#dff6ff', { alpha: 0.45, count: 80, seed: 169 });
+  waves(ctx, w, bands, sec, '#9fe4ee', { alpha: 0.42, speed: 7, seed: 170 });
+  // 숲에서 날리는 홀씨
+  particles(ctx, w, h, sec, { count: 34, color: '#eaffd8', speed: 6, dir: -1, sway: 12, alpha: 0.6, seed: 171, y0: 0.3, y1: 1, twinkle: true });
+  vignette(ctx, w, h, 0.06);
+}
+
 // ---------------- volcano — 2섬 피라 (붉은 화산) ----------------
 
 function volcano(ctx, { w, h, sec }) {
@@ -512,6 +688,11 @@ export const SCENES = {
   sea_day,
   fog_black,
   dawn_wreck,
+  village_pale,
+  village_alive,
+  white_forest,
+  fog_pale,
+  jungle_green,
   jungle_gold,
   volcano,
   night_storm,

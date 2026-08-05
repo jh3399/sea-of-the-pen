@@ -1,127 +1,330 @@
-// 세계 지도 데이터 — 바다 크기, 섬 7곳 + 최종전, 도안 조각, 마을(NPC·소품), 보스.
-// 항해(sail.js)와 섬 탐험(island.js)은 이 데이터를 받아서 그대로 렌더한다.
-// 진행 규칙: 섬 N은 섬 N-1을 클리어해야 열린다. 최종전은 조각 7개를 모아야 열린다.
+// 세계 데이터 (STORY.md v5) — 바다, 섬 3곳 + 고향 + 황금섬, 도안 3장, 마을, 수호자.
+//
+// 진행: 나루 마을(고향) → 덩굴섬 → 거울섬 → 얼음섬 → [바람호 건조 → 돌풍] → 황금섬 → 고향 귀환
+// 도안이 3장인 건 실제 선박 도면(선도)이 측면도·반폭도·정면도 3면으로 이뤄지기 때문이다.
+// 세 장이 다 모여야 선체 형태가 완전히 정의된다 — 수집 동기가 신화가 아니라 공학적 사실이다.
 
-export const SEA = { w: 1500, h: 1000 };
-export const START = { x: 190, y: 830 };   // 출항 부두 앞바다
+export const SEA = { w: 1400, h: 900 };
+export const START = { x: 210, y: 760 };   // 나루 마을 앞바다
 
-// 도안 조각 7개 (docs/STORY.md의 표와 1:1)
+// 도안 세 장 = 선도 3면
 export const PIECES = [
-  { id: 'hull',       icon: '🛡', name: '강한 선체',   effect: '배 체력 증가' },
-  { id: 'sail',       icon: '🌬', name: '순풍의 돛',   effect: '회피율 증가' },
-  { id: 'rudder',     icon: '⏱', name: '키',          effect: '그리기 시간 연장' },
-  { id: 'anchor',     icon: '⚓', name: '닻',          effect: '보스를 한 턴 묶는다' },
-  { id: 'cannon',     icon: '💥', name: '대포',        effect: '공격력 증가' },
-  { id: 'lantern',    icon: '🏮', name: '등불',        effect: '어둠·안개 기믹 무효' },
-  { id: 'figurehead', icon: '⭐', name: '뱃머리',      effect: '세렌 부활 · 힌트 강화' },
+  {
+    id: 'sheer',
+    icon: '📐',
+    name: '측면도',
+    en: 'Sheer Plan',
+    view: '옆에서 본 그림',
+    effect: '갑판 곡선과 뱃머리·고물의 형태가 정해진다',
+  },
+  {
+    id: 'halfbreadth',
+    icon: '🪞',
+    name: '반폭도',
+    en: 'Half-Breadth Plan',
+    view: '위에서 본 그림',
+    effect: '배는 좌우가 같아 절반만 그린다. 나머지는 거울로 뜬다',
+  },
+  {
+    id: 'body',
+    icon: '🧊',
+    name: '정면도',
+    en: 'Body Plan',
+    view: '앞뒤에서 본 그림',
+    effect: '여러 위치의 단면을 겹쳐 그려 배의 속을 정한다',
+  },
 ];
 
+// 펜 — 실력이 아니라 재료를 정한다. 같은 그림이 펜에 따라 다른 배가 된다.
+export const PENS = {
+  none: { name: '낡은 펜',  ink: '#8a8a8a', ship: '(실체가 되지 않는다)',
+          desc: '잉크에 절어 본 적이 없어 그림이 종이에만 남는다.' },
+  wood: { name: '나무 펜',  ink: '#c89a5c', ship: '목선(木船)',
+          desc: '세렌의 몸을 깎아 만들었다. 가볍고 빠르지만 큰 바람은 못 견딘다.' },
+  iron: { name: '철 펜',    ink: '#9fb4c4', ship: '철갑선(鐵甲船)',
+          desc: '얼어붙은 배들의 철을 녹여 만들었다. 무겁지만 부서지지 않는다.' },
+  gold: { name: '황금 펜',  ink: '#ffd24a', ship: '―',
+          desc: '펜촉에 바다의 잉크가 그대로 차올랐다.' },
+};
+export const penInk = (key) => (PENS[key] || PENS.wood).ink;
+
 export const ISLANDS = [
+  // ── 고향. 항상 열려 있고 언제든 돌아올 수 있다 ─────────────────
   {
-    key: 'gar',
-    name: '황금 수풀섬',
-    x: 420, y: 700, r: 62,
-    bg: 'jungle_gold',
+    key: 'naru',
+    name: '나루 마을',
+    kind: 'home',
+    x: 210, y: 760, r: 58,
+    bg: 'village_pale',
     music: 'village',
-    piece: 'hull',
+    piece: null,
     village: {
-      key: 'gar',
-      name: '황금 수풀섬 — 야자 마을',
-      bg: 'jungle_gold',
-      width: 780,
-      groundColor: '#3a300f',
-      groundTop: '#5f4d16',
+      key: 'naru',
+      name: '나루 마을',
+      bg: 'village_pale',
+      width: 720,
+      groundColor: '#4a4238',
+      groundTop: '#6b5a3a',
       props: [
-        { type: 'sign', x: 96, label: '야자 마을' },
-        { type: 'palm', x: 150 }, { type: 'palm', x: 205 },
-        { type: 'house', x: 280 },
-        { type: 'crate', x: 342 }, { type: 'barrel', x: 362 },
-        { type: 'house', x: 470 },
-        { type: 'palm', x: 545 },
-        { type: 'torch', x: 600 }, { type: 'torch', x: 700 },
+        { type: 'sign', x: 90 },
+        { type: 'house', x: 170 }, { type: 'house', x: 300 },
+        { type: 'crate', x: 250 }, { type: 'barrel', x: 268 },
+        { type: 'house', x: 450 },
+        { type: 'palm', x: 540 }, { type: 'torch', x: 620 },
       ],
       npcs: [
         {
-          id: 'seren', name: '세렌', bust: 'seren', x: 130,
-          chibi: { base: 'bird', tint: '#f2f6fb' },
-          lines: [
-            { speaker: '세렌', sprite: 'seren', text: '여기가 황금 수풀섬이야. 공기에서 잉크 냄새가 나… 도안 조각이 가까워.' },
-            { speaker: '세렌', sprite: 'seren', text: '무작정 쳐들어가는 건 초보 항해사나 하는 짓이야. 마을 사람들 얘기부터 들어보자.' },
-            { speaker: '세렌', sprite: 'seren', text: '준비되면 섬 안쪽 — 가르의 신전으로 가.' },
-          ],
+          id: 'chief', name: '촌장', bust: 'examiner', x: 200,
+          chibi: { base: 'capy', tint: '#9a8b98' },
+          linesKey: 'NARU_CHIEF',
         },
         {
-          id: 'riko', name: '리코', x: 310,
+          id: 'kid', name: '마을 아이', x: 380,
+          chibi: { base: 'parrot', tint: '#e8cba4' },
+          linesKey: 'NARU_KID',
+        },
+      ],
+      gate: {
+        x: 670,
+        label: '🌫 흰 숲으로',
+        action: 'boss',
+        requires: [],
+        lockedMsg: '',
+      },
+    },
+    boss: null,
+  },
+
+  // ── 1막. 덩굴섬 — 측면도 / 가르 / 땅 ──────────────────────────
+  {
+    key: 'vine',
+    name: '덩굴섬',
+    kind: 'island',
+    act: 1,
+    x: 520, y: 640, r: 60,
+    bg: 'jungle_green',
+    music: 'village',
+    piece: 'sheer',
+    village: {
+      key: 'vine',
+      name: '덩굴섬 — 덩굴 마을',
+      bg: 'jungle_green',
+      width: 780,
+      groundColor: '#2e2a12',
+      groundTop: '#5f4d16',
+      props: [
+        { type: 'sign', x: 96 },
+        { type: 'palm', x: 150 }, { type: 'palm', x: 205 },
+        { type: 'house', x: 285 },
+        { type: 'crate', x: 345 }, { type: 'barrel', x: 364 },
+        { type: 'house', x: 470 },
+        { type: 'palm', x: 548 },
+        { type: 'torch', x: 610 }, { type: 'torch', x: 700 },
+      ],
+      npcs: [
+        {
+          id: 'riko', name: '리코', x: 300,
           chibi: { base: 'parrot', tint: '#3fd27f' },
-          lines: [
-            { speaker: '리코', text: '어서 와! 못 보던 얼굴이네. 그 배… 직접 그렸어? 요즘 보기 드문 정직한 선이야.' },
-            { speaker: '리코', text: '가르 님? 원래는 섬을 지키는 착한 수호자였어. 검은 배가 다녀간 뒤로 눈이 붉어졌지만….' },
-            { speaker: '리코', text: '빈손으로 신전에 가지 마. 뭐든 "그려서" 들고 가라구. 여기 바다에선 그림이 곧 물건이니까.' },
-          ],
+          linesKey: 'VINE_RIKO',
         },
         {
-          id: 'popo', name: '포포 장로', x: 500,
+          id: 'popo', name: '포포 장로', bust: 'examiner', x: 495,
           chibi: { base: 'capy', tint: '#b98a5a' },
-          lines: [
-            { speaker: '포포 장로', text: '허허, 모루 영감의 잉크 냄새가 나는구먼. 자네, 펜을 쓰는 아이인가.' },
-            { speaker: '포포 장로', text: '신전 제단에 반짝이는 종이가 있다는 소문이야. 도안 조각… 영감이 남긴 것이지.' },
-            { speaker: '포포 장로', text: '가르를 미워하진 말게. 저 아이도 검은 잉크의 피해자라네.' },
-          ],
+          linesKey: 'VINE_POPO',
         },
       ],
       gate: {
         x: 730,
         label: '⚔ 가르의 신전으로',
         action: 'boss',
-        requires: ['seren'],
-        lockedMsg: '세렌: "잠깐! 먼저 나랑 얘기 좀 해. 부두 쪽에 있어."',
+        requires: ['popo'],
+        lockedMsg: '포포 장로: "그리는 법부터 배우게. 지금 실력으론 문턱도 못 넘어."',
       },
     },
     boss: {
-      name: '황금 재규어 가르',
+      name: '가르',
+      title: '수풀의 파수꾼',
       sprite: 'gar',
-      maxHp: 300,
-      weaknesses: ['weapon'],
+      maxHp: 280,
+      weaknesses: ['weapon', 'light'],
       resists: [],
-      bg: 'jungle_gold',
-      drawPrompt: '⚔️ 무기를 그려라!',
-      introLog: '세렌: "저 재규어는 무기에 약해! 뭐든 무기를 그려봐!"',
+      bg: 'jungle_green',
+      drawPrompt: '🎨 색을 되돌려라!',
+      introLog: '세렌: "죽이지 마. 색을 되돌려줘. 뭐든 그려서 저 안에 색을 넣어."',
       attackName: '할퀴기',
-      attackMin: 12,
-      attackMax: 26,
-      situation: '보스전(황금 재규어) — 플레이어에게 무기를 그리라고 요청함',
-      reward: { id: 'gar_whisker', icon: '✨', name: '가르의 금빛 수염', desc: '제정신을 찾은 가르가 뽑아 준 수염. 반짝인다.' },
-      winLines: [
-        { speaker: '', text: '검은 잉크가 걷히고, 가르의 눈이 금빛으로 돌아온다.' },
-        { speaker: '세렌', sprite: 'seren', text: '해냈어! 제단의 종이 — 그게 도안 조각이야!' },
-      ],
+      attackMin: 10,
+      attackMax: 22,
+      situation: '수호자 가르 — 색이 빠져 미쳐 있다. 플레이어에게 색을 되돌릴 그림을 그리라고 요청함',
+      reward: { id: 'gar_fur', icon: '✨', name: '가르의 금빛 털', desc: '색이 돌아온 가르가 남겨 준 털 한 줌.' },
     },
   },
-  { key: 'pira', name: '불뱀 화산섬', x: 760, y: 780, r: 58, bg: 'volcano', music: 'village', piece: 'sail', village: null, boss: null },
-  { key: 'nar', name: '해 없는 바다', x: 1050, y: 660, r: 55, bg: 'night_storm', music: 'tension', piece: 'rudder', village: null, boss: null },
-  { key: 'tun', name: '얼음 무덤섬', x: 1250, y: 420, r: 58, bg: 'iceberg', music: 'village', piece: 'anchor', village: null, boss: null },
-  { key: 'echo', name: '거울 안개섬', x: 950, y: 300, r: 55, bg: 'mirror_fog', music: 'tension', piece: 'cannon', village: null, boss: null },
-  { key: 'muna', name: '배들의 무덤', x: 620, y: 220, r: 58, bg: 'shipyard_grave', music: 'tension', piece: 'lantern', village: null, boss: null },
-  { key: 'workshop', name: '모루의 공방', x: 300, y: 260, r: 55, bg: 'workshop', music: 'village', piece: 'figurehead', village: null, boss: null },
-  { key: 'final', name: '세계의 끝', x: 130, y: 70, r: 65, bg: 'world_end', music: 'tension', piece: null, village: null, boss: null },
+
+  // ── 2막. 거울섬 — 반폭도 / 나르 / 바다 ────────────────────────
+  {
+    key: 'mirror',
+    name: '거울섬',
+    kind: 'island',
+    act: 2,
+    x: 880, y: 430, r: 58,
+    bg: 'mirror_fog',
+    music: 'tension',
+    piece: 'halfbreadth',
+    village: {
+      key: 'mirror',
+      name: '거울섬 — 물가 마을',
+      bg: 'mirror_fog',
+      width: 720,
+      groundColor: '#4a4f52',
+      groundTop: '#7d8489',
+      props: [
+        { type: 'sign', x: 90 },
+        { type: 'house', x: 200 }, { type: 'barrel', x: 265 },
+        { type: 'house', x: 380 }, { type: 'crate', x: 445 },
+        { type: 'torch', x: 540 },
+      ],
+      npcs: [
+        {
+          id: 'mira', name: '미라', x: 260,
+          chibi: { base: 'bird', tint: '#cfe0ea' },
+          linesKey: 'MIRROR_MIRA',
+        },
+      ],
+      gate: {
+        x: 665,
+        label: '⚔ 거울 물가로',
+        action: 'boss',
+        requires: ['mira'],
+        lockedMsg: '세렌: "잠깐. 마을 사람 얘기부터 듣고 가자."',
+      },
+    },
+    boss: {
+      name: '나르',
+      title: '거울 물의 수호자',
+      sprite: 'nar',
+      maxHp: 340,
+      weaknesses: ['light', 'wind'],
+      resists: ['water'],
+      bg: 'mirror_fog',
+      drawPrompt: '🎨 색을 되돌려라!',
+      introLog: '세렌: "두 마리 아니야. 하나야. 물에 비친 거."',
+      attackName: '물결치기',
+      attackMin: 14,
+      attackMax: 26,
+      situation: '수호자 나르 — 물에 비친 자신과 한 쌍으로 움직이는 거대한 흰 가오리',
+      reward: { id: 'nar_scale', icon: '🪞', name: '나르의 비늘', desc: '보는 각도에 따라 색이 바뀐다.' },
+    },
+  },
+
+  // ── 3막. 얼음섬 — 정면도 / 툰 / 하늘 ──────────────────────────
+  {
+    key: 'ice',
+    name: '얼음섬',
+    kind: 'island',
+    act: 3,
+    x: 1180, y: 200, r: 60,
+    bg: 'iceberg',
+    music: 'tension',
+    piece: 'body',
+    village: {
+      key: 'ice',
+      name: '얼음섬 — 얼음 나루',
+      bg: 'iceberg',
+      width: 700,
+      groundColor: '#3d5766',
+      groundTop: '#7fb3c4',
+      props: [
+        { type: 'sign', x: 90 },
+        { type: 'house', x: 210 }, { type: 'crate', x: 280 },
+        { type: 'barrel', x: 300 }, { type: 'house', x: 420 },
+        { type: 'torch', x: 500 },
+      ],
+      npcs: [
+        {
+          id: 'kori', name: '코리', x: 250,
+          chibi: { base: 'capy', tint: '#a8c4d4' },
+          linesKey: 'ICE_KORI',
+        },
+      ],
+      gate: {
+        x: 650,
+        label: '⚔ 빙벽 꼭대기로',
+        action: 'boss',
+        requires: ['kori'],
+        lockedMsg: '세렌: "저 위는 위험해. 먼저 얘기 좀 듣고 가자."',
+      },
+    },
+    boss: {
+      name: '툰',
+      title: '흰 하늘의 수호자',
+      sprite: 'tun',
+      maxHp: 400,
+      weaknesses: ['fire', 'light'],
+      resists: ['ice'],
+      bg: 'iceberg',
+      drawPrompt: '🎨 색을 되돌려라!',
+      introLog: '툰: "나는 흰 새였고, 지금은 색이 빠진 흰 새다. 아무도 차이를 모른다."',
+      attackName: '내리치기',
+      attackMin: 16,
+      attackMax: 30,
+      situation: '수호자 툰 — 빙벽 꼭대기의 거대한 흰 새. 색이 빠졌는지 알아보기 어렵다',
+      reward: { id: 'tun_feather', icon: '🪶', name: '툰의 깃털', desc: '흰색인데, 빛에 비추면 아주 옅게 파랗다.' },
+    },
+  },
+
+  // ── 5막. 황금섬 — 최종전. 도안 3장을 다 모아야 열린다 ─────────
+  {
+    key: 'golden',
+    name: '황금섬',
+    kind: 'final',
+    x: 1100, y: 690, r: 66,
+    bg: 'golden_isle',
+    music: 'tension',
+    piece: null,
+    village: null,
+    boss: {
+      name: '네일',
+      title: '검은 함장',
+      sprite: 'nail',
+      maxHp: 520,
+      weaknesses: [],
+      resists: [],
+      bg: 'golden_isle',
+      drawPrompt: '✏️ 새로운 것을 그려라!',
+      introLog: '세렌: "조심해! 저 자식 네 그림을 그대로 따라 해!"',
+      attackName: '베끼기',
+      attackMin: 18,
+      attackMax: 34,
+      situation: '최종전 — 상대는 스스로 그리지 못하고 베끼기만 한다. 플레이어는 매번 새로운 것을 그려야 한다',
+      /** 이번 판에 이미 쓴 그림은 복제당해 무효가 된다 (창조 vs 약탈) */
+      copycat: true,
+      reward: null,
+    },
+  },
 ];
 
 export const islandByKey = (key) => ISLANDS.find((i) => i.key === key);
 export const pieceById = (id) => PIECES.find((p) => p.id === id);
 
-/** 진행 상태(cleared 목록)를 반영해 sail.js에 넘길 섬 목록을 만든다 */
+/** 도안을 얻는 순서대로 나열한 섬 (고향·최종전 제외) */
+export const ACT_ISLANDS = ISLANDS.filter((i) => i.kind === 'island');
+
+/** 진행 상태를 반영해 sail.js에 넘길 섬 목록 */
 export function islandsWithProgress(cleared, pieceCount) {
-  return ISLANDS.map((isl, i) => {
-    let locked;
-    if (isl.key === 'final') locked = pieceCount < 7;
-    else locked = i > 0 && !cleared.includes(ISLANDS[i - 1].key);
+  return ISLANDS.map((isl) => {
+    let locked = false;
+    if (isl.kind === 'final') {
+      locked = pieceCount < PIECES.length;          // 도안 3장을 다 모아야 열린다
+    } else if (isl.kind === 'island') {
+      const idx = ACT_ISLANDS.findIndex((a) => a.key === isl.key);
+      locked = idx > 0 && !cleared.includes(ACT_ISLANDS[idx - 1].key);
+    }
     return { ...isl, locked, cleared: cleared.includes(isl.key) };
   });
 }
 
-/** 다음 목적지 — 아직 클리어하지 않은 첫 섬 */
+/** 다음 목적지 */
 export function nextTargetKey(cleared, pieceCount) {
-  const list = islandsWithProgress(cleared, pieceCount);
-  const next = list.find((i) => !i.cleared && !i.locked);
-  return next ? next.key : 'final';
+  if (pieceCount >= PIECES.length) return 'golden';
+  const next = ACT_ISLANDS.find((i) => !cleared.includes(i.key));
+  return next ? next.key : 'golden';
 }
