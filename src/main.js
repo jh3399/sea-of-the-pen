@@ -12,7 +12,7 @@ import { runDialogue, setDialogueBlip } from './dialogue.js';
 import { spriteCanvas } from './sprites.js';
 import { startPixelBg, setScene } from './pixelbg.js';
 import { state, loadGame, saveGame, resetGame, hasSave, addPiece, addItem, markCleared } from './state.js';
-import { SEA, START, PIECES, ISLANDS, ACT_ISLANDS, islandByKey, pieceById, islandsWithProgress, nextTargetKey } from './world.js';
+import { SEA, START, PIECES, ISLANDS, ACT_ISLANDS, PENS, penInk, islandByKey, pieceById, islandsWithProgress, nextTargetKey } from './world.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from './audio/audio.js';
 import { runSail } from './sail.js';
 import { runIsland } from './island.js';
@@ -195,6 +195,14 @@ function renderInventory(body) {
   }
   body.appendChild(grid);
 
+  const pen = PENS[state.pen] || PENS.none;
+  const penRow = document.createElement('div');
+  penRow.className = 'inv-item';
+  penRow.innerHTML = `<span class="ico">🖊</span><span>${pen.name}</span>`
+    + `<span class="desc">${pen.ship}</span>`;
+  penRow.title = pen.desc;
+  body.appendChild(penRow);
+
   if (state.emblem) {
     const em = document.createElement('div');
     em.className = 'inv-item';
@@ -291,7 +299,8 @@ async function onDrawSubmit() {
   }
 
   const png = shipCanvas.toPngDataUrl();
-  const pixel = shipCanvas.toPixelDataUrl();
+  // 펜 재료가 곧 배의 재료 — 같은 그림이 나무면 갈색 목선, 철이면 회청색 철갑선이 된다.
+  const pixel = shipCanvas.toPixelDataUrl(72, penInk(state.pen));
   sfx('submit');
 
   if (!judged) {
@@ -522,6 +531,8 @@ async function prologue() {
 
   playBgm('tension');
   await cutscene(SCRIPT.SEREN_MEET);
+  state.pen = 'wood';        // 세렌의 몸을 깎은 펜 — 이제 그림이 실체가 된다
+  saveGame();
 
   playBgm('harbor');
   await cutscene(SCRIPT.FIRST_SHIP_INTRO);
@@ -607,6 +618,14 @@ async function playIsland(island) {
   markCleared(island.key);
   hudUpdate();
   sfx('pickup');
+
+  // 얼음섬: 얼어붙은 배들의 철을 녹여 철 펜을 만든다 (다음이 돌풍 지대다)
+  if (island.key === 'ice' && state.pen !== 'iron') {
+    await cutscene(SCRIPT.IRON_PEN);
+    state.pen = 'iron';
+    addItem({ id: 'iron_pen', icon: '🖊', name: PENS.iron.name, desc: PENS.iron.desc });
+    saveGame();
+  }
 
   if (sc.page) await cutscene(SCRIPT[sc.page]);
   await showPieceGet(island);
@@ -700,6 +719,8 @@ async function finale() {
 
   playBgm('victory');
   hudUpdate('');
+  state.pen = 'gold';        // 바닷물에 담근 펜촉에 금빛이 차오른다
+  saveGame();
   await cutscene(SCRIPT.EPILOGUE);
 
   // 엔딩 화면

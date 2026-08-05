@@ -35,6 +35,19 @@ export const PIECES = [
   },
 ];
 
+// 펜 — 실력이 아니라 재료를 정한다. 같은 그림이 펜에 따라 다른 배가 된다.
+export const PENS = {
+  none: { name: '낡은 펜',  ink: '#8a8a8a', ship: '(실체가 되지 않는다)',
+          desc: '잉크에 절어 본 적이 없어 그림이 종이에만 남는다.' },
+  wood: { name: '나무 펜',  ink: '#c89a5c', ship: '목선(木船)',
+          desc: '세렌의 몸을 깎아 만들었다. 가볍고 빠르지만 큰 바람은 못 견딘다.' },
+  iron: { name: '철 펜',    ink: '#9fb4c4', ship: '철갑선(鐵甲船)',
+          desc: '얼어붙은 배들의 철을 녹여 만들었다. 무겁지만 부서지지 않는다.' },
+  gold: { name: '황금 펜',  ink: '#ffd24a', ship: '―',
+          desc: '펜촉에 바다의 잉크가 그대로 차올랐다.' },
+};
+export const penInk = (key) => (PENS[key] || PENS.wood).ink;
+
 export const ISLANDS = [
   // ── 고향. 항상 열려 있고 언제든 돌아올 수 있다 ─────────────────
   {

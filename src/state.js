@@ -11,6 +11,7 @@ const defaults = () => ({
   items: [],              // [{ id, icon, name, desc }]
   cleared: [],            // 클리어한 섬 key 목록
   ship: null,             // { png, pixel, maxHp, quality }
+  pen: 'none',            // 'none'(실체 안 됨) | 'wood' | 'iron' | 'gold'
   emblem: null,           // 나만의 마크 (돛에 새긴다)
   wish: null,             // 성수에 넣은 소원 종이 — 게임은 내용을 읽지 않는다
   sea: null,              // { x, y } — 바다 위 마지막 위치

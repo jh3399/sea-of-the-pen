@@ -46,6 +46,9 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '촌장님. 저 노래요. 그거 진짜 있었던 일이에요?' },
     { speaker: '촌장', sprite: 'examiner', text: '애들 노래다. 그런 게 어딨어.' },
     { speaker: '루', sprite: 'ru', text: '(…아무도 확인해 본 적이 없잖아.)' },
+    { speaker: '마을 아이', text: '루 형, 또 그려? 어차피 안 될 텐데.' },
+    { speaker: '루', sprite: 'ru', text: '(…나도 알아.)' },
+    { speaker: '루', sprite: 'ru', text: '(다들 그리면 진짜가 되는데, 내 것만 종이에 남는다.)' },
   ],
 
   // [S-02] 흰 숲 — 세렌과의 만남
@@ -87,8 +90,17 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '…못 그려요. 진짜 못 그려요.' },
     { speaker: '세렌', sprite: 'seren', text: '하.' },
     { speaker: '세렌', sprite: 'seren', text: '뭐, 상관없어. 이 바다에서 중요한 건 잘 그리는 게 아니거든.' },
+    { speaker: '세렌', sprite: 'seren', text: '잠깐. 그 펜 이리 줘 봐.' },
+    { speaker: '세렌', sprite: 'seren', text: '……이거 물 한 번도 안 먹어 봤네.' },
+    { speaker: '세렌', sprite: 'seren', text: '그러니까 종이에만 남지. 네 탓 아니야.' },
+    { speaker: '루', sprite: 'ru', text: '그럼 어떻게―' },
+    { speaker: '세렌', sprite: 'seren', text: '내 옆구리 여기. 깎아.' },
+    { speaker: '루', sprite: 'ru', text: '네?! 아프잖아요!' },
+    { speaker: '세렌', sprite: 'seren', text: '나무야. 안 아파. …좀 아픈가. 됐고 깎아.' },
+    { speaker: '', text: '세렌의 몸을 깎아 만든 펜. 400년을 잉크 속에 있던 나무다.' },
+    { speaker: '세렌', sprite: 'seren', text: '이제 그려 봐. 종이에 안 남고 밖으로 나올 거야.' },
     { speaker: '세렌', sprite: 'seren', text: '자, 이거.' },
-    { speaker: '세렌', sprite: 'seren', pen: true, text: '펜 꺼내서 끝을 세워. 그리고 내 코끝에 톡 대.' },
+    { speaker: '세렌', sprite: 'seren', pen: true, text: '펜 끝을 세워. 그리고 내 코끝에 톡 대.' },
     { speaker: '루', sprite: 'ru', text: '이게 뭔데요?' },
     { speaker: '세렌', sprite: 'seren', text: '인사. 그리는 사람들끼리 하는 거.' },
     { speaker: '루', sprite: 'ru', text: '누가 알려줬어요?' },
@@ -105,7 +117,11 @@ export const SCRIPT = {
   // [S-03] 첫 배 그리기 — 출항
   FIRST_SHIP_DONE: (shipPixel) => [
     { speaker: '루', sprite: 'ru', bg: 'sea_day', text: '(떴다. 진짜로 떴어.)' },
+    { speaker: '루', sprite: 'ru', text: '(내 그림이… 밖으로 나왔어.)' },
     { speaker: '', image: shipPixel, imageCls: 'sailing', text: '진심이 바다에 닿았다.' },
+    { speaker: '세렌', sprite: 'seren', text: '봐. 못 그리는 게 아니었잖아.' },
+    { speaker: '세렌', sprite: 'seren', text: '나무 펜이니까 나무 배야.' },
+    { speaker: '세렌', sprite: 'seren', text: '가볍고 빠른데, 큰 바람은 못 견뎌.' },
     { speaker: '세렌', sprite: 'seren', text: '첫 목적지는 덩굴섬. 나침반이 알려줄 거야.' },
   ],
 
@@ -309,6 +325,20 @@ export const SCRIPT = {
     { speaker: '툰', sprite: 'tun', text: '너는 그 사람 손을 가졌으니까.' },
   ],
 
+  // [S-14b] 철 펜 — 얼어붙은 배들의 철을 녹인다
+  IRON_PEN: [
+    { speaker: '루', sprite: 'ru', text: '이 배들… 전부 여기서 멈춘 거예요?' },
+    { speaker: '세렌', sprite: 'seren', text: '돌풍을 뚫으려다 실패한 배들이야.' },
+    { speaker: '세렌', sprite: 'seren', text: '나무로 만든 배는 저 바람을 못 견뎌.' },
+    { speaker: '루', sprite: 'ru', text: '우리 배도 나무인데요.' },
+    { speaker: '세렌', sprite: 'seren', text: '그러니까 지금 바꾸는 거야.' },
+    { speaker: '세렌', sprite: 'seren', text: '저기 철판 보이지? 녹여. 펜을 새로 만들자.' },
+    { speaker: '', text: '얼어붙은 배에서 뜯어낸 철로 펜을 만든다.' },
+    { speaker: '세렌', sprite: 'seren', text: '철 펜이야. 이제 네가 그리면 철갑선이 나와.' },
+    { speaker: '세렌', sprite: 'seren', text: '무겁고 느려. 대신 안 부서져.' },
+    { speaker: '루', sprite: 'ru', text: '(이 사람들이 못 넘은 걸, 이 사람들 배로 넘는 거구나.)' },
+  ],
+
   // [S-15] 진실
   TRUTH: [
     { speaker: '', text: '낱장 세 장이 나란히 놓인다. 400년 전 이야기가 이어진다.' },
@@ -353,7 +383,8 @@ export const SCRIPT = {
 
   STORM_RUN: [
     { speaker: '세렌', sprite: 'seren', bg: 'night_storm', text: '여기서부터는 바람이 배를 부순다!' },
-    { speaker: '세렌', sprite: 'seren', text: '잘 그렸으면 버텨! 못 그렸으면―' },
+    { speaker: '세렌', sprite: 'seren', text: '나무였으면 벌써 부서졌어!' },
+    { speaker: '세렌', sprite: 'seren', text: '철갑선이니까 버티는 거야!' },
     { speaker: '루', sprite: 'ru', text: '못 그렸으면요?!' },
     { speaker: '세렌', sprite: 'seren', text: '그건 그때 가서 얘기하자!!' },
     { speaker: '', text: '바람호가 돌풍을 뚫는다. 부서지지 않는다.' },
@@ -494,7 +525,7 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '…그럼 진작에 다들 할 수 있었던 거네요.' },
     { speaker: '세렌', sprite: 'seren', text: '응. 아무도 확인 안 해 봤을 뿐이야.' },
     { speaker: '세렌', sprite: 'seren', text: '너 빼고.' },
-    { speaker: '', text: '루가 펜을 바닷물에 담근다. 펜촉에 금빛이 차오른다.' },
+    { speaker: '', text: '루가 펜을 바닷물에 담근다. 펜촉에 금빛이 차오른다. 황금 펜이다.' },
     { speaker: '세렌', sprite: 'seren', text: '아, 그리고 하나.' },
     { speaker: '세렌', sprite: 'seren', text: '너 그거 알아?' },
     { speaker: '세렌', sprite: 'seren', text: '너 이제 꽤 잘 그려.' },
@@ -502,7 +533,7 @@ export const SCRIPT = {
     { speaker: '세렌', sprite: 'seren', pen: true, text: '그러니까.' },
     { speaker: '', text: '루가 마을 아이들에게 펜을 하나씩 나눠 준다.' },
     ...songLines(SONG_ENDING),
-    { speaker: '', text: '펜은 처음부터 손에 있었고, 잉크는 처음부터 온 바다에 있었다.' },
+    { speaker: '', text: '펜은 손에 있었고, 잉크는 발밑에 있었다.' },
     { speaker: '', text: '『그리는 자의 바다』 ― 그것이 보물의 이름이었다.' },
   ],
 
