@@ -40,6 +40,29 @@ export const CORPUS = {
   /** 둥근 배 — D1 의 "조작감 차이" 비교군. */
   round: (cx, cy) => arc(cx, cy, 110, 0, TAU, 90),
 
+  /**
+   * 비대칭 선체 — D1 세 척 비교의 셋째 배. 한쪽 현(舷)만 선미 쪽이 부푼 형상이다.
+   *
+   * 이 배가 증명하는 것: 선미 부착점을 **실제 형상에서** 뽑으면(items/defaults.js) 그 점이
+   * 무게중심 축을 벗어나고, 노 추력이 팔길이를 얻어 **직진 입력만으로 저절로 선회한다.**
+   * 조향 코드는 0줄이다.
+   */
+  lopsided: (cx, cy) => {
+    const L = 195, HALF = 52, steps = 64;
+    const top = [];
+    const bottom = [];
+    for (let i = 0; i <= steps; i++) {
+      const s = i / steps;                              // 0 = 선미, 1 = 뱃머리
+      const x = cx - L + 2 * L * s;
+      const taper = Math.sin(Math.PI * Math.pow(s, 0.7)); // 양 끝에서 0
+      // 한쪽 현만 선미 근처(s≈0.25)가 부푼다. 반대쪽은 그대로라 좌우 폭이 어긋난다.
+      const swell = 1 + 1.1 * Math.exp(-Math.pow((s - 0.25) / 0.22, 2));
+      top.push({ x, y: cy - HALF * taper * swell });
+      bottom.push({ x, y: cy + HALF * taper });
+    }
+    return [...top, ...bottom.reverse()];
+  },
+
   /** 정점이 아닌 곳에서 가로지르는 교차 — clipper 가 링 자체를 둘로 쪼개는 경로. */
   bowtie: (cx, cy) => [
     { x: cx - 170, y: cy - 110 },
@@ -123,6 +146,7 @@ export const CORPUS = {
 export const CORPUS_LABELS = {
   sloop: '슬루프(기준)',
   round: '둥근 배',
+  lopsided: '비대칭 선체',
   bowtie: '나비넥타이 교차',
   figure8: '8자 자기교차',
   hairpin: '얇은 헤어핀',
