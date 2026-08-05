@@ -5,7 +5,7 @@
 import {
   hash, fill, blob, overlay, vignette, skyGradient, stars, moon, sun, clouds, hills, palm,
   seaBands, waves, glitter, tallShip, lighthouse, pier, gulls, particles, rain, fogBands,
-  lightning, wreckage,
+  lightning, wreckage, blight, crystal, goldCrack, BLIGHT,
 } from './bgkit.js';
 
 const R = Math.round;
@@ -157,151 +157,218 @@ function jungle_gold(ctx, { w, h, sec }) {
 }
 
 // ---------------- 나루 마을 (루의 고향) ----------------
-// life: 0 = 색이 다 빠진 상태, 1 = 색이 돌아온 상태.
-// 오염은 검정이 아니라 '바램'이다 — 플레이어가 긋는 선이 검정이라 검정을 악으로 두면 문법이 충돌한다.
-
-/** 두 색을 life 비율로 섞는다 (색 빠짐 표현의 핵심) */
-function fade(alive, dead, life) {
-  const p = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-  const a = p(alive);
-  const d = p(dead);
-  const m = a.map((v, i) => R(d[i] + (v - d[i]) * life));
-  return `rgb(${m[0]},${m[1]},${m[2]})`;
-}
+// life: 0 = 완전히 굳은 상태, 1 = 색이 돌아온 상태.
+// 오염은 검정도 바램도 아니라 **자주빛 결정화**다 — 색 자체가 피가 섞였다는 증거다.
+// blight()가 원본의 명도를 유지한 채 색상만 자주로 밀어주므로, 굳어도 구성은 그대로 읽힌다.
 
 function drawVillage(ctx, { w, h, sec }, life) {
   const hz = R(h * 0.62);
-  const C = (alive, dead) => fade(alive, dead, life);
+  const C = (alive) => blight(alive, life);
+  const gone = 1 - life;   // 얼마나 굳었나
 
-  skyGradient(ctx, w, 0, hz, [
-    C('#3f8fc4', '#7c8288'), C('#63aed6', '#8f9499'), C('#8ecbe4', '#a3a7ab'),
-    C('#bde3ef', '#bcbfc2'), C('#e2f4f7', '#d6d8da'),
-  ]);
-  sun(ctx, w * 0.78, hz * 0.22, 8, sec, {
-    core: C('#fff3c4', '#e8e8e8'), rim: C('#ffd977', '#d2d2d2'), glow: C('#ffbe5c', '#c0c0c0'),
-  });
-  clouds(ctx, w, sec, { y: hz * 0.24, color: C('#ffffff', '#c8cacc'), alpha: 0.7, count: 5, speed: 2, scale: 1.4, seed: 181 });
+  skyGradient(ctx, w, 0, hz, [C('#3f8fc4'), C('#63aed6'), C('#8ecbe4'), C('#bde3ef'), C('#e2f4f7')]);
+  sun(ctx, w * 0.78, hz * 0.22, 8, sec, { core: C('#fff3c4'), rim: C('#ffd977'), glow: C('#ffbe5c') });
+  clouds(ctx, w, sec, { y: hz * 0.24, color: C('#ffffff'), alpha: 0.7, count: 5, speed: 2, scale: 1.4, seed: 181 });
 
   // 뒤편 언덕
-  hills(ctx, w, hz + 2, C('#4f8a3e', '#7d8079'), { amp: 18, freq: 1.1, seed: 182 });
-  hills(ctx, w, hz + 8, C('#3a6b2e', '#696c66'), { amp: 12, freq: 1.8, seed: 183, offsetX: 50, base: 4 });
+  hills(ctx, w, hz + 2, C('#4f8a3e'), { amp: 18, freq: 1.1, seed: 182 });
+  hills(ctx, w, hz + 8, C('#3a6b2e'), { amp: 12, freq: 1.8, seed: 183, offsetX: 50, base: 4 });
 
   // 바다
   const bands = seaBands(ctx, w, h, hz + 8, [
-    C('#2f8fb0', '#75797d'), C('#2a80a0', '#6c7074'), C('#25728f', '#63676b'),
-    C('#20647e', '#5a5e62'), C('#1a556d', '#515559'), C('#15465b', '#484c50'),
+    C('#2f8fb0'), C('#2a80a0'), C('#25728f'), C('#20647e'), C('#1a556d'), C('#15465b'),
   ]);
-  waves(ctx, w, bands, sec, C('#9fe0ee', '#9a9da0'), { alpha: 0.4, speed: 6, seed: 184 });
+  waves(ctx, w, bands, sec, C('#9fe0ee'), { alpha: 0.4, speed: 6, seed: 184 });
 
-  // 마을 집들 (앞 레이어) — 지붕 색이 제일 먼저 빠진다
+  // 마을 집들 (앞 레이어)
   const ground = R(h * 0.82);
-  fill(ctx, 0, ground, w, h - ground, C('#6b5a3a', '#77787a'));
-  fill(ctx, 0, ground, w, 2, C('#8a7448', '#8b8c8e'));
+  fill(ctx, 0, ground, w, h - ground, C('#6b5a3a'));
+  fill(ctx, 0, ground, w, 2, C('#8a7448'));
 
   const houses = [
     { x: 0.08, s: 1.1, roof: '#c8443c' }, { x: 0.26, s: 0.9, roof: '#d98a2b' },
     { x: 0.46, s: 1.2, roof: '#3f7ab8' }, { x: 0.68, s: 1.0, roof: '#c8443c' },
     { x: 0.86, s: 0.85, roof: '#5aa84a' },
   ];
-  for (const ho of houses) {
+  houses.forEach((ho, i) => {
     const hx = R(w * ho.x);
     const bw = R(26 * ho.s);
     const bh = R(20 * ho.s);
     const by = ground - bh;
-    fill(ctx, hx - bw / 2, by, bw, bh, C('#e6d9b8', '#a8a9ab'));          // 벽
-    fill(ctx, hx - bw / 2, by, bw, 2, C('#c9bb96', '#95969a'));
-    fill(ctx, hx - bw / 2 - 2, by - R(7 * ho.s), bw + 4, R(7 * ho.s), C(ho.roof, '#8e8f92')); // 지붕
-    fill(ctx, hx - 3, by + bh - R(9 * ho.s), 6, R(9 * ho.s), C('#6b4a24', '#7a7b7d'));        // 문
-    fill(ctx, hx + bw / 4, by + 5, 4, 4, C('#ffe07a', '#b9babc'));                            // 창
-  }
+    fill(ctx, hx - bw / 2, by, bw, bh, C('#e6d9b8'));          // 벽
+    fill(ctx, hx - bw / 2, by, bw, 2, C('#c9bb96'));
+    fill(ctx, hx - bw / 2 - 2, by - R(7 * ho.s), bw + 4, R(7 * ho.s), C(ho.roof)); // 지붕
+    fill(ctx, hx - 3, by + bh - R(9 * ho.s), 6, R(9 * ho.s), C('#6b4a24'));        // 문
+    // 창 — 굳을수록 불이 꺼진다. 마지막까지 켜져 있는 한 집이 루의 집이다
+    const lit = life > 0.5 || i === 2;
+    fill(ctx, hx + bw / 4, by + 5, 4, 4, lit ? C('#ffe07a') : BLIGHT.dark);
 
-  // 꽃 — 굳으면 자주빛 결정만 남는다  (TODO: 자주빛 재작업)
+    // 벽을 타고 오르는 결정 — 굳을수록 높이 자란다
+    if (gone > 0.15) {
+      const grow = gone * bh * 0.75;
+      crystal(ctx, hx - bw / 2 + 2, ground, 5, 4 + grow * 0.8, { lean: -0.4 });
+      crystal(ctx, hx + bw / 2 - 3, ground, 4, 3 + grow, { lean: 0.3 });
+      // 금 간 자국은 아주 옅게. 여기서 세게 쓰면 금빛이 흔해져서
+      // 정작 유리 숲 신전과 엔딩의 금빛이 안 산다
+      if (gone > 0.7) goldCrack(ctx, hx - bw / 2 + 3, by + 4, R(bh * 0.4), { seed: 187 + i, alpha: 0.28 });
+    }
+  });
+
+  // 꽃 — 굳으면 자주빛 결정만 남는다
   for (let i = 0; i < 26; i++) {
     const fx = hash(i, 185) * w;
     const fy = ground + 3 + hash(i, 186) * (h - ground - 5);
-    fill(ctx, fx, fy, 2, 2, C(['#ff7a9c', '#ffd24a', '#9a6cff'][i % 3], '#8d8e90'));
+    if (gone > 0.55 && hash(i, 188) > 0.45) crystal(ctx, fx, fy + 2, 3, 3 + hash(i, 189) * 3, { lean: (hash(i, 190) - 0.5) * 1.2 });
+    else fill(ctx, fx, fy, 2, 2, C(['#ff7a9c', '#ffd24a', '#9a6cff'][i % 3]));
   }
 
-  if (life < 0.99) overlay(ctx, w, h, '#cfd2d4', (1 - life) * 0.16);
+  // 땅에서 돋는 결정 — 마을이 발밑부터 굳는다
+  if (gone > 0.2) {
+    const n = R(gone * 14);
+    for (let i = 0; i < n; i++) {
+      const cx = hash(i, 191) * w;
+      const cy = ground + 4 + hash(i, 192) * (h - ground - 6);
+      crystal(ctx, cx, cy, 4 + hash(i, 193) * 4, 5 + hash(i, 194) * 9 * gone, { lean: (hash(i, 195) - 0.5) });
+    }
+  }
+
+  if (life < 0.99) overlay(ctx, w, h, BLIGHT.dark, gone * 0.14);
   vignette(ctx, w, h, 0.05);
 }
 
-function village_pale(ctx, env) { drawVillage(ctx, env, 0.35); }
+// 0.22 — 아직 원래 색이 남아 있는 게 보이지만 자주가 확실히 이긴 상태.
+// 이 마을은 "굳었다"가 아니라 "굳어가는 중"이라 0이 아니다.
+function village_pale(ctx, env) { drawVillage(ctx, env, 0.22); }
 function village_alive(ctx, env) { drawVillage(ctx, env, 1); }
 
 // ---------------- crystal_forest — 유리 숲 (오염의 진원지) ----------------
-// 통째로 자주빛 결정이 된 숲. 아무것도 움직이지 않는다.
-// TODO(다음 세션): 현재는 흰색 팔레트다. 자주빛(#3a1f3f→#7a4a7c, 하이라이트 #c9a0cf)으로 재작업.
+// 통째로 자주빛 결정이 된 숲. 던진 병이 깨진 자리가 여기다.
+// 아무것도 움직이지 않는다 — 안개와, 결정 사이를 떠도는 티끌만 움직인다.
+// 나무는 원통이 아니라 **각진 결정 기둥**이어야 한다. 둥글면 그냥 겨울 숲이 된다.
 
 function crystal_forest(ctx, { w, h, sec }) {
   const hz = R(h * 0.72);
-  skyGradient(ctx, w, 0, hz, ['#c8ccce', '#d3d6d8', '#dee0e1', '#e8e9ea', '#f2f2f2']);
+  // 하늘은 위가 어둡고 지평선이 밝다 — 그래야 나무 실루엣이 읽힌다.
+  // 바닥(hz+10)까지 그려서 틈을 남기지 않는다 (틈이 있으면 검은 띠가 뜬다)
+  skyGradient(ctx, w, 0, hz + 12, ['#1a0e20', '#2a1630', '#3f2246', '#5e3363', '#9a6a9c']);
 
-  // 안개 — 유일하게 움직이는 것
-  fogBands(ctx, w, sec, { y0: hz * 0.2, y1: h * 0.95, color: '#ffffff', alpha: 0.2, count: 8, speed: 2.5, thick: 8, seed: 191 });
+  // 안개 — 유일하게 움직이는 것. 열린 하늘에 띄우면 판때기로 보여서 숲 바닥에 붙인다
+  fogBands(ctx, w, sec, { y0: hz * 0.72, y1: h * 0.96, color: '#a878aa', alpha: 0.14, count: 6, speed: 2.5, thick: 6, seed: 191 });
 
-  // 흰 나무들 — 뒤에서 앞으로 3겹
-  const trees = (count, base, scale, col, seed) => {
+  // 결정 나무 — 뒤에서 앞으로. 줄기를 사다리꼴로 좁히고 가지를 위로 꺾어 각지게 만든다
+  const trees = (count, base, scale, body, lightC, seed) => {
     for (let i = 0; i < count; i++) {
       const tx = R(w * ((i + 0.5) / count) + (hash(i, seed) - 0.5) * (w / count));
       const th = R((30 + hash(i, seed + 1) * 26) * scale);
-      const tw = Math.max(2, R(3 * scale));
-      fill(ctx, tx, base - th, tw, th, col);
-      // 가지
+      const tw = Math.max(2, R(3.5 * scale));
+      for (let y = 0; y < th; y++) {                       // 위로 갈수록 좁아지는 기둥
+        const t = y / th;
+        const cw = Math.max(1, R(tw * (1 - t * 0.55)));
+        fill(ctx, tx, base - y, cw, 1, body);
+        fill(ctx, tx, base - y, Math.max(1, R(cw * 0.5)), 1, lightC);   // 왼쪽 면이 밝다
+      }
+      // 가지 — 비스듬히 위로 꺾인다
       for (let k = 0; k < 3; k++) {
         const by = base - th + (k + 1) * (th / 4);
         const dir = hash(i * 4 + k, seed + 2) > 0.5 ? 1 : -1;
         const bl = R((5 + hash(i * 4 + k, seed + 3) * 7) * scale);
-        fill(ctx, dir > 0 ? tx : tx - bl, by, bl, Math.max(1, R(scale)), col);
+        for (let s = 0; s < bl; s++) {
+          fill(ctx, tx + (dir > 0 ? s : -s), by - R(s * 0.55), Math.max(1, R(scale)), Math.max(1, R(scale)), body);
+        }
       }
+      // 끝에 하이라이트 — 결정이 빛을 문다
+      fill(ctx, tx, base - th, Math.max(1, R(scale)), 2, BLIGHT.lit);
     }
   };
-  trees(14, hz + 4, 0.8, '#dcdfe0', 192);
-  trees(10, hz + 14, 1.15, '#c6cacc', 193);
+  // 멀수록 하늘빛에 가깝게(대기 원근), 가까울수록 어둡게 — 겹이 안 갈리면 숲이 아니라 벽지가 된다
+  trees(14, hz + 4, 0.8, '#6b4370', '#82558a', 192);
+  trees(10, hz + 14, 1.15, '#46264c', '#5a3560', 193);
 
-  // 바닥
-  fill(ctx, 0, hz + 10, w, h - hz - 10, '#e4e6e7');
-  fill(ctx, 0, hz + 10, w, 2, '#d0d3d5');
+  // 바닥 — 굳은 지면
+  fill(ctx, 0, hz + 10, w, h - hz - 10, '#2e1833');
+  fill(ctx, 0, hz + 10, w, 2, '#4a2850');
 
-  // 무너진 신전 — 400년 전 형제가 살던 집
+  // 무너진 신전 — 400년 전 형제가 살던 집. 화면에서 제일 밝아야 눈이 여기로 온다
   const sx = R(w * 0.5);
   const sy = hz + 12;
-  fill(ctx, sx - 30, sy - 30, 60, 30, '#b8bcbe');            // 벽
-  fill(ctx, sx - 34, sy - 36, 68, 6, '#a9adaf');             // 처마
-  fill(ctx, sx - 10, sy - 20, 20, 20, '#8f9497');            // 열린 문 (안이 더 하얗다)
-  fill(ctx, sx - 8, sy - 18, 16, 18, '#e8eaeb');
-  for (let i = 0; i < 4; i++) fill(ctx, sx - 26 + i * 16, sy - 26, 3, 22, '#a2a6a8'); // 기둥
-  fill(ctx, sx + 22, sy - 8, 14, 8, '#c0c4c6');              // 무너진 잔해
-  fill(ctx, sx - 40, sy - 6, 10, 6, '#c0c4c6');
+  fill(ctx, sx - 30, sy - 30, 60, 30, '#7a4a7c');            // 벽
+  fill(ctx, sx - 30, sy - 30, 60, 2, '#a878aa');
+  fill(ctx, sx - 34, sy - 36, 68, 6, '#5a2f5e');             // 처마
+  fill(ctx, sx - 34, sy - 36, 68, 1, '#8a5a8c');
+  fill(ctx, sx - 10, sy - 20, 20, 20, '#120a16');            // 열린 문 (안은 아무것도 없다)
+  for (let i = 0; i < 4; i++) {
+    fill(ctx, sx - 26 + i * 16, sy - 26, 3, 22, '#8a5a8c');  // 기둥
+    fill(ctx, sx - 26 + i * 16, sy - 26, 1, 22, '#c9a0cf');
+  }
+  fill(ctx, sx + 22, sy - 8, 14, 8, '#5a2f5e');              // 무너진 잔해
+  fill(ctx, sx - 40, sy - 6, 10, 6, '#5a2f5e');
+  goldCrack(ctx, sx - 18, sy - 30, 26, { seed: 196, alpha: 0.75 });   // 벽을 가르는 금
+  goldCrack(ctx, sx + 12, sy - 28, 20, { seed: 197, alpha: 0.6 });
 
-  // 앞쪽 흰 나무 (가장 크게)
-  trees(6, h + 6, 1.9, '#eceeef', 194);
+  // 신전 앞 결정 무리 — 병이 깨진 자리. 여기서부터 세상이 굳기 시작했다
+  for (let i = 0; i < 9; i++) {
+    const cx = sx + (hash(i, 198) - 0.5) * 96;
+    crystal(ctx, cx, sy + 2 + hash(i, 199) * 6, 5 + hash(i, 200) * 6, 9 + hash(i, 201) * 16, {
+      lean: (hash(i, 202) - 0.5) * 1.4,
+    });
+  }
 
-  overlay(ctx, w, h, '#ffffff', 0.1);
-  vignette(ctx, w, h, 0.06);
+  // 바닥 전체로 퍼진 결정 — 앞쪽일수록 크고 어둡다
+  for (let i = 0; i < 16; i++) {
+    const cx = hash(i, 208) * w;
+    const t = hash(i, 209);
+    const cy = hz + 14 + t * (h - hz - 16);
+    const near = 0.5 + t;
+    crystal(ctx, cx, cy, R(3 * near) + 2, R(5 * near) + 3, {
+      lean: (hash(i, 210) - 0.5) * 1.2,
+      body: t > 0.6 ? '#2a1630' : BLIGHT.mid,
+      light: t > 0.6 ? '#3f2246' : BLIGHT.pale,
+      edge: t > 0.6 ? BLIGHT.pale : BLIGHT.lit,
+    });
+  }
+
+  // 앞쪽 결정 나무 (가장 크고 가장 어둡다)
+  trees(6, h + 6, 1.9, '#160b1a', '#241228', 194);
+
+  // 떠도는 티끌 — 굳은 숲에서 유일하게 반짝인다
+  particles(ctx, w, h, sec, { count: 26, color: BLIGHT.lit, speed: 4, dir: -1, sway: 8, alpha: 0.5, seed: 203, y0: 0.15, y1: 1, twinkle: true });
+
+  vignette(ctx, w, h, 0.12);
 }
 
-// ---------------- fog_pale — 색을 지우며 밀려오는 안개 (프롤로그 습격) ----------------
+// ---------------- fog_pale — 굳히며 밀려오는 자주빛 안개 (프롤로그 습격) ----------------
+// 배는 실루엣만. 얼굴은 절대 안 보인다 (핵심 규칙).
+// 돛이 '검게' 보이지만 실은 짙은 자주다 — 가까운 쪽 돛에만 자주가 비쳐서 그걸 흘린다.
 
 function fog_pale(ctx, { w, h, sec }) {
   const hz = R(h * 0.58);
-  skyGradient(ctx, w, 0, hz, ['#7d858c', '#8e959b', '#a0a6ab', '#b3b8bc', '#c6cacd']);
+  // 지평선만 환하게 남긴다 — 배가 역광으로 검게 떠야 실루엣이 산다.
+  // 위아래를 다 같은 중간 자주로 깔면 배가 안개에 먹혀서 아무것도 안 보인다.
+  skyGradient(ctx, w, 0, hz, ['#1a0e1e', '#2a1630', '#432648', '#6b3d6e', '#a06ea2']);
 
-  const bands = seaBands(ctx, w, h, hz, ['#5c666e', '#556069', '#4e5962', '#47525b', '#404b54', '#39444d']);
-  waves(ctx, w, bands, sec, '#98a2aa', { alpha: 0.35, speed: 10, seed: 201 });
+  const bands = seaBands(ctx, w, h, hz, ['#3a2340', '#331e38', '#2c1a31', '#251529', '#1e1122', '#170c1a']);
+  waves(ctx, w, bands, sec, '#8a5a8c', { alpha: 0.3, speed: 10, seed: 201 });
 
-  // 안개 속 검은 돛의 배 — 실루엣만. 얼굴은 절대 안 보인다.
+  // 안개 속 검은 돛의 배 — 멀리서 검게 보이는 자주. 얼굴은 절대 안 보인다
   const sx = w * 0.66 + Math.sin(sec * 0.4) * 3;
-  ctx.globalAlpha = 0.7;
-  tallShip(ctx, sx, hz - 2, 1.8, { hull: '#2a2e33', deck: '#343940', sail: '#3d434a', mast: '#24282d', flag: '#4a5058' });
+  ctx.globalAlpha = 0.88;
+  tallShip(ctx, sx, hz - 2, 1.8, { hull: '#140b18', deck: '#1c1020', sail: '#241329', mast: '#0e070f', flag: '#3a1f3f' });
   ctx.globalAlpha = 1;
 
-  // 밀려오는 안개 — 닿는 곳이 굳는다  (TODO: 자주빛 재작업)
-  fogBands(ctx, w, sec, { y0: hz * 0.35, y1: h * 0.95, color: '#e8ebed', alpha: 0.28, count: 10, speed: 9, thick: 9, seed: 202 });
-  fogBands(ctx, w, sec, { y0: hz * 0.7, y1: h, color: '#ffffff', alpha: 0.22, count: 6, speed: 15, thick: 12, seed: 203 });
+  // 밀려오는 안개 — 닿는 곳이 굳는다. 배 앞을 지나가되 다 덮지는 않는다
+  fogBands(ctx, w, sec, { y0: hz * 0.55, y1: h * 0.95, color: '#7a4a7c', alpha: 0.2, count: 8, speed: 9, thick: 7, seed: 202 });
+  fogBands(ctx, w, sec, { y0: hz * 0.9, y1: h, color: '#a878aa', alpha: 0.16, count: 5, speed: 15, thick: 10, seed: 203 });
 
-  overlay(ctx, w, h, '#dfe3e6', 0.12 + 0.04 * Math.sin(sec * 1.5));
-  vignette(ctx, w, h, 0.1, 7);
+  // 안개가 지나간 수면에 결정이 돋는다 — 물조차 굳는다는 신호
+  for (let i = 0; i < 7; i++) {
+    const cx = hash(i, 204) * w;
+    const cy = hz + 8 + hash(i, 205) * (h - hz - 12);
+    const grow = 0.5 + 0.5 * Math.sin(sec * 0.7 + i * 1.3);   // 느리게 솟았다 잠긴다
+    crystal(ctx, cx, cy, 4 + hash(i, 206) * 3, 4 + grow * 9, { lean: (hash(i, 207) - 0.5) });
+  }
+
+  overlay(ctx, w, h, '#2a1630', 0.08 + 0.03 * Math.sin(sec * 1.5));
+  vignette(ctx, w, h, 0.14, 7);
 }
 
 // ---------------- jungle_green — 1섬 시작의 섬 (초록 수풀) ----------------
