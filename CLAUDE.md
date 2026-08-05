@@ -46,6 +46,7 @@ npx http-server -p 5210 -c-1
 | `dev/dot-check.html` | 흉상·펜 컷을 배경 5종 위에서 확인 (펜 컷 애니메이션 포함) |
 | `dev/sprite-sheet.mjs` | 스프라이트를 PNG로 뽑아 확인 (3종 배경 대비 + 행 폭 검사) |
 | `dev/pen-scene.mjs` | 펜 맞대기 컷을 PNG로 뽑아 확인 (`--mark`로 접점 표시) |
+| `dev/bg-shot.mjs` | 배경 씬을 브라우저 없이 PNG로 (`node dev/bg-shot.mjs crystal_forest`) |
 | `dev/png.mjs` | 위 두 스크립트가 같이 쓰는 최소 PNG 인코더 |
 | `docs/STORY.md` | 기획 v5 — 세계관·인물·스테이지·복선 |
 | `docs/SCRIPT.md` | 대사 전문 (script.js와 1:1) |
@@ -104,8 +105,8 @@ npx http-server -p 5210 -c-1
 - [x] 문서 자주빛 결정화 반영
 - [x] **흉상 6종 전면 리터치** — 휴시프트 램프·좌상단 광원·선택적 외곽선 (24×32 유지)
 - [x] **펜 맞대기 연출** — 40×44 대형 컷 + 접점 불꽃 (`src/penscene.js`)
-- [ ] **▶ 다음: 배경 3종 자주빛 재작업** (`village_pale` / `crystal_forest` / `fog_pale`)
-- [ ] **수호자 2종 신규 도트** — 나르·툰, **팔레트 2벌**(결정 / 색 회복). 가르는 리터치 완료
+- [x] **배경 3종 자주빛 결정화** (`village_pale` / `crystal_forest` / `fog_pale`) + `blight()` 공용 기반
+- [ ] **▶ 다음: 수호자 2종 신규 도트** — 나르·툰, **팔레트 2벌**(결정 / 색 회복). 가르는 리터치 완료
 - [ ] 흉상 눈 깜빡임 (해상도 상향은 보류 — 24×32로도 읽혀서 실익이 적다)
 - [ ] 포격전 미니게임 (현재 컷씬으로 대체)
 - [ ] Gemini 판정 튜닝, 프록시 배포, GitHub Pages 배포
@@ -129,7 +130,14 @@ npx http-server -p 5210 -c-1
 
 전환: 대사 줄에 `bg: 'harbor'` 또는 `setScene('harbor')`. 콘솔에서 `__bg('golden_isle')`.
 새 배경: `bgscenes.js`에 `draw(ctx, {w,h,sec})` 만들고 `SCENES`에 등록.
-레이어 순서 [하늘] → [먼 배경] → [중간] → [바다] → [앞] → [효과]. 확인은 `dev/bg-gallery.html`.
+레이어 순서 [하늘] → [먼 배경] → [중간] → [바다] → [앞] → [효과]. 확인은 `dev/bg-gallery.html` 또는 `dev/bg-shot.mjs`.
+
+**레이어 사이에 틈을 남기지 말 것.** 하늘을 `0~hz`, 바닥을 `hz+10~`으로 그리면 그 10px가
+아무것도 안 그려져 검은 띠가 뜬다 — `crystal_forest`에서 실제로 났던 버그다.
+
+**오염 표현은 `bgkit`의 `blight/crystal/goldCrack`을 쓴다.** 회색으로 섞지 않는다.
+`blight(hex, life)`는 원본의 명도를 유지한 채 색상만 자주로 밀기 때문에, 굳어도 그림의 구성이 그대로 읽힌다
+(`village_pale`과 `village_alive`가 같은 함수에 `life`만 다르게 준 것이다).
 
 | 키 | 쓰이는 곳 |
 |---|---|
