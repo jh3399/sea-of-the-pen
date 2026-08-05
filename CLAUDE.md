@@ -20,7 +20,7 @@ NAN 2026 — NHN Game × AI 해커톤 **사전 과제** 프로젝트 (3인 팀, 
 ```bash
 npm install
 npm run dev      # http://localhost:5210/sea-of-the-pen/
-npm run bench    # D0 통과 질문 판정 (헤드리스 계측)
+npm run bench    # D0·D1 통과 질문 판정 (헤드리스 계측)
 npm run build    # dist/ — Pages 배포 산출물
 ```
 
@@ -38,18 +38,20 @@ npm run build    # dist/ — Pages 배포 산출물
 ## 구조
 
 ```
-index.html            D0 하니스 진입점 (설계 ↔ 항해 ↔ 파손)
+index.html            하니스 진입점 (설계 ↔ 항해 ↔ 세 척 비교 ↔ 파손)
 vite.config.js        base: '/sea-of-the-pen/'
 src/
   geom/     poly.js(면적·모멘트·주축·핀치 분리) · clip.js(clipper2 어댑터)
   hull/     strokes.js(포인터 캡처) · polygon.js★① · params.js(3대 파라미터)
             decompose.js(볼록 분해) · corpus.js(재현 가능한 테스트 형상)
+  items/    defaults.js(기본 3종 장치 정의 · 선미 부착점 ← 비대칭 창발의 핵심)
   physics/  world.js(planck 어댑터·고정 타임스텝) · body.js(폴리곤→강체) · hydro.js★③
+            devices.js(키·노·닻의 힘) · predict.js(예측 궤적선)
   damage/   carve.js★②(불리언 차감·절단 판정) · apply.js(충격→재구성)
-  render/   view.js(카메라: 추적+줌, 회전 금지)
+  render/   view.js(카메라: 추적+줌+fitTo, 회전 금지)
   ui/       metrics.js(계측 HUD, F3) · harness.css
   main.js   하니스 오케스트레이션
-scripts/d0-bench.mjs  D0 통과 판정 벤치 (CI 에서도 실행)
+scripts/bench.mjs     D0·D1 통과 판정 벤치 (CI 에서도 실행)
 archive/              구 Sea of the Pen 프로토타입 (참고용, 빌드 제외)
 docs/                 shipwright_design_doc.md(설계) · dev_plan.md(5일 계획표)
                       STORY.md · SCRIPT.md (구 기획 — **현재 무효**)
@@ -74,11 +76,13 @@ docs/                 shipwright_design_doc.md(설계) · dev_plan.md(5일 계�
 
 ## 진행 상태
 
-- [x] **D0 기술 스파이크** — 세 리스크 모듈 + 계측 HUD + 배포 파이프라인. `npm run bench` 20/20 통과.
+- [x] **D0 기술 스파이크** — 세 리스크 모듈 + 계측 HUD + 배포 파이프라인.
       실측: 형상 변환 최대 17.5ms(2000점) · 차감 최대 1.3ms · 물리 스텝 0.01ms
-- [ ] **▶ D1 (8/6): 코어 필 — 그리기와 항해** [가설 A]
-      설계 캔버스 오버레이 완성 / 기본 3종 장치(키·노·닻) / 카메라 / 예측 궤적선
-- [ ] D2 (8/7): 아이템 창발 조향 + 규칙 엔진 [가설 B·C]
+- [x] **D1 (8/6): 코어 필 — 그리기와 항해** [가설 A] — `npm run bench` 39/39 통과.
+      기본 3종 장치(키·노·닻) / 세 척 동시 주행 / 예측 궤적선 / 흘수 게이지·실시간 오버레이
+      ⚠ 통과 질문("조작감 차이를 말로 설명할 수 있는가")은 **사람이 몰아 보고 판정**해야 한다.
+      벤치는 그 전제(장치가 설계대로 동작하는가)까지만 보증한다.
+- [ ] **▶ D2 (8/7): 아이템 창발 조향 + 규칙 엔진** [가설 B·C]
 - [ ] D3 (8/8): 파손 지오메트리 + 3맵 + 게임 루프
 - [ ] D4 (8/9, **12:00 콘텐츠 프리즈**): 폴리시 + 배포 + 영상 + PDF 3종
 - [ ] D5 (8/10 오전): 예비, 버그 수정만
@@ -102,3 +106,29 @@ docs/                 shipwright_design_doc.md(설계) · dev_plan.md(5일 계�
   스텝 후 힘 누산기를 비우는 탓에 조종감이 모니터 주사율에 좌우된다 (240Hz 장비에서 발견).
 - `clipper2-js` 는 `@angular/core` 를 peerDependency 로 선언하지만 런타임 import 은 없다.
   `npm audit` 의 high 경고는 이 프로젝트에선 무해 (번들에 Angular 미포함, 확인 완료).
+
+## D1 에서 확인된 사실 (다음 단계에서 전제로 쓸 것)
+
+- **비대칭 창발의 실제 경로는 `items/defaults.js` 의 `sternAnchor` 하나다.** 부착점을 중심선
+  (y=0)이 아니라 후미 단면의 y 중앙에서 뽑으면, 비대칭 선체는 노 추력이 팔길이를 얻어
+  직진 입력만으로 선회한다 (실측: 20초에 70°, 선회 반경 21 m). 조향 코드는 0줄.
+- 그 부착점은 **정점 min/max 로 구하면 안 된다.** RDP 단순화가 만든 미세 비대칭을 그대로
+  증폭해, 완전 대칭인 원형 코퍼스가 6.5 cm 의 가짜 오프셋을 얻어 저절로 돌았다. 변을 잘라
+  보간하는 `spanAtX` 로 단면을 여러 개 훑어 폭 가중 평균하면 0.6 cm 로 떨어진다.
+- 키에 **사향류 항**(ω·x_r 로 인한 받음각 감소)을 넣으면 안 된다. 물리적으로는 더 정확하고
+  §2.1 의 "길쭉한 배는 선회 반경이 크다"를 노리게 되지만, 실측하면 (a) 키가 강한 요잉
+  감쇠기가 되어 위 비대칭 창발이 70° → 10° 로 눌리고, (b) 선회 반경 순서는 되레 뒤집힌다
+  (길쭉한 배가 빨라 u² 보너스를 받는 탓). D1 은 `sin δ` 모델을 쓴다.
+  덧붙여 부호 주의: `control.rudder` 는 "좌현 = +" 라 기하각과 방향이 반대다.
+- 비대칭 선회는 각가속도가 작아 **몇 초로는 회전 저항과 구분되지 않는다.** 벤치가 20초를
+  도는 이유이며, 육안 확인도 짧게 눌러서는 판정할 수 없다.
+- §2.1 의 "회전 둔함"은 **선체의 성질**이라 키로 재면 안 된다 (길쭉한 배의 속도 보너스가
+  형상 항을 가린다). 벤치는 기준 토크를 직접 넣는 `torqueTest` 로 잰다.
+- `predict.js` 는 planck 과 **비트 단위로 일치**한다 (2.5초 오차 0.0000 mm). 같은
+  semi-implicit Euler 를 같은 순서로 돌기 때문이고, hydro·devices 의 순수 함수를 공유하는
+  한 유지된다. 예측 전용으로 식을 다시 쓰는 순간 깨진다.
+- 기본 닻은 static ground ↔ 선체의 `RevoluteJoint` 다. 회전을 막지 않으므로 §4.2 의
+  "그 점을 축으로 도는" 거동이 자동으로 따라온다 — 정지 후에도 잔여 회전이 남는 게 정상.
+- 자동화 브라우저(확장 프로그램)에서는 탭이 `visibilityState: hidden` 이라 **rAF 가 0 프레임**
+  이다. 육안 검증은 사람이 창을 띄워야 하고, 스크립트로 볼 때는 `stepper.advance()` 와
+  `render()` 를 손으로 돌려야 한다.
