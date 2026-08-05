@@ -1,6 +1,6 @@
 // 게임 플로우 총괄 (STORY.md v5).
 //
-// 프롤로그: 나루 마을 → 흰 숲(세렌) → 첫 배 → 검은 돛의 배(난파) → 덩굴섬 표류
+// 프롤로그: 나루 마을 → 유리 숲(세렌) → 첫 배 → 검은 돛의 배(난파) → 덩굴섬 표류
 // 본편:     [항해 → 섬 마을 → 수호자] × 3 → 바람호 건조 → 돌풍 → 황금섬(최종전) → 엔딩
 //
 // 대사는 전부 src/script.js에 있다. 여기는 순서와 조건만 다룬다.
@@ -19,7 +19,7 @@ import { runIsland } from './island.js';
 import { SCRIPT, SHIP_VERDICT_LINES, EMPTY_CANVAS_LINES } from './script.js';
 
 startPixelBg(document.querySelector('#bg-canvas'));
-window.__bg = setScene;   // 배경 확인용 — 콘솔에서 __bg('white_forest')
+window.__bg = setScene;   // 배경 확인용 — 콘솔에서 __bg('crystal_forest')
 
 const $ = (sel) => document.querySelector(sel);
 const DRAW_TIME = 20;
@@ -540,7 +540,7 @@ async function prologue() {
     prompt: '🚢 너의 배를 그려라',
     hint: '아무거나 좋다. 네가 배라고 생각하는 것을 그리자.',
     button: '출항!',
-    bg: 'white_forest',
+    bg: 'crystal_forest',
     guide: false,
   });
   keepShip(first, 110);
