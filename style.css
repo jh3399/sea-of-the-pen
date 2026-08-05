@@ -1,7 +1,7 @@
 /* 픽셀 한글 폰트: 네오둥근모 (SIL OFL, 셀프호스팅) */
 @font-face {
   font-family: 'NeoDunggeunmo';
-  src: url('assets/fonts/NeoDunggeunmo.woff') format('woff');
+  src: url('./assets/fonts/NeoDunggeunmo.woff') format('woff');
   font-weight: normal;
   font-display: swap;
 }
