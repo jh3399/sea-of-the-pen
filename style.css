@@ -187,6 +187,7 @@ body::after {
   max-width: min(420px, 78vw);
   height: auto;
   filter: drop-shadow(0 0 10px rgba(255, 210, 74, .35))
+          drop-shadow(0 0 2px rgba(255, 246, 214, .5))
           drop-shadow(4px 5px 0 rgba(0, 0, 0, .5));
   animation: pen-in .45s cubic-bezier(.2, 1.5, .4, 1) both;
 }
@@ -259,7 +260,15 @@ body::after {
 }
 .hp-fill.ship { background: linear-gradient(180deg, #6fe08d 0 50%, #2ca457 50% 100%); }
 
-.boss-sprite { transition: transform .15s; }
+/* 보스는 대화창 패널 없이 배경 위에 그냥 뜬다. 배경이 씬마다 확 바뀌어서
+   어두운 배경에선 검은 외곽선이, 밝은 배경에선 밝은 면이 묻힌다 —
+   실측으로 밤바다 위 네일의 명암비가 1.40까지 떨어졌다.
+   밝은 헤일로 + 어두운 그림자를 겹쳐 양쪽을 다 살린다. */
+.boss-sprite {
+  transition: transform .15s;
+  filter: drop-shadow(0 0 2px rgba(255, 246, 214, .55))
+          drop-shadow(3px 4px 0 rgba(0, 0, 0, .55));
+}
 .boss-sprite.hit { animation: boss-hit .45s; }
 @keyframes boss-hit {
   0%, 100% { transform: translateX(0); filter: none; }
