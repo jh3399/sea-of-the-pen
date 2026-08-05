@@ -1,0 +1,53 @@
+# GitHub Pages 배포. D0 에 이 파이프라인을 먼저 뚫어 두는 이유는 8/9 에 처음 배포하다
+# 막히는 것이 이 일정의 최대 단일 리스크이기 때문이다 (docs/dev_plan.md D0 참고).
+#
+# 저장소 설정에서 Settings → Pages → Source 를 "GitHub Actions" 로 바꿔야 동작한다.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 진행 중인 배포는 취소하지 않는다 — 마감 직전 배포가 중간에 잘리면 곤란하다.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # D0 통과 질문을 CI 에서도 지킨다 — 성능이 무너지면 배포 전에 걸린다.
+      - name: D0 스파이크 벤치
+        run: npm run bench
+
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
