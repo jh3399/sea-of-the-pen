@@ -182,6 +182,19 @@ body::after {
   50%      { margin-top: 10px; }
 }
 
+/* 펜 맞대기 — 대사창 위로 크게 뜬다. 이 게임에서 가장 중요한 한 컷이라 액자를 씌우지 않는다 */
+.pen-touch {
+  max-width: min(420px, 78vw);
+  height: auto;
+  filter: drop-shadow(0 0 10px rgba(255, 210, 74, .35))
+          drop-shadow(4px 5px 0 rgba(0, 0, 0, .5));
+  animation: pen-in .45s cubic-bezier(.2, 1.5, .4, 1) both;
+}
+@keyframes pen-in {
+  0%   { transform: scale(.82) translateY(10px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
 .story-img.broken { animation: ship-break 1.1s ease-in forwards; }
 @keyframes ship-break {
   0% { transform: rotate(0) translateY(0); filter: none; }
