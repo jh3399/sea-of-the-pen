@@ -24,9 +24,10 @@ const SEA_ROWS = ['#3990b8', '#2f83ab', '#2a769c', '#24688b', '#1e5a7a', '#184c6
 const ISLAND_STYLES = {
   jungle_gold:    { beach: '#e5c878', land: '#7a8f2a', ridge: '#4f6a1e' },
   jungle_green:   { beach: '#dcc9a0', land: '#3f7a3a', ridge: '#1a3a1c' },
-  village_pale:   { beach: '#c9c6be', land: '#8a8d86', ridge: '#6b6e68' },
+  // 굳은 섬은 회색이 아니라 자주다 (bgkit.BLIGHT 램프와 같은 색)
+  village_pale:   { beach: '#7a4a7c', land: '#5a2f5e', ridge: '#3a1f3f' },
   village_alive:  { beach: '#e6d9b8', land: '#4f8a3e', ridge: '#3a6b2e' },
-  crystal_forest:   { beach: '#eceeef', land: '#dcdfe0', ridge: '#c6cacc' },
+  crystal_forest: { beach: '#7a4a7c', land: '#4a2850', ridge: '#2a1630' },
   golden_isle:    { beach: '#ffe8a8', land: '#c9962e', ridge: '#9a7020' },
   volcano:        { beach: '#8a6a52', land: '#5a4038', ridge: '#33241f' },
   night_storm:    { beach: '#4a5470', land: '#2c3550', ridge: '#1d2438' },

@@ -18,7 +18,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const scaleArg = args.indexOf('--scale');
 const SCALE = scaleArg >= 0 ? Number(args[scaleArg + 1]) : 8;
-const names = args.filter((a, i) => !a.startsWith('--') && i !== scaleArg + 1);
+// scaleArg가 -1이면 scaleArg+1은 0 — 첫 인자를 삼켜버린다. 플래그가 있을 때만 건너뛴다
+const names = args.filter((a, i) => !a.startsWith('--') && !(scaleArg >= 0 && i === scaleArg + 1));
 const keys = (names.length ? names : Object.keys(SPRITES)).filter((k) => SPRITES[k]);
 
 const PAD = 8;

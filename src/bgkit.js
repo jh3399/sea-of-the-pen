@@ -10,6 +10,69 @@ export function hash(i, salt = 0) {
 
 const R = Math.round;
 
+// ---------------- 자주빛 결정화 (오염 표현의 공용 기반) ----------------
+// 오염은 '색이 빠지는 것'이 아니라 '자주빛으로 굳는 것'이다 (CLAUDE.md 핵심 규칙).
+// 회색으로 섞으면 그냥 빛바랜 그림이 되고, 피가 섞였다는 증거가 사라진다.
+
+/** 결정 램프 — 어두운 쪽부터. blight()가 원본의 명도에 맞춰 이 중 하나로 보낸다 */
+export const BLIGHT = {
+  deep: '#2a1630', dark: '#3a1f3f', mid: '#5a2f5e', pale: '#7a4a7c',
+  lit: '#c9a0cf', gold: '#ffd24a',
+};
+
+const HEX = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const RAMP = [[0, HEX(BLIGHT.deep)], [0.25, HEX(BLIGHT.dark)], [0.5, HEX(BLIGHT.mid)],
+  [0.75, HEX(BLIGHT.pale)], [1, HEX(BLIGHT.lit)]];
+
+/**
+ * 원래 색을 결정화한 색으로 바꾼다. life 1 = 원래 색, 0 = 완전히 굳은 상태.
+ * **원본의 명도를 유지한 채 색상만 자주로 민다** — 그래야 밝은 벽은 밝은 자주,
+ * 어두운 지붕은 어두운 자주가 되어서 그림의 구성이 그대로 읽힌다.
+ */
+export function blight(hex, life = 0) {
+  const [r, g, b] = HEX(hex);
+  const L = Math.min(1, (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255);
+  let i = 0;
+  while (i < RAMP.length - 2 && L > RAMP[i + 1][0]) i++;
+  const [l0, c0] = RAMP[i];
+  const [l1, c1] = RAMP[i + 1];
+  const t = (L - l0) / (l1 - l0);
+  const out = c0.map((v, k) => v + (c1[k] - v) * t);
+  const m = out.map((v, k) => R(v + ([r, g, b][k] - v) * life));
+  return `rgb(${m[0]},${m[1]},${m[2]})`;
+}
+
+/**
+ * 결정 하나. (x, baseY)를 밑변 중앙으로 위로 뾰족하게 솟는다.
+ * 왼쪽 면이 밝은 건 광원이 좌상단이기 때문 — 스프라이트와 같은 규칙이다.
+ */
+export function crystal(ctx, x, baseY, cw, ch, { body = BLIGHT.mid, light = BLIGHT.pale, edge = BLIGHT.lit, lean = 0 } = {}) {
+  const steps = Math.max(2, R(ch));
+  for (let i = 0; i < steps; i++) {
+    const t = i / steps;                         // 0 = 밑, 1 = 끝
+    const hw = Math.max(1, R((cw / 2) * (1 - t * t)));   // 위로 갈수록 급히 좁아진다
+    const cx = R(x + lean * t * ch * 0.35);
+    const y = R(baseY - i);
+    ctx.fillStyle = body;
+    ctx.fillRect(cx - hw, y, hw * 2, 1);
+    ctx.fillStyle = light;                       // 왼쪽 면
+    ctx.fillRect(cx - hw, y, Math.max(1, R(hw * 0.7)), 1);
+    if (i > steps * 0.55) { ctx.fillStyle = edge; ctx.fillRect(cx - hw, y, 1, 1); }
+  }
+}
+
+/** 결정이 갈라진 틈 — 짧은 금빛 지그재그. 400년 전 그날 금이 갔다는 표시다 */
+export function goldCrack(ctx, x, y, len, { color = BLIGHT.gold, seed = 0, dir = 1, alpha = 0.9 } = {}) {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  let cx = R(x);
+  for (let i = 0; i < len; i++) {
+    ctx.fillRect(cx, R(y + i * dir), 1, 1);
+    if (hash(i, seed) > 0.62) cx += hash(i, seed + 1) > 0.5 ? 1 : -1;
+  }
+  ctx.globalAlpha = 1;
+}
+
 export function fill(ctx, x, y, w, h, color) {
   if (color) ctx.fillStyle = color;
   ctx.fillRect(R(x), R(y), Math.max(1, R(w)), Math.max(1, R(h)));
