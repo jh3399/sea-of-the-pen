@@ -15,7 +15,7 @@ import { createHullBody } from '../src/physics/body.js';
 import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
 import { applyDevices, DEVICE_TUNING } from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
-import { defaultDevices, deviceExtraMass, sternAnchor } from '../src/items/defaults.js';
+import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { bounds } from '../src/geom/poly.js';
 
@@ -107,11 +107,16 @@ check('구멍 있는 선체도 분해됨 (earcut 경로)', donutParts.length > 0
 // ─────────────────────────────────────────────── 스파이크 ③ 이방성 저항
 console.log('\n\x1b[36m▌스파이크 ③ — 이방성 저항 안정성\x1b[0m\n');
 
-/** @param {{devices?: boolean}} options devices 를 켜면 기본 3종 장치(§5.1)를 얹는다. */
+/**
+ * @param {{devices?: boolean, rudder?: boolean}} options
+ *   devices 를 켜면 기본 장치(§5.1 좌현 노·우현 노·닻)를, rudder 를 켜면 **부착 아이템인**
+ *   키를 추가로 얹는다. 키는 D2 부터 기본 장착이 아니라 선택지다 (§5.2 원칙 2).
+ */
 function spawn(key, options = {}) {
   const world = createWorld();
   const hull = hulls[key];
   const items = options.devices ? defaultDevices(hull.outline) : [];
+  if (options.rudder) items.push(rudderItem(hull.outline));
   const body = createHullBody(world, { outline: hull.outline, holes: [], items },
     {
       position: { x: 0, y: 0 },
@@ -120,6 +125,15 @@ function spawn(key, options = {}) {
       extraMass: deviceExtraMass(items),
     });
   return { world, body };
+}
+
+/** 부착 아이템으로서의 키 — 선미 부착점, 나무 30 kg (§4.2 "후미일수록 효과적"). */
+function rudderItem(outline) {
+  const a = sternAnchor(outline);
+  return {
+    key: 'rudder', type: 'rudder', side: null, name: '키',
+    mass: 30, material: 'wood', angle: 0, x: a.x, y: a.y,
+  };
 }
 
 // 60초 정속 항해 — 종단 속도로 수렴하고 발산하지 않아야 한다.
@@ -170,18 +184,40 @@ check('1초 후 횡속도가 전진속도보다 훨씬 많이 죽는다',
 console.log('\n  조향 코드 0줄 — 아래 차이는 전부 형상 → 저항·관성 → 토크에서 창발한다');
 console.log(`  ${pad('', 14)}${pad('세장비', 8)}${pad('3초 전진', 11)}${pad('횡속 잔존', 11)}${pad('3초 선회', 10)}회전 정지`);
 
+const EMPTY_INPUT = {};
+/** 최대 케이던스 주기 (s) — 봉투 + 회수. 이보다 빨리 두드려도 노는 거절한다. */
+const STROKE_SPAN = DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown;
+
 /**
- * 기본 3종 장치를 얹고 입력을 seconds 초 유지한다.
- * @param {{throttle?:number, steer?:number, anchor?:boolean}} input
- * @param {{seconds?:number, v?:{x,y}, w?:number}} setup 초기 상태
+ * 스트로크 스케줄 — period 초마다 지정한 노(들)를 젓는 입력 함수를 만든다.
+ * 노는 keydown 엣지로 젓기 때문에 벤치도 "언제 눌렀는가"를 스텝 단위로 재현해야 한다.
+ *
+ * @param {Array<'port'|'starboard'>} sides
+ * @param {{dir?:number, period?:number}} options period 기본값은 최대 케이던스
+ */
+function cadence(sides, options = {}) {
+  const dir = options.dir ?? 1;
+  const every = Math.max(1, Math.round((options.period ?? STROKE_SPAN) / FIXED_DT));
+  const strokes = sides.map((side) => ({ side, dir }));
+  return (step) => (step % every === 0 ? { strokes } : EMPTY_INPUT);
+}
+
+const BOTH = ['port', 'starboard'];
+
+/**
+ * 기본 장치를 얹고 seconds 초 시뮬레이션한다.
+ * @param {object|function} input 고정 입력 객체, 또는 `(step) => 입력` (스트로크 스케줄)
+ * @param {{seconds?:number, v?:{x,y}, w?:number, rudder?:boolean}} setup 초기 상태
  */
 function drive(key, input, setup = {}) {
   const seconds = setup.seconds ?? 3;
-  const { world, body } = spawn(key, { devices: true });
+  const { world, body } = spawn(key, { devices: true, rudder: setup.rudder });
   if (setup.v) body.setLinearVelocity(new Vec2(setup.v.x, setup.v.y));
   if (setup.w) body.setAngularVelocity(setup.w);
+  const inputAt = typeof input === 'function' ? input : () => input;
+  let step = 0;
   const s = new FixedStepper(world, {
-    onPreStep: (dt) => { applyDevices(body, input, dt); applyHydroToWorld(world, dt); },
+    onPreStep: (dt) => { applyDevices(body, inputAt(step++), dt); applyHydroToWorld(world, dt); },
   });
   for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) s.advance(FIXED_DT);
   return {
@@ -222,7 +258,7 @@ const feel = {};
 for (const key of ['sloop', 'round']) {
   const p = paramTable[key].p;
   feel[key] = {
-    fwd: drive(key, { throttle: 1 }).speed,
+    fwd: drive(key, cadence(BOTH)).speed,
     slip: decay(key, { v: { x: 0, y: 6 } }).speed,   // 순수 횡속 6 m/s 를 1초 뒤에 얼마나 남기는가
     turn: torqueTest(key),                           // 같은 기준 토크로 3초 (형상 항만)
     stop: decay(key, { w: 1.0 }, 2).w,               // 각속도 1 rad/s 를 2초 뒤에 얼마나 남기는가
@@ -234,7 +270,7 @@ for (const key of ['sloop', 'round']) {
 
 check('길쭉한 배가 더 빠르다 (§2.1 "직진 빠름")',
   feel.sloop.fwd > feel.round.fwd,
-  `기본 노 3초 ${feel.sloop.fwd.toFixed(2)} > ${feel.round.fwd.toFixed(2)} m/s`);
+  `양노 최대 케이던스 3초 ${feel.sloop.fwd.toFixed(2)} > ${feel.round.fwd.toFixed(2)} m/s`);
 check('길쭉한 배가 옆으로 덜 밀린다 (§2.1 "옆밀림 적음")',
   feel.sloop.slip < feel.round.slip * 0.7,
   `횡속 6 m/s → 1초 뒤 ${feel.sloop.slip.toFixed(2)} vs ${feel.round.slip.toFixed(2)} m/s`);
@@ -248,45 +284,139 @@ check('밸런싱 불변식: 회전 저항 과장 < 부가질량 과장 (넘으�
   HYDRO_TUNING.angularSlendernessGain < HYDRO_TUNING.yawAddedMassGain,
   `저항 ${HYDRO_TUNING.angularSlendernessGain} < 부가질량 ${HYDRO_TUNING.yawAddedMassGain}`);
 
-// ─────────────────────────────────────────────── D1 기본 3종 장치 (§5)
-console.log('\n\x1b[36m▌D1 — 기본 3종 장치 (§5.1 키 · 노 · 닻)\x1b[0m\n');
+// ─────────────────────────────────────────────── D2 기본 장치 (§5)
+console.log('\n\x1b[36m▌D2 — 기본 장치 (§5.1 좌현 노 · 우현 노 · 닻)\x1b[0m\n');
 
+// 두 노의 y **합의 절반**이 곧 "양쪽을 고르게 저어도 남는 팔길이"다. 대칭 배는 0 이어야 하고,
+// 0 이 아닌 만큼 그 배는 직진 입력만으로 돈다 — 아래 20초 주행이 이 수치를 거동으로 확인한다.
 for (const key of ['sloop', 'round', 'lopsided']) {
-  const a = sternAnchor(hulls[key].outline);
   const devices = defaultDevices(hulls[key].outline);
-  const oar = devices.find((d) => d.type === 'oar');
-  console.log(`  ${pad(CORPUS_LABELS[key], 14)}선미 부착점 (${num(a.x, 2, 6)},${num(a.y, 3, 7)})  ` +
-    `노 팔길이 ${num(Math.abs(oar.y), 3, 6)} m  장치 질량 ${deviceExtraMass(devices)} kg`);
+  const oars = devices.filter((d) => d.type === 'oar');
+  const span = sideAnchors(hulls[key].outline, oars[0].x);
+  const axis = (oars[0].y + oars[1].y) / 2;
+  console.log(`  ${pad(CORPUS_LABELS[key], 14)}노 (${num(oars[0].x, 2, 6)}, ` +
+    `${num(oars[0].y, 3, 7)}/${num(oars[1].y, 3, 7)})  반폭 ${num(span.halfBeam, 3, 6)} m  ` +
+    `중심선 ${num(axis, 4, 8)} m  장치 ${deviceExtraMass(devices)} kg`);
 }
 
-// ── 기본 키: 유속 비례 선회력, 정지 시 무효 (§5.1 의 핵심 교육 장치) ────────────
-const helmStill = drive('sloop', { steer: 1 }, { seconds: 2 });
-check('기본 키는 정지 상태에서 무효다 (§5.1 "키는 물살이 있어야 듣는다")',
+// ── 노 스트로크: 한 번 젓기가 봉투를 그리는가 (임펄스가 아니다) ────────────────
+//
+// 스트로크 모델의 핵심은 "누른 순간 속도가 튀지 않는다"는 것이다. 봉투가 sin² 이라 힘이
+// 0에서 시작해 0으로 끝나므로, 한 스텝의 속도 변화는 항상 작다. 임펄스로 바뀌면 여기가 깨진다.
+const oneStroke = (() => {
+  const { world, body } = spawn('sloop', { devices: true });
+  let step = 0;
+  const trace = [];
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, step++ === 0 ? { strokes: BOTH.map((side) => ({ side, dir: 1 })) } : EMPTY_INPUT, dt);
+      applyHydroToWorld(world, dt);
+    },
+  });
+  for (let i = 0; i < Math.round(1.2 / FIXED_DT); i++) {
+    s.advance(FIXED_DT);
+    trace.push(body.getLinearVelocity().x);
+  }
+  const jumps = trace.map((v, i) => (i === 0 ? v : v - trace[i - 1]));
+  return {
+    peak: Math.max(...trace),
+    maxJump: Math.max(...jumps),
+    rising: jumps.filter((j) => j > 1e-9).length,
+    end: trace.at(-1),
+  };
+})();
+// 봉투 길이만큼(0.45초 = 27스텝) 가속이 이어져야 한다. 임펄스라면 한 스텝에 끝난다.
+const ENVELOPE_STEPS = Math.round(DEVICE_TUNING.oarStrokeDuration / FIXED_DT);
+console.log(`  한 번 젓기 — 최고 ${oneStroke.peak.toFixed(3)} m/s · 가속 ${oneStroke.rising}스텝 ` +
+  `(봉투 ${ENVELOPE_STEPS}스텝) · 스텝당 최대 증분 ${(oneStroke.maxJump * 1000).toFixed(2)} mm/s · ` +
+  `1.2초 뒤 ${oneStroke.end.toFixed(3)} m/s`);
+check('한 번 젓기는 임펄스가 아니라 시간 봉투다 (가속이 봉투 길이만큼 이어진다)',
+  oneStroke.rising >= ENVELOPE_STEPS * 0.9 && oneStroke.maxJump < oneStroke.peak * 0.15
+    && oneStroke.peak > 0.05,
+  `가속 ${oneStroke.rising} ≥ ${Math.round(ENVELOPE_STEPS * 0.9)}스텝 · ` +
+  `최대 증분이 최고 속도의 ${(oneStroke.maxJump / oneStroke.peak * 100).toFixed(1)}%`);
+check('스트로크가 끝나면 배는 활공한다 (봉투 종료 후 감속)',
+  oneStroke.end < oneStroke.peak,
+  `최고 ${oneStroke.peak.toFixed(3)} → 1.2초 뒤 ${oneStroke.end.toFixed(3)} m/s`);
+
+// ── 회수 쿨다운: 연타 상한 (실력 표현이 "타이밍"이지 "연타 속도"가 아니게 만든다) ──
+const spam = drive('sloop', cadence(BOTH, { period: FIXED_DT }), { seconds: 60 });
+const maxCad = drive('sloop', cadence(BOTH), { seconds: 60 });
+console.log(`  연타 상한 — 매 스텝 두드림 ${spam.speed.toFixed(2)} m/s vs ` +
+  `최대 케이던스 ${maxCad.speed.toFixed(2)} m/s (${(1 / STROKE_SPAN).toFixed(2)} 회/s)`);
+check('회수 중 입력은 무시된다 (연타해도 최대 케이던스보다 빨라지지 않는다)',
+  Math.abs(spam.speed - maxCad.speed) < 0.02,
+  `매 스텝 ${spam.speed.toFixed(3)} ≈ 최대 케이던스 ${maxCad.speed.toFixed(3)} m/s`);
+
+// ── 케이던스가 곧 추력: 절반으로 저으면 절반만 나간다 (봉투가 시간 힘이라는 회귀) ──
+const halfCad = drive('sloop', cadence(BOTH, { period: STROKE_SPAN * 2 }), { seconds: 60 });
+check('케이던스를 절반으로 줄이면 종단 속도가 유의미하게 낮아진다',
+  halfCad.speed < maxCad.speed * 0.85 && halfCad.speed > 0.3,
+  `주기 ${STROKE_SPAN.toFixed(2)}s ${maxCad.speed.toFixed(2)} vs ` +
+  `${(STROKE_SPAN * 2).toFixed(2)}s ${halfCad.speed.toFixed(2)} m/s`);
+
+// ── 기본 노: 맵 클리어 불가 수준의 미약한 추력 (§5.2 원칙 1) ────────────────────
+console.log(`  노 종단 속도 — 60초 최대 케이던스 후 ${maxCad.speed.toFixed(2)} m/s ` +
+  `(설계 상한 ${DEVICE_TUNING.oarMaxSpeed} m/s)`);
+check('기본 노만으로는 종단 속도가 낮다 (§5.2 원칙 1 "맵 클리어 불가 수준")',
+  maxCad.speed < DEVICE_TUNING.oarMaxSpeed && maxCad.speed > 1.0,
+  `${maxCad.speed.toFixed(2)} m/s < ${DEVICE_TUNING.oarMaxSpeed} m/s`);
+
+// ── ★ 한쪽만 젓기 = 선회. 조향 코드 0줄, τ = −y·F 하나에서 나온다 ───────────────
+const portOnly = drive('sloop', cadence(['port']), { seconds: 8 });
+const starOnly = drive('sloop', cadence(['starboard']), { seconds: 8 });
+const bothEven = drive('sloop', cadence(BOTH), { seconds: 8 });
+console.log(`  8초 젓기 — 좌현만 ${portOnly.yaw.toFixed(1)}° · 우현만 ${starOnly.yaw.toFixed(1)}° · ` +
+  `양쪽 ${bothEven.yaw.toFixed(2)}°`);
+check('★ 한쪽 노만 저으면 선회한다 (조향 코드 0줄 — §4.1 부착점 창발)',
+  portOnly.turned > 20 && starOnly.turned > 20,
+  `좌현만 ${portOnly.turned.toFixed(1)}° · 우현만 ${starOnly.turned.toFixed(1)}°`);
+check('좌현 노와 우현 노는 서로 반대로 돈다 (카누와 같다 — 부호도 식에서 나온다)',
+  Math.sign(portOnly.yaw) === -Math.sign(starOnly.yaw),
+  `좌현 ${portOnly.yaw.toFixed(1)}° vs 우현 ${starOnly.yaw.toFixed(1)}°`);
+check('대칭 선체는 양쪽을 저으면 토크가 상쇄돼 직진한다',
+  bothEven.turned < portOnly.turned * 0.05,
+  `양쪽 ${bothEven.turned.toFixed(3)}° < 한쪽 ${portOnly.turned.toFixed(1)}° × 0.05`);
+
+// ── 넓은 배가 잘 돈다 — 팔길이가 반폭이므로 (형상 → 조향 특성) ──────────────────
+const oarX = (key) => defaultDevices(hulls[key].outline).find((d) => d.type === 'oar').x;
+const halfBeamOf = (key) => sideAnchors(hulls[key].outline, oarX(key)).halfBeam;
+check('넓은 배가 한쪽 젓기로 더 잘 돈다 (팔길이 = 노 반폭)',
+  halfBeamOf('round') > halfBeamOf('sloop'),
+  `둥근 배 반폭 ${halfBeamOf('round').toFixed(2)} > 슬루프 ${halfBeamOf('sloop').toFixed(2)} m`);
+
+// ── 부착 아이템으로서의 키: 유속 비례 선회력, 정지 시 무효 (§5.1) ───────────────
+//
+// D2 부터 키는 기본 장착이 아니다. 노 조향은 oarMaxSpeed 근처에서 죽으므로, 빠른 물살에서는
+// 키를 달아야 한다 — §5.2 원칙 2 의 "탈착·교체가 실력 표현"이 여기서 성립한다.
+const helmStill = drive('sloop', { steer: 1 }, { seconds: 2, rudder: true });
+check('키는 정지 상태에서 무효다 (§5.1 "키는 물살이 있어야 듣는다")',
   helmStill.turned < 0.01 && Math.abs(helmStill.w) < 1e-6,
   `2초 조타 → ${helmStill.turned.toFixed(4)}° · ${helmStill.w.toFixed(6)} rad/s`);
 
 // 같은 조타를 서로 다른 초기 유속에서. 힘이 u·|u| 라 유속이 2배면 선회 응답이 크게 벌어져야 한다.
-const helmSlow = drive('sloop', { steer: 1 }, { seconds: 1, v: { x: 1.5, y: 0 } });
-const helmFast = drive('sloop', { steer: 1 }, { seconds: 1, v: { x: 3.0, y: 0 } });
+const helmSlow = drive('sloop', { steer: 1 }, { seconds: 1, v: { x: 1.5, y: 0 }, rudder: true });
+const helmFast = drive('sloop', { steer: 1 }, { seconds: 1, v: { x: 3.0, y: 0 }, rudder: true });
 console.log(`  키 응답 — 유속 1.5 m/s → ${helmSlow.turned.toFixed(2)}° · ` +
   `3.0 m/s → ${helmFast.turned.toFixed(2)}° (1초 조타)`);
-check('기본 키의 선회력은 유속에 비례한다 (전진 속도 2배 → 선회 응답 급증)',
+check('키의 선회력은 유속에 비례한다 (전진 속도 2배 → 선회 응답 급증)',
   helmFast.turned > helmSlow.turned * 2.5,
   `${helmFast.turned.toFixed(2)}° > ${helmSlow.turned.toFixed(2)}° × 2.5`);
 
 // 후진 중에는 u·|u| 의 부호가 뒤집혀 같은 조타가 반대로 듣는다 — 조건 분기 없이 식에서 나온다.
-const helmAstern = drive('sloop', { steer: 1 }, { seconds: 1, v: { x: -3.0, y: 0 } });
+const helmAstern = drive('sloop', { steer: 1 }, { seconds: 1, v: { x: -3.0, y: 0 }, rudder: true });
 check('후진 중에는 같은 조타가 반대로 듣는다 (u·|u| 의 부호 반전)',
   Math.sign(helmAstern.yaw) === -Math.sign(helmFast.yaw) && helmAstern.turned > 0.5,
   `전진 ${helmFast.yaw.toFixed(1)}° vs 후진 ${helmAstern.yaw.toFixed(1)}°`);
 
-// ── 기본 노: 맵 클리어 불가 수준의 미약한 추력 (§5.2 원칙 1) ────────────────────
-const oarLong = drive('sloop', { throttle: 1 }, { seconds: 60 });
-console.log(`  노 종단 속도 — 60초 전력 젓기 후 ${oarLong.speed.toFixed(2)} m/s ` +
-  `(설계 상한 ${DEVICE_TUNING.oarMaxSpeed} m/s)`);
-check('기본 노만으로는 종단 속도가 낮다 (§5.2 원칙 1 "맵 클리어 불가 수준")',
-  oarLong.speed < DEVICE_TUNING.oarMaxSpeed && oarLong.speed > 1.0,
-  `${oarLong.speed.toFixed(2)} m/s < ${DEVICE_TUNING.oarMaxSpeed} m/s`);
+// ★ 노 조향과 키 조향의 트레이드오프 — 키를 남겨 둔 이유가 수치로 성립하는가.
+// 노는 진행 방향 성분이 oarMaxSpeed 에 닿으면 falloff 가 0 이라 아예 힘을 못 낸다.
+const fastOar = drive('sloop', cadence(['port']), { seconds: 2, v: { x: 5.0, y: 0 } });
+const fastHelm = drive('sloop', { steer: 1 }, { seconds: 2, v: { x: 5.0, y: 0 }, rudder: true });
+console.log(`  고속(5 m/s) 조향 — 한쪽 노 ${fastOar.turned.toFixed(2)}° vs 키 ${fastHelm.turned.toFixed(2)}°`);
+check('★ 고속에서는 노 조향이 죽고 키가 이긴다 (키를 아이템으로 남긴 이유 — 원칙 2)',
+  fastHelm.turned > fastOar.turned * 3,
+  `키 ${fastHelm.turned.toFixed(2)}° > 노 ${fastOar.turned.toFixed(2)}° × 3`);
 
 // ── 기본 닻: 정지 수단 (§5.1) ─────────────────────────────────────────────────
 const anchored = drive('sloop', { anchor: true }, { seconds: 1, v: { x: 5, y: 0 } });
@@ -299,8 +429,13 @@ const released = (() => {
   const { world, body } = spawn('sloop', { devices: true });
   body.setLinearVelocity(new Vec2(5, 0));
   let anchor = true;
+  let step = 0;
+  const row = cadence(BOTH);
   const s = new FixedStepper(world, {
-    onPreStep: (dt) => { applyDevices(body, { throttle: 1, anchor }, dt); applyHydroToWorld(world, dt); },
+    onPreStep: (dt) => {
+      applyDevices(body, { ...row(step++), anchor }, dt);
+      applyHydroToWorld(world, dt);
+    },
   });
   for (let i = 0; i < 60; i++) s.advance(FIXED_DT);
   anchor = false;
@@ -319,13 +454,13 @@ check('닻을 놓으면 조인트가 사라지고 다시 항해할 수 있다',
 const STRAIGHT_RUN_SECONDS = 20;
 const straightRuns = {};
 for (const key of ['sloop', 'round', 'lopsided']) {
-  straightRuns[key] = drive(key, { throttle: 1 }, { seconds: STRAIGHT_RUN_SECONDS });
+  straightRuns[key] = drive(key, cadence(BOTH), { seconds: STRAIGHT_RUN_SECONDS });
 }
 const turnRadius = (r) => r.speed / Math.max(Math.abs(r.w), 1e-9);
 console.log(`  ↑ 만 ${STRAIGHT_RUN_SECONDS}초 — ${['sloop', 'round', 'lopsided']
   .map((k) => `${CORPUS_LABELS[k]} ${straightRuns[k].yaw.toFixed(1)}° (R ${turnRadius(straightRuns[k]).toFixed(0)} m)`)
   .join(' · ')}`);
-check('★ 비대칭 선체는 직진 입력만으로 선회한다 (조향 코드 0줄 — §4.1 부착점 창발)',
+check('★ 비대칭 선체는 양쪽을 고르게 저어도 선회한다 (조향 코드 0줄 — §4.1 부착점 창발)',
   straightRuns.lopsided.turned > 30 && turnRadius(straightRuns.lopsided) < 60,
   `↑ 만 ${STRAIGHT_RUN_SECONDS}초 → ${straightRuns.lopsided.yaw.toFixed(1)}° · ` +
   `선회 반경 ${turnRadius(straightRuns.lopsided).toFixed(0)} m`);
@@ -337,13 +472,37 @@ check('대칭 선체는 같은 입력에 똑바로 간다 (창발이 형상에�
 // ── 예측 궤적선이 실제와 일치하는가 ──────────────────────────────────────────
 console.log('\n\x1b[36m▌D1 — 예측 궤적선 (predict.js ↔ 실제 시뮬레이션)\x1b[0m\n');
 
-const predictError = (key, input, seconds = 2.5) => {
-  const { world, body } = spawn(key, { devices: true });
-  body.setLinearVelocity(new Vec2(2.5, 0)); // 키가 들으려면 물살이 있어야 한다
-  const path = predictPath(body, input, { horizon: seconds, stride: 3 });
+/**
+ * 예측 가정은 "진행 중인 봉투는 끝까지 재생하고 그 뒤로는 활공한다"이다. 그래서 검증도
+ * **스트로크를 시작해 봉투 한가운데에서 예측을 뽑고, 그 뒤로 아무 입력 없이 실주행**해
+ * 둘이 일치하는지를 본다. 봉투 중간에서 재는 것이 중요하다 — 활공만 재면 스트로크 상태
+ * 복사가 통째로 빠져도 통과해 버린다.
+ *
+ * @param {{strokes?:Array, warmup?:number, seconds?:number, v?:{x,y}, rudder?:boolean, steer?:number}} opts
+ */
+const predictError = (key, opts = {}) => {
+  const seconds = opts.seconds ?? 2.5;
+  const { world, body } = spawn(key, { devices: true, rudder: opts.rudder });
+  body.setLinearVelocity(new Vec2(opts.v?.x ?? 2.5, opts.v?.y ?? 0)); // 키가 들으려면 물살이 있어야 한다
+
+  const hold = { steer: opts.steer ?? 0 };
+  let pending = null;
   const s = new FixedStepper(world, {
-    onPreStep: (dt) => { applyDevices(body, input, dt); applyHydroToWorld(world, dt); },
+    onPreStep: (dt) => {
+      applyDevices(body, pending ?? hold, dt);
+      pending = null;
+      applyHydroToWorld(world, dt);
+    },
   });
+
+  // 스트로크를 시작하고 warmup 스텝만큼 진행 — 예측 시점에 봉투가 살아 있게 만든다.
+  if (opts.strokes) {
+    pending = { ...hold, strokes: opts.strokes };
+    for (let i = 0; i < (opts.warmup ?? 6); i++) s.advance(FIXED_DT);
+  }
+
+  const envAtPredict = body.getUserData().hull.control?.strokes.port.t ?? Infinity;
+  const path = predictPath(body, hold, { horizon: seconds, stride: 3 });
   for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) s.advance(FIXED_DT);
 
   const actual = body.getWorldCenter();
@@ -351,22 +510,32 @@ const predictError = (key, input, seconds = 2.5) => {
   const start = path[0];
   const travelled = Math.hypot(actual.x - start.x, actual.y - start.y);
   const gap = Math.hypot(actual.x - predicted.x, actual.y - predicted.y);
-  return { gap, travelled, rel: gap / Math.max(travelled, 1e-6), samples: path.length };
+  return {
+    gap, travelled, rel: gap / Math.max(travelled, 1e-6), samples: path.length,
+    phase: envAtPredict,
+  };
 };
 
+const bothStroke = BOTH.map((side) => ({ side, dir: 1 }));
 const predRuns = {
-  '직진': predictError('sloop', { throttle: 1 }),
-  '선회': predictError('sloop', { throttle: 1, steer: 1 }),
-  '비대칭 직진': predictError('lopsided', { throttle: 1 }),
+  '활공': predictError('sloop'),
+  '봉투 재생 중': predictError('sloop', { strokes: bothStroke }),
+  '한쪽 젓는 중': predictError('sloop', { strokes: [{ side: 'port', dir: 1 }] }),
+  '비대칭 젓는 중': predictError('lopsided', { strokes: bothStroke }),
+  '키 조타 중': predictError('sloop', { rudder: true, steer: 1, v: { x: 3, y: 0 } }),
 };
 for (const [label, r] of Object.entries(predRuns)) {
   // 오차를 mm 로 찍는다 — 0.00% 만 보이면 "예측을 안 돌린 것 아닌가"를 구분할 수 없다.
-  console.log(`  ${pad(label, 14)}이동 ${num(r.travelled, 2, 6)} m · 오차 ${num(r.gap * 1000, 4, 9)} mm ` +
+  console.log(`  ${pad(label, 16)}이동 ${num(r.travelled, 2, 6)} m · 오차 ${num(r.gap * 1000, 4, 9)} mm ` +
     `(${(r.rel * 100).toFixed(4)}%) · 샘플 ${r.samples}점`);
 }
 check('예측 궤적선과 실제 경로의 2.5초 오차가 이동 거리의 5% 이내',
   Object.values(predRuns).every((r) => r.rel < 0.05),
   `최대 ${(Math.max(...Object.values(predRuns).map((r) => r.rel)) * 100).toFixed(2)}%`);
+check('★ 스트로크 봉투 재생이 비트 단위로 일치한다 (예측 전용 식이 없다는 증거)',
+  predRuns['봉투 재생 중'].gap < 1e-6 && predRuns['한쪽 젓는 중'].gap < 1e-6,
+  `봉투 중 예측 오차 ${(predRuns['봉투 재생 중'].gap * 1e6).toFixed(3)} µm · ` +
+  `한쪽 ${(predRuns['한쪽 젓는 중'].gap * 1e6).toFixed(3)} µm`);
 
 const anchoredPath = (() => {
   const { world, body } = spawn('sloop', { devices: true });
@@ -379,16 +548,50 @@ const anchoredPath = (() => {
 check('닻이 물린 배는 궤적선을 그리지 않는다 (예측할 것이 없다)',
   anchoredPath.length === 0, `샘플 ${anchoredPath.length}점`);
 
-// ── 파손으로 키를 잃으면 조향을 잃는다 (§5.2 원칙 3 의 토대) ────────────────────
-const rudderLoss = (() => {
+// ── 파손이 조종 특성을 바꾼다 (§5.2 원칙 3 의 토대) ────────────────────────────
+//
+// 좌우 노 체계에서는 "조향을 잃는다"가 아니라 **조향이 뒤바뀐다**. 한쪽 노를 잃으면 양쪽
+// 젓기(↑)가 곧 한쪽 젓기가 되어 배가 저절로 돌기 시작한다 — 파손이 새 거동을 만드는 쪽이라
+// 원칙 3("시스템이 이미 계산한 출력을 버리지 않는다")에 더 잘 맞는다.
+const oarLoss = (() => {
   const { world, body } = spawn('sloop', { devices: true });
+  const port = body.getUserData().hull.items.find((it) => it.side === 'port');
+  const at = body.getWorldPoint(new Vec2(port.x, port.y));
+  const out = applyImpact(world, body, { x: at.x, y: at.y }, 0.8);
+  const survivor = out.bodies.reduce((a, b) =>
+    (b.getUserData().hull.params.area > (a?.getUserData().hull.params.area ?? 0) ? b : a), null);
+  const alive = survivor.getUserData().hull.items.map((i) => i.key);
+
+  // 남은 배를 양쪽 젓기 입력으로 8초 몰아 본다 — 우현 노만 남았으니 돌아야 한다.
+  let step = 0;
+  const row = cadence(BOTH);
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => { applyDevices(survivor, row(step++), dt); applyHydroToWorld(world, dt); },
+  });
+  for (let i = 0; i < Math.round(8 / FIXED_DT); i++) s.advance(FIXED_DT);
+
+  return {
+    alive,
+    dropped: out.result.droppedItems.map((i) => i.key),
+    yaw: survivor.getAngle() * 180 / Math.PI,
+  };
+})();
+console.log(`  좌현 노 상실 후 ↑ 만 8초 → ${oarLoss.yaw.toFixed(1)}° ` +
+  `(생존 [${oarLoss.alive.join(',')}] · 탈락 [${oarLoss.dropped.join(',')}])`);
+check('노 한 자루를 잃으면 양쪽 젓기가 한쪽 젓기가 되어 배가 돌기 시작한다 (§5.2 원칙 3)',
+  oarLoss.dropped.includes('oarPort') && !oarLoss.alive.includes('oarPort')
+    && Math.abs(oarLoss.yaw) > 10,
+  `탈락 [${oarLoss.dropped.join(',')}] · 8초에 ${oarLoss.yaw.toFixed(1)}°`);
+
+const rudderLoss = (() => {
+  const { world, body } = spawn('sloop', { devices: true, rudder: true });
   const rudder = body.getUserData().hull.items.find((it) => it.type === 'rudder');
   const at = body.getWorldPoint(new Vec2(rudder.x, rudder.y));
   const out = applyImpact(world, body, { x: at.x, y: at.y }, 0.8);
   const alive = out.bodies.flatMap((b) => b.getUserData().hull.items.map((i) => i.type));
   return { alive, dropped: out.result.droppedItems.map((i) => i.type) };
 })();
-check('선미를 때려 키를 잃으면 조향 장치가 사라진다 (§5.2 원칙 3 — 규칙표 예외 없음)',
+check('선미를 때려 키를 잃으면 그 조향 수단이 사라진다 (§5.2 원칙 3 — 규칙표 예외 없음)',
   !rudderLoss.alive.includes('rudder') && rudderLoss.dropped.includes('rudder'),
   `생존 [${rudderLoss.alive.join(',')}] · 탈락 [${rudderLoss.dropped.join(',')}]`);
 
@@ -549,9 +752,10 @@ check('20회 차감 후에도 10초간 시뮬레이션이 안정적', postOk,
   `${bodies.length}개 조각 · 좌표 유한성 유지`);
 
 // ─────────────────────────────────────────────── 종합
-console.log('\n\x1b[36m▌D0 "세 실험이 프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?"\x1b[0m\n');
+console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
+  'D2 "배치에서 조향이 창발하는가?"\x1b[0m\n');
 if (failures.length === 0) {
-  console.log('  \x1b[32m통과.\x1b[0m 스파이크는 예산 안에서 돌고, 기본 3종 장치와 비대칭 창발이 성립한다.\n');
+  console.log('  \x1b[32m통과.\x1b[0m 스파이크는 예산 안에서 돌고, 좌우 노 스트로크와 비대칭 창발이 성립한다.\n');
 } else {
   console.log(`  \x1b[31m미달 ${failures.length}건:\x1b[0m\n${failures.map((f) => `    - ${f}`).join('\n')}\n`);
   process.exitCode = 1;
