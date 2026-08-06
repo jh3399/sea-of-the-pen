@@ -354,21 +354,65 @@ check('스트로크가 끝나면 배는 활공한다 (봉투 종료 후 감속)'
   oneStroke.end < oneStroke.peak,
   `최고 ${oneStroke.peak.toFixed(3)} → 1.2초 뒤 ${oneStroke.end.toFixed(3)} m/s`);
 
-// ── 회수 쿨다운: 연타 상한 (실력 표현이 "타이밍"이지 "연타 속도"가 아니게 만든다) ──
+// ── 연타 상한: 게이트가 정한 최고 케이던스를 넘을 수 없다 ─────────────────────
 const spam = drive('sloop', cadence(BOTH, { period: FIXED_DT }), { seconds: 60 });
 const maxCad = drive('sloop', cadence(BOTH), { seconds: 60 });
 console.log(`  연타 상한 — 매 스텝 두드림 ${spam.speed.toFixed(2)} m/s vs ` +
-  `최대 케이던스 ${maxCad.speed.toFixed(2)} m/s (${(1 / STROKE_SPAN).toFixed(2)} 회/s)`);
-check('회수 중 입력은 무시된다 (연타해도 최대 케이던스보다 빨라지지 않는다)',
+  `게이트 케이던스 ${maxCad.speed.toFixed(2)} m/s (${(1 / STROKE_SPAN).toFixed(2)} 회/s · ` +
+  `쿨다운 ${DEVICE_TUNING.oarStrokeCooldown}s)`);
+check('연타해도 게이트가 정한 상한을 넘지 못한다 (상한은 입력이 아니라 물리가 정한다)',
   Math.abs(spam.speed - maxCad.speed) < 0.02,
-  `매 스텝 ${spam.speed.toFixed(3)} ≈ 최대 케이던스 ${maxCad.speed.toFixed(3)} m/s`);
+  `매 스텝 ${spam.speed.toFixed(3)} ≈ 게이트 ${maxCad.speed.toFixed(3)} m/s`);
 
-// ── 케이던스가 곧 추력: 절반으로 저으면 절반만 나간다 (봉투가 시간 힘이라는 회귀) ──
-const halfCad = drive('sloop', cadence(BOTH, { period: STROKE_SPAN * 2 }), { seconds: 60 });
-check('케이던스를 절반으로 줄이면 종단 속도가 유의미하게 낮아진다',
-  halfCad.speed < maxCad.speed * 0.85 && halfCad.speed > 0.3,
-  `주기 ${STROKE_SPAN.toFixed(2)}s ${maxCad.speed.toFixed(2)} vs ` +
-  `${(STROKE_SPAN * 2).toFixed(2)}s ${halfCad.speed.toFixed(2)} m/s`);
+// ── 입력 버퍼: 젓는 중에 누른 것이 씹히지 않는다 ──────────────────────────────
+//
+// 연타의 체감은 최고 케이던스보다 여기에 더 많이 걸려 있다. 상한은 어차피 물리가 정하고,
+// 플레이어가 원하는 것은 "누른 것이 언젠가는 반영된다"는 확신이다. 다만 한참 전 입력까지
+// 기억하면 손을 뗀 뒤에도 배가 혼자 한 번 더 젓는 **유령 스트로크**가 되므로 창이 필요하다.
+const strokeStarts = (pressAt) => {
+  const { world, body } = spawn('sloop', { devices: true });
+  const pressSteps = new Set(pressAt.map((t) => Math.round(t / FIXED_DT)));
+  const req = [{ side: 'port', dir: 1 }];
+  let step = 0;
+  let starts = 0;
+  let prev = Infinity;
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, pressSteps.has(step) ? { strokes: req } : EMPTY_INPUT, dt);
+      applyHydroToWorld(world, dt);
+      step++;
+    },
+  });
+  for (let i = 0; i < Math.round(3 / FIXED_DT); i++) {
+    s.advance(FIXED_DT);
+    const t = body.getUserData().hull.control.strokes.port.t;
+    if (t < prev) starts++; // 시계가 되감겼다 = 새 스트로크가 시작됐다
+    prev = t;
+  }
+  return starts;
+};
+const GATE = STROKE_SPAN;
+const buffered = strokeStarts([0, GATE - DEVICE_TUNING.oarStrokeBuffer * 0.5]);
+const dropped = strokeStarts([0, GATE - DEVICE_TUNING.oarStrokeBuffer * 2]);
+console.log(`  입력 버퍼 ${DEVICE_TUNING.oarStrokeBuffer}s — 게이트 직전 입력 ${buffered}회 젓기 · ` +
+  `창 밖 입력 ${dropped}회 젓기`);
+check('젓는 중에 누른 입력은 버려지지 않고 게이트가 열릴 때 발사된다',
+  buffered === 2,
+  `게이트 직전에 한 번 더 눌러 ${buffered}회 저었다`);
+check('창 밖(너무 이른) 입력은 기억하지 않는다 — 손을 뗀 뒤 유령 스트로크 방지',
+  dropped === 1,
+  `버퍼 창보다 이른 입력은 무시 → ${dropped}회`);
+
+// ── 케이던스가 곧 추력 (봉투가 임펄스가 아니라 시간 힘이라는 회귀) ─────────────
+//
+// 게이트 배수가 아니라 **절대 케이던스**로 잰다. 쿨다운 노브를 돌려도 이 회귀가 같이
+// 흔들리면 안 된다 — 실측상 게이트 아래에서는 두 모델의 종단 속도가 완전히 같다.
+const SLOW_RATE = 0.5; // 회/s
+const slowCad = drive('sloop', cadence(BOTH, { period: 1 / SLOW_RATE }), { seconds: 60 });
+check('천천히 저으면 종단 속도가 유의미하게 낮아진다 (한 번 젓기 = 고정 임펄스가 아니다)',
+  slowCad.speed < maxCad.speed * 0.8 && slowCad.speed > 0.3,
+  `${(1 / STROKE_SPAN).toFixed(2)} 회/s ${maxCad.speed.toFixed(2)} vs ` +
+  `${SLOW_RATE} 회/s ${slowCad.speed.toFixed(2)} m/s`);
 
 // ── 기본 노: 맵 클리어 불가 수준의 미약한 추력 (§5.2 원칙 1) ────────────────────
 console.log(`  노 종단 속도 — 60초 최대 케이던스 후 ${maxCad.speed.toFixed(2)} m/s ` +

@@ -21,14 +21,30 @@ export const DEVICE_TUNING = {
 
   /** 봉투 길이 D (s) — 입수 → 당김 → 회수 한 사이클. */
   oarStrokeDuration: 0.45,
-  /** 회수 쿨다운 C (s). 이 구간에는 재입력이 무시된다 — 최대 케이던스 1/(D+C) ≈ 1.33 회/s. */
-  oarStrokeCooldown: 0.3,
+  /**
+   * 회수 쿨다운 C (s). 재입력을 막는 구간이라 최대 케이던스가 1/(D+C) 로 묶인다.
+   *
+   * ⚠ **연타 실험용 노브.** 0 이면 봉투가 끝나는 즉시 다시 저을 수 있어(2.22 회/s) 노가
+   * 사실상 쉬지 않는다. 0.3 이면 1.33 회/s 로 "젓고 활공하기"가 강제된다.
+   * 값을 바꿀 때 oarStrokePeak 도 같이 봐야 한다 — 듀티비 D/(D+C) 가 평균 추력을 정한다.
+   */
+  oarStrokeCooldown: 0,
+  /**
+   * 입력 버퍼 (s). 게이트가 열리기 이 시간 전까지의 입력은 **기억했다가 열리는 순간 발사**한다.
+   *
+   * 없으면 회수 중에 누른 키가 아무 반응 없이 사라져 "씹혔다"고 느껴진다. 연타의 체감은
+   * 최대 케이던스보다 이쪽에 더 많이 걸려 있다 — 상한은 어차피 물리가 정하고, 플레이어가
+   * 원하는 건 "누른 것이 언젠가는 반영된다"는 확신이다.
+   * 창(窓)을 두는 이유는 유령 스트로크 방지다. 한참 전에 누른 것까지 기억하면 손을 뗀 뒤에도
+   * 배가 혼자 한 번 더 젓는다.
+   */
+  oarStrokeBuffer: 0.25,
   /**
    * 노 하나의 피크 추력 (N/m², 갑판 면적당).
    *
-   * 산정: sin² 봉투의 시간 평균은 0.5, 듀티비는 D/(D+C) = 0.6 이므로 최대 케이던스로 계속
-   * 저을 때 노 하나의 평균 추력은 0.3 × peak. 노가 둘이라 합이 0.6 × 250 = 150 N/m² 로
-   * D1 의 지속 추력(oarPerArea 150)과 같아진다 — 종단 속도 체감을 유지한 채 리듬만 바꾼다.
+   * 산정: sin² 봉투의 시간 평균은 0.5, 듀티비는 D/(D+C). 쿨다운 0.3 일 때 듀티 0.6 이라
+   * 노 둘의 합이 0.6 × 250 = 150 N/m² 로 D1 의 지속 추력(oarPerArea 150)과 같았다.
+   * **쿨다운을 0 으로 내리면 듀티가 1.0 이 되어 평균 추력이 그대로 1.67배가 된다.**
    */
   oarStrokePeak: 250,
   /** 이 속도에 닿으면 노가 물을 못 잡는다 — 속도가 붙을수록 죽는 것이 원칙 2의 트레이드오프. */
@@ -69,9 +85,17 @@ export function strokesFromKey(key) {
 
 // ───────────────────────────────────────────────────────── 스트로크 순수 함수
 
-/** 노 한 자루의 스트로크 상태. t = 시작 후 경과(s), Infinity = 유휴. */
+/**
+ * 노 한 자루의 스트로크 상태.
+ * `t` = 시작 후 경과(s), Infinity = 유휴. `queued` = 버퍼에 든 다음 젓기의 방향(0 = 없음).
+ */
 export function createStrokeState() {
-  return { t: Infinity, dir: 0 };
+  return { t: Infinity, dir: 0, queued: 0 };
+}
+
+/** 다음 스트로크를 시작할 수 있게 되는 시각 (스트로크 시작 기준, s). */
+export function strokeGate() {
+  return DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown;
 }
 
 /** 조종 상태의 기본값. 강체마다 하나씩 `hull.control` 에 산다. */
@@ -98,26 +122,45 @@ export function strokeEnvelope(t) {
 }
 
 /**
- * 새 스트로크를 시작한다. **회수 중(t < D+C)이면 거절**한다 — 연타 상한이 여기서 나온다.
- * 상한이 없으면 실력 표현이 "타이밍"이 아니라 "연타 속도"가 된다.
- * @returns {boolean} 수락 여부
+ * 새 스트로크를 시작한다. 아직 젓는 중이면 **버퍼에 넣거나(게이트가 가까우면) 버린다.**
+ *
+ * 최대 케이던스 자체는 물리가 정한다(1/게이트). 여기서 정하는 것은 그 상한에 부딪혔을 때
+ * 입력이 어떻게 느껴지는가다 — 그냥 버리면 "씹혔다"가 되고, 버퍼에 넣으면 "곧 나간다"가 된다.
+ *
+ * @returns {boolean} 지금 즉시 시작했는지 (버퍼에 들어간 것은 false)
  */
 export function startStroke(state, dir) {
   if (!state || !dir) return false;
-  const span = DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown;
+  const gate = strokeGate();
   // 1e-9 은 부동소수 여유 — 정확히 회수가 끝나는 순간의 입력은 받아 줘야 한다.
   // (없으면 dt 누산 오차 때문에 "최대 케이던스"가 실제로는 한 스텝 느려진다.)
-  if (state.t < span - 1e-9) return false;
+  if (state.t < gate - 1e-9) {
+    // 게이트가 코앞이면 기억해 둔다. 한참 전 입력까지 기억하면 손을 뗀 뒤에도
+    // 배가 혼자 한 번 더 젓는 유령 스트로크가 된다.
+    if (state.t >= gate - DEVICE_TUNING.oarStrokeBuffer) state.queued = Math.sign(dir);
+    return false;
+  }
   state.t = 0;
   state.dir = Math.sign(dir);
+  state.queued = 0;
   return true;
 }
 
-/** 스트로크 시계를 dt 만큼 전진. **스텝의 맨 끝에서** 호출한다 (predict.js 와 순서 일치). */
+/**
+ * 스트로크 시계를 dt 만큼 전진하고, 게이트가 열리면 버퍼에 든 젓기를 발사한다.
+ * **스텝의 맨 끝에서** 호출한다 (predict.js 와 순서 일치).
+ */
 export function advanceStrokes(control, dt) {
+  const gate = strokeGate();
   for (const key of ['port', 'starboard']) {
     const s = control.strokes?.[key];
-    if (s && Number.isFinite(s.t)) s.t += dt;
+    if (!s) continue;
+    if (Number.isFinite(s.t)) s.t += dt;
+    if (s.queued && s.t >= gate - 1e-9) {
+      s.t = 0;
+      s.dir = s.queued;
+      s.queued = 0;
+    }
   }
 }
 
