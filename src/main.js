@@ -25,6 +25,9 @@ import { computeHullParams, MATERIALS } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
 import { CORPUS, CORPUS_LABELS } from './hull/corpus.js';
 import { applyImpact } from './damage/apply.js';
+import { hottestOutlinePoint, mostExposedPoint } from './damage/hotspot.js';
+import { burnRadius } from './damage/impact.js';
+import { fieldBehind } from './rules/provenance.js';
 import { View, drawSeaGrid, tracePolygon, traceOpenPath, fillPolygonWithHoles } from './render/view.js';
 import { Metrics } from './ui/metrics.js';
 import { rotate, translate, bounds } from './geom/poly.js';
@@ -433,11 +436,12 @@ class Harness {
   consumeRuleEvents() {
     for (const ev of this.engine.drain()) {
       if (ev.type === 'destroyed') {
-        // 연소 파괴는 그 자리를 크게 도려낸다 — D3 의 carve 입력이 바로 이 경로다.
+        // 연소 파괴는 **가장 뜨거운 외곽선 위**를 도려낸다 — D3 의 carve 입력이 이 경로다.
         this.metrics.note('규칙 이벤트', `${ev.target.params.material.name} 연소 파괴`);
-        this.carve(ev.at, IMPACT_RADIUS * 2.2);
-        this.setStatus(`${ev.target.params.material.name} 선체가 타서 무너졌습니다 — ` +
-          `${this.zone.label}의 온도와 재질만으로. 맵에는 코드가 없습니다.`, 'bad');
+        const spot = this.burnSpot(ev);
+        this.carveBody(ev.body, spot.world, burnRadius(ev.target.params.area));
+        this.setStatus(`${ev.target.params.material.name} 선체의 ${spot.where}이(가) 타서 ` +
+          `무너졌습니다 — ${this.zone.label}의 온도와 재질만으로. 맵에는 코드가 없습니다.`, 'bad');
       } else if (ev.type === 'itemLost') {
         this.setStatus(`${ev.item.name}(${ev.item.material})이(가) 불타 사라졌습니다 — ` +
           `장치 상실이 곧 창발 이벤트입니다 (§5.2 원칙 3).`, 'warn');
@@ -446,6 +450,36 @@ class Harness {
         this.metrics.note('규칙 이벤트', `${ev.ruleId} → ${ev.state}`);
       }
     }
+  }
+
+  /**
+   * 연소 파괴가 **어디를** 도려낼 것인가 (§7.3.1).
+   *
+   * 무게중심을 깎으면 clipper 결과가 구멍이 되어 outline 이 그대로 남고, 저항 타원도
+   * 무게중심도 안 움직인다 — "어느 쪽이 탔는가"라는 정보를 통째로 버리는 셈이라 원칙 3
+   * 위반이다. 열원 쪽 외곽선을 깎으면 배가 저절로 편향하고, 그 편향이 곧 피해 표시다.
+   *
+   * 필드 이름은 **규칙표에서** 온다 (`fieldBehind`). 여기에 'temperature' 를 쓰면
+   * 규칙표 밖에 규칙이 하나 생긴다.
+   */
+  burnSpot(ev) {
+    const hull = ev.target;
+    const body = ev.body;
+    const field = fieldBehind(this.rules, ev.ruleId);
+
+    if (field) {
+      const hot = hottestOutlinePoint(
+        hull.outline,
+        (x, y) => body.getWorldPoint(new Vec2(x, y)),
+        (x, y) => this.fields.sampleScalar(field, x, y),
+      );
+      // 구배가 없으면 어느 쪽이 더 탔는지 말할 근거가 없다 — 폴백으로 넘어간다.
+      if (hot && hot.spread > 1e-3) return { world: hot.world, where: sideName(hot.local) };
+    }
+
+    const tip = mostExposedPoint(hull.outline) ?? { x: 0, y: 0 };
+    const w = body.getWorldPoint(new Vec2(tip.x, tip.y));
+    return { world: { x: w.x, y: w.y }, where: sideName(tip) };
   }
 
   // ------------------------------------------------------- 아이템 부착 (§4.1)
@@ -649,9 +683,23 @@ class Harness {
     this.carve(world, IMPACT_RADIUS);
   }
 
+  /**
+   * 마우스 클릭 파손 — 어느 강체를 맞혔는지 **추정**해야 하는 유일한 경로다.
+   * 규칙·충돌·피탄은 강체를 직접 알려주므로 `carveBody` 를 바로 부른다.
+   */
   carve(worldPoint, radius) {
     const target = this.bodyNear(worldPoint);
-    if (!target) return;
+    if (target) this.carveBody(target, worldPoint, radius);
+  }
+
+  /**
+   * 지목된 강체를 깎는다.
+   *
+   * ★ `bodyNear` 를 다시 타면 안 된다. 조각이 겹쳐 있을 때 **엉뚱한 조각**이 잡히고,
+   *   호출자(규칙 엔진·접촉 리스너)는 이미 정확한 강체를 손에 쥐고 있다.
+   */
+  carveBody(target, worldPoint, radius) {
+    if (!target || !this.bodies.has(target)) return;
 
     const outcome = applyImpact(this.world, target, worldPoint, radius);
     if (!outcome) return;
@@ -1240,6 +1288,15 @@ class Harness {
 }
 
 /** 노 한 자루의 상태를 세 칸 막대로 — 젓는 중 ▓ / 회수 중 ▒ / 물 밖 ░. */
+/**
+ * 선체 로컬 좌표 → 부위 이름. 좌현이 +Y 인 것은 `defaults.js` 의 `sideAnchors` 규약이다.
+ * 표시용일 뿐이고 물리에는 영향이 없다.
+ */
+function sideName(local) {
+  if (Math.abs(local.x) >= Math.abs(local.y)) return local.x >= 0 ? '뱃머리' : '선미';
+  return local.y >= 0 ? '좌현' : '우현';
+}
+
 function strokeBar(control, side) {
   const s = control?.stroke;
   if (!s || !Number.isFinite(s.t) || !s[side]) return '░░░';

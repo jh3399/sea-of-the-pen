@@ -19,6 +19,8 @@ import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../sr
 import { attachItem, itemsExtraMass, canAttachAt } from '../src/items/attach.js';
 import { ITEM_CATALOG } from '../src/items/catalog.js';
 import { applyImpact } from '../src/damage/apply.js';
+import { burnRadius } from '../src/damage/impact.js';
+import { fieldBehind } from '../src/rules/provenance.js';
 import { bounds } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
@@ -1465,6 +1467,33 @@ check('필드가 평평하면 가장 돌출한 부위를 깎는다 (§2.2 "뾰�
   !!exposed && flatPick?.spread < 1e-3
     && Math.abs(Math.hypot(exposed.x, exposed.y) - maxReach) < 1e-9,
   exposed ? `반경 ${Math.hypot(exposed.x, exposed.y).toFixed(3)} = 최대 ${maxReach.toFixed(3)} m` : 'hotspot.js 미구현');
+
+// ── 필드 이름은 **규칙표에서** 온다 (코드가 'temperature' 를 알면 규칙표 밖에 규칙이 생긴다) ──
+//
+// 파괴를 낸 규칙(wood-burns-down)에는 필드가 없다. 불을 붙인 규칙(wood-ignites)에만 있으므로
+// 한 단계 거슬러 올라가야 한다. 이 한 단계가 조용히 null 이 되면 열원 판정이 통째로 폴백으로
+// 새어 나가고, 겉보기에는 "그냥 돌출부가 깎이는" 정상 동작처럼 보인다.
+const direct = fieldBehind(RULES, 'wood-ignites');
+const viaState = fieldBehind(RULES, 'wood-burns-down');
+const viaWet = fieldBehind(RULES, 'wet-suppresses-fire');
+// 현 규칙표에는 필드로 환원되지 않는 규칙이 없다. 폴백 경로는 합성 규칙으로 잰다 —
+// 규칙표에 시험용 줄을 넣으면 그 줄이 곧 게임 밸런스가 된다.
+const orphan = fieldBehind([{ id: 'x', material: '*', when: { state: 'cursed' }, effect: { destroy: true } }], 'x');
+const unknown = fieldBehind(RULES, '없는-규칙');
+console.log(`\n  규칙 → 필드 — 직접 '${direct}' · 상태 경유 '${viaState}' · 젖음 경유 '${viaWet}' · ` +
+  `환원 불가 ${orphan} · 모르는 id ${unknown}`);
+check('파괴를 낸 규칙에 필드가 없으면 그 상태를 켠 규칙까지 거슬러 올라간다',
+  direct === 'temperature' && viaState === 'temperature' && viaWet === 'moisture',
+  `wood-burns-down(필드 없음) → ${viaState} · wet-suppresses-fire → ${viaWet}`);
+check('환원되지 않으면 조용히 아무 필드나 고르지 않고 null 을 낸다 (호출자가 돌출부로 폴백)',
+  orphan === null && unknown === null,
+  `환원 불가 ${orphan} · 모르는 id ${unknown}`);
+
+const rBig = burnRadius(paramTable.sloop.p.area * 4);
+const rSmall = burnRadius(paramTable.sloop.p.area);
+check('연소 반경이 선체 크기에 비례한다 (고정 반경은 큰 배를 긁고 작은 배를 죽인다)',
+  Math.abs(rBig / rSmall - 2) < 1e-9,
+  `면적 4배 → 반경 ${rSmall.toFixed(2)} → ${rBig.toFixed(2)} m (정확히 2배)`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
