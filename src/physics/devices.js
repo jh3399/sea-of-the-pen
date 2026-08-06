@@ -92,11 +92,26 @@ export const STROKE_KEYMAP = {
 // ───────────────────────────────────────────────────────── 스트로크 순수 함수
 
 /**
- * 노 한 자루의 스트로크 상태.
- * `t` = 시작 후 경과(s), Infinity = 유휴. `queued` = 버퍼에 든 다음 젓기의 방향(0 = 없음).
+ * ★ 스트로크 시계는 **배에 하나뿐이다.** 노마다 따로 두지 않는다.
+ *
+ * 노잡이의 케이던스는 팔이 아니라 몸통의 리듬이라, 한쪽 노만 물에 넣든 양쪽을 다 넣든
+ * 사이클 타이밍은 같다. 시계를 노마다 두면 위상이 어긋날 수 있는데, 실제로 어긋났다:
+ * ← 를 잡고 우현만 젓다가 ↑ 로 바꾸면 쉬던 좌현 노는 즉시 시작하고 우현 노는 자기 게이트를
+ * 기다리므로, 둘이 최대 반 사이클 어긋난 채 **영영 고정**돼 번갈아 젓는 꼴이 됐다.
+ * (거동도 틀렸다 — 좌우 토크가 번갈아 들어와 직진해야 할 배가 뱀처럼 흔들린다.)
+ *
+ * `t` = 사이클 시작 후 경과(s), Infinity = 유휴.
+ * `port`·`starboard` = 이번 사이클에 그 노가 물에 들어간 방향 (0 = 물 밖).
+ * `queued` = 버퍼에 든 다음 사이클의 방향 맵 (null = 없음).
  */
 export function createStrokeState() {
-  return { t: Infinity, dir: 0, queued: 0 };
+  return { t: Infinity, port: 0, starboard: 0, queued: null };
+}
+
+/** 스트로크 시계 깊은 복사 — predict.js 가 실제 상태를 앞당겨 돌리지 않게. */
+export function cloneStrokeState(s) {
+  if (!s) return createStrokeState();
+  return { t: s.t, port: s.port, starboard: s.starboard, queued: s.queued ? { ...s.queued } : null };
 }
 
 /** 다음 스트로크를 시작할 수 있게 되는 시각 (스트로크 시작 기준, s). */
@@ -126,7 +141,7 @@ export function oarFalloff(along) {
 /** 조종 상태의 기본값. 강체마다 하나씩 `hull.control` 에 산다. */
 export function createControl() {
   return {
-    strokes: { port: createStrokeState(), starboard: createStrokeState() },
+    stroke: createStrokeState(),
     /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — D2 아이템(부스터·키)이 읽는다. */
     held: {},
     steer: 0,
@@ -146,53 +161,60 @@ export function strokeEnvelope(t) {
   return s * s;
 }
 
+/** 사이클 하나를 시작한다 (내부용). */
+function beginCycle(state, sides) {
+  state.t = 0;
+  state.port = sides.port ?? 0;
+  state.starboard = sides.starboard ?? 0;
+  state.queued = null;
+}
+
 /**
- * 새 스트로크를 시작한다. 아직 젓는 중이면 **버퍼에 넣거나(게이트가 가까우면) 버린다.**
+ * 새 스트로크 사이클을 시작한다. 아직 젓는 중이면 **버퍼에 넣거나(게이트가 가까우면) 버린다.**
  *
  * 최대 케이던스 자체는 물리가 정한다(1/게이트). 여기서 정하는 것은 그 상한에 부딪혔을 때
  * 입력이 어떻게 느껴지는가다 — 그냥 버리면 "씹혔다"가 되고, 버퍼에 넣으면 "곧 나간다"가 된다.
  *
+ * ★ 요청은 **사이클 단위**다. 어느 노를 넣을지는 사이클마다 통째로 정해지므로 두 노가
+ *   위상이 어긋날 방법 자체가 없다. 한쪽만 젓다가 양쪽으로 바꾸면 다음 사이클부터 같이 젓고,
+ *   그 사이 최대 한 게이트(0.45s)만큼 기다린다 — "노를 다시 맞춰 잡는" 시간이다.
+ *
+ * @param {object} state control.stroke
+ * @param {{port?:number, starboard?:number}} sides 이번에 물에 넣을 노와 방향
  * @returns {boolean} 지금 즉시 시작했는지 (버퍼에 들어간 것은 false)
  */
-export function startStroke(state, dir) {
-  if (!state || !dir) return false;
+export function startStroke(state, sides) {
+  if (!state || !sides) return false;
+  if (!sides.port && !sides.starboard) return false;
+
   const gate = strokeGate();
   // 1e-9 은 부동소수 여유 — 정확히 회수가 끝나는 순간의 입력은 받아 줘야 한다.
   // (없으면 dt 누산 오차 때문에 "최대 케이던스"가 실제로는 한 스텝 느려진다.)
   if (state.t < gate - 1e-9) {
     // 게이트가 코앞이면 기억해 둔다. 한참 전 입력까지 기억하면 손을 뗀 뒤에도
     // 배가 혼자 한 번 더 젓는 유령 스트로크가 된다.
-    if (state.t >= gate - DEVICE_TUNING.oarStrokeBuffer) state.queued = Math.sign(dir);
+    if (state.t >= gate - DEVICE_TUNING.oarStrokeBuffer) state.queued = { ...sides };
     return false;
   }
-  state.t = 0;
-  state.dir = Math.sign(dir);
-  state.queued = 0;
+  beginCycle(state, sides);
   return true;
 }
 
 /**
- * 스트로크 시계를 dt 만큼 전진하고, 게이트가 열리면 버퍼에 든 젓기를 발사한다.
+ * 스트로크 시계를 dt 만큼 전진하고, 게이트가 열리면 버퍼에 든 사이클을 발사한다.
  * **스텝의 맨 끝에서** 호출한다 (predict.js 와 순서 일치).
  */
 export function advanceStrokes(control, dt) {
-  const gate = strokeGate();
-  for (const key of ['port', 'starboard']) {
-    const s = control.strokes?.[key];
-    if (!s) continue;
-    if (Number.isFinite(s.t)) s.t += dt;
-    if (s.queued && s.t >= gate - 1e-9) {
-      s.t = 0;
-      s.dir = s.queued;
-      s.queued = 0;
-    }
-  }
+  const s = control.stroke;
+  if (!s) return;
+  if (Number.isFinite(s.t)) s.t += dt;
+  if (s.queued && s.t >= strokeGate() - 1e-9) beginCycle(s, s.queued);
 }
 
-/** 노가 지금 물을 젓고 있는가 (렌더·패널 표시용). */
+/** 그 노가 지금 물을 젓고 있는 세기 (렌더·패널 표시용). */
 export function strokeProgress(control, side) {
-  const s = control?.strokes?.[side];
-  if (!s) return 0;
+  const s = control?.stroke;
+  if (!s || !s[side]) return 0;
   return strokeEnvelope(s.t);
 }
 
@@ -251,9 +273,10 @@ export function deviceForcesLocal(params, devices, vel, control) {
 
   for (const d of devices) {
     if (d.type === 'oar') {
-      // 스트로크 봉투가 0 이면 이 노는 물 밖에 있다 — 힘이 정확히 0.
-      const s = control.strokes?.[d.side];
-      if (!s || !s.dir) continue;
+      // 이번 사이클에 이 노가 물에 안 들어갔거나 봉투가 0 이면 힘이 정확히 0.
+      const s = control.stroke;
+      const dir = s?.[d.side] ?? 0;
+      if (!dir) continue;
       const env = strokeEnvelope(s.t);
       if (env === 0) continue;
 
@@ -263,10 +286,10 @@ export function deviceForcesLocal(params, devices, vel, control) {
       // `along` 은 **젓는 방향 기준** 속도라, 5 m/s 로 달리며 뒤로 저으면 along = −5 →
       // 감쇠 없음이 된다. 그래서 고속에서 노는 가속을 못 해도 제동과 역젓기 조향은 만력으로
       // 한다 — 조건 분기가 아니라 u·dir 부호 하나에서 나온다.
-      const along = u * s.dir;
+      const along = u * dir;
       const falloff = oarFalloff(along);
-      const scale = s.dir < 0 ? t.oarReverseScale : 1;
-      const f = t.oarStrokePeak * params.area * env * s.dir * scale * falloff;
+      const scale = dir < 0 ? t.oarReverseScale : 1;
+      const f = t.oarStrokePeak * params.area * env * dir * scale * falloff;
 
       fx += f;
       // ★ 팔길이 창발. 좌우 노의 y 부호가 반대라 한쪽만 저으면 선회하고, 양쪽을 저으면
@@ -370,10 +393,14 @@ export function applyDevices(body, input, dt) {
 
   const control = (hull.control ??= createControl());
 
-  // ① 스트로크 요청 소비. 요청 배열은 세 척이 공유하지만 수락/거절은 배마다 따로 판단한다.
+  // ① 스트로크 요청 소비. 이번 스텝의 요청을 **한 사이클로 합쳐** 넘긴다 — ↑ 와 ← 를 같이
+  //    누르고 있어도 사이클은 하나이고, 그래서 두 노가 어긋날 방법이 없다.
+  //    요청 배열은 세 척이 공유하지만 수락/거절은 배마다 따로 판단한다.
+  let sides = null;
   for (const req of input.strokes ?? NO_STROKES) {
-    startStroke(control.strokes[req.side], req.dir);
+    (sides ??= {})[req.side] = req.dir;
   }
+  if (sides) startStroke(control.stroke, sides);
   control.held = input.held ?? NO_HELD;
   control.steer = clamp(input.steer ?? steerFromHeld(control.held), -1, 1);
   // ② 조타 지연

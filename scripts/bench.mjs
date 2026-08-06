@@ -13,7 +13,7 @@ import { Settings } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
 import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
-import { applyDevices, DEVICE_TUNING, oarFalloff } from '../src/physics/devices.js';
+import { applyDevices, DEVICE_TUNING, oarFalloff, strokeGate } from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
 import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
 import { attachItem, itemsExtraMass } from '../src/items/attach.js';
@@ -392,7 +392,7 @@ const strokeStarts = (pressAt) => {
   });
   for (let i = 0; i < Math.round(3 / FIXED_DT); i++) {
     s.advance(FIXED_DT);
-    const t = body.getUserData().hull.control.strokes.port.t;
+    const t = body.getUserData().hull.control.stroke.t;
     if (t < prev) starts++; // 시계가 되감겼다 = 새 스트로크가 시작됐다
     prev = t;
   }
@@ -409,6 +409,72 @@ check('젓는 중에 누른 입력은 버려지지 않고 게이트가 열릴 �
 check('창 밖(너무 이른) 입력은 기억하지 않는다 — 손을 뗀 뒤 유령 스트로크 방지',
   dropped === 1,
   `버퍼 창보다 이른 입력은 무시 → ${dropped}회`);
+
+// ── ★ 위상 동기: 한쪽만 젓다가 양쪽으로 바꿔도 두 노가 어긋나지 않는다 ────────
+//
+// 노마다 시계를 따로 두면, 한쪽만 젓다가 양쪽을 요청하는 순간 쉬던 노는 즉시 시작하고
+// 젓던 노는 자기 게이트를 기다려 최대 반 사이클 어긋난 채 **영영 고정**된다. 두 노가
+// 번갈아 젓는 꼴이 되고, 좌우 토크가 교대로 들어와 직진해야 할 배가 뱀처럼 흔들린다.
+// 시계를 배에 하나만 두면 이 상태 자체가 표현 불가능해진다.
+/** @param {number} switchSec 이 시각까지 우현만 젓고 그 뒤로 양쪽. 0 이면 처음부터 양쪽. */
+const rowThenBoth = (switchSec) => {
+  const { world, body } = spawn('sloop', { devices: true });
+  const one = cadence(['starboard']);
+  const both = cadence(BOTH);
+  const SWITCH = Math.round(switchSec / FIXED_DT);
+  let step = 0;
+  let desynced = 0; // 전환 후 한 노만 물에 든 스텝 수
+  const yaws = [];
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, step < SWITCH ? one(step) : both(step - SWITCH), dt);
+      applyHydroToWorld(world, dt);
+      step++;
+    },
+  });
+  for (let i = 0; i < Math.round(20 / FIXED_DT); i++) {
+    s.advance(FIXED_DT);
+    if (i < SWITCH) continue;
+    // 전환 후 "한쪽 노만 물에 든" 스텝을 **하나도 빠짐없이** 센다. 진행 중이던 사이클이
+    // 끝나는 동안은 한쪽만 젓는 게 맞다(젓던 노를 사이클 도중에 빼거나 쉬던 노를 봉투
+    // 중간에 집어넣을 수는 없다). 문제는 그게 **한 사이클 안에 끝나는가**다.
+    const st = body.getUserData().hull.control.stroke;
+    const rowing = Number.isFinite(st.t) && st.t < DEVICE_TUNING.oarStrokeDuration;
+    if (rowing && !(st.port && st.starboard)) desynced++;
+    if (i >= SWITCH + 30) yaws.push(body.getAngularVelocity());
+  }
+  // ⚠ 전환 직후의 큰 요잉률은 버그가 아니라 **잔여 회전**이다 (우현만 젓던 시간의 결과).
+  //   그것은 천천히 가라앉기만 하므로 긴 구간의 최대−최소로 재면 감쇠 폭이 잡혀 진동과
+  //   구분되지 않는다 (실측: 잔여 회전만으로 4초에 0.642°/s가 잡혔다).
+  //   위상 어긋남의 흔적은 **한 사이클 안에서** 좌우로 튀는 것이므로 그 창에서 재야 한다.
+  const cycle = Math.round(strokeGate() / FIXED_DT);
+  const tail = yaws.slice(-Math.round(4 / FIXED_DT));
+  let swing = 0;
+  for (let i = 0; i + cycle <= tail.length; i++) {
+    const win = tail.slice(i, i + cycle);
+    swing = Math.max(swing, Math.max(...win) - Math.min(...win));
+  }
+  return { desynced, swing };
+};
+
+const switched = rowThenBoth(3.2);
+const alwaysBoth = rowThenBoth(0); // 대조군: 처음부터 양쪽. 어긋날 기회가 없었던 배.
+const deg = (w) => (w * 180 / Math.PI).toFixed(3);
+// 봉투 길이만큼은 한쪽으로 끝날 수 있다 — 진행 중이던 사이클의 잔여분이다.
+const ENVELOPE_LIMIT = Math.round(DEVICE_TUNING.oarStrokeDuration / FIXED_DT);
+console.log(`  우현만 3.2초 → 양쪽 — 전환 후 한쪽만 든 스텝 ${switched.desynced}회 ` +
+  `(진행 중이던 사이클 잔여분, 상한 ${ENVELOPE_LIMIT}) · ` +
+  `사이클 내 요잉률 진폭 ${deg(switched.swing)}°/s ` +
+  `(처음부터 양쪽인 대조군 ${deg(alwaysBoth.swing)}°/s)`);
+check('★ 한쪽만 젓다가 양쪽으로 바꾸면 **한 사이클 안에** 두 노가 맞춰진다 (시계는 배에 하나)',
+  switched.desynced <= ENVELOPE_LIMIT && alwaysBoth.desynced === 0,
+  `전환 후 한쪽만 ${switched.desynced}스텝 ≤ 봉투 ${ENVELOPE_LIMIT}스텝 · ` +
+  `대조군 ${alwaysBoth.desynced}스텝`);
+// 어긋났다면 사이클마다 ±(반폭 × 추력) 토크가 교대로 들어와 진폭이 여러 °/s 가 된다.
+// 한쪽 노만 8초 저으면 30° 도는 것에서 그 크기를 가늠할 수 있다.
+check('사이클 안에서 좌우로 튀지 않는다 (어긋난 노가 만드는 교대 토크가 없다)',
+  switched.swing * 180 / Math.PI < 0.5,
+  `사이클 내 진폭 ${deg(switched.swing)}°/s < 0.5 (대조군 ${deg(alwaysBoth.swing)})`);
 
 // ── 케이던스가 곧 추력 (봉투가 임펄스가 아니라 시간 힘이라는 회귀) ─────────────
 //
@@ -769,7 +835,7 @@ const predictError = (key, opts = {}) => {
     for (let i = 0; i < (opts.warmup ?? 6); i++) s.advance(FIXED_DT);
   }
 
-  const envAtPredict = body.getUserData().hull.control?.strokes.port.t ?? Infinity;
+  const envAtPredict = body.getUserData().hull.control?.stroke.t ?? Infinity;
   const path = predictPath(body, hold, { horizon: seconds, stride: 3 });
   for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) s.advance(FIXED_DT);
 

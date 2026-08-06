@@ -8,7 +8,7 @@
 //   식을 다시 쓰면 그 순간부터 예측선이 거짓말을 시작하고, 없느니만 못한 UI 가 된다.
 import { hydroForcesLocal } from './hydro.js';
 import {
-  deviceForcesLocal, stepRudder, advanceStrokes, createStrokeState, steerFromHeld,
+  deviceForcesLocal, stepRudder, advanceStrokes, cloneStrokeState, steerFromHeld,
 } from './devices.js';
 import { FIXED_DT } from './world.js';
 import { fieldForcesLocal, toLocalVector } from '../field/forces.js';
@@ -54,11 +54,8 @@ export function predictPath(body, input, options = {}) {
   const devices = hull.items.filter((it) => it.type);
   const live = hull.control;
   const control = {
-    // 스트로크 상태는 **복사**한다 — 예측이 실제 조종 상태를 앞당겨 돌리면 안 된다.
-    strokes: {
-      port: { ...(live?.strokes?.port ?? createStrokeState()) },
-      starboard: { ...(live?.strokes?.starboard ?? createStrokeState()) },
-    },
+    // 스트로크 시계는 **복사**한다 — 예측이 실제 조종 상태를 앞당겨 돌리면 안 된다.
+    stroke: cloneStrokeState(live?.stroke),
     // 트리거(부스터·키)는 **지금 눌린 상태가 유지된다**고 본다. 스트로크와 달리 홀드 입력은
     // "유지 가정"이 정의되고, 부스터를 켜 둔 채 궤적선이 그것을 무시하면 거짓말이 된다.
     held: input.held ?? live?.held ?? {},

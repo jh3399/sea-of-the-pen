@@ -1231,10 +1231,10 @@ class Harness {
   }
 }
 
-/** 노 한 자루의 스트로크 상태를 세 칸 막대로 — 젓는 중 ▓ / 회수 중 ▒ / 대기 ░. */
+/** 노 한 자루의 상태를 세 칸 막대로 — 젓는 중 ▓ / 회수 중 ▒ / 물 밖 ░. */
 function strokeBar(control, side) {
-  const s = control?.strokes?.[side];
-  if (!s || !Number.isFinite(s.t)) return '░░░';
+  const s = control?.stroke;
+  if (!s || !Number.isFinite(s.t) || !s[side]) return '░░░';
   const env = strokeProgress(control, side);
   if (env > 0) {
     const filled = Math.max(1, Math.round(env * 3));
