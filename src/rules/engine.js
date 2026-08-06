@@ -176,6 +176,10 @@ export function createRuleEngine(rules, fields) {
         const ctx = { hullBurning: hull.status?.burning > 0 };
         if (applyTo(hull, hull.params.material.key, sample, step, ctx)) {
           events.push({ type: 'destroyed', body, at: { x: c.x, y: c.y }, target: hull });
+          // 연소 시계를 되감는다. 안 감으면 소비자가 조각을 남겼을 때 다음 틱에 곧바로 다시
+          // 파괴 조건이 서서 0.1초마다 차감이 터진다. 되감으면 "한 구획이 무너지고, 남은
+          // 부분이 다시 타들어간다"가 되어 §7 파손 지오메트리와 자연스럽게 이어진다.
+          hull.status.burning = 1e-6;
           continue; // 파괴될 배의 아이템까지 굴릴 이유가 없다
         }
 
