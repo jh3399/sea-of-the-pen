@@ -354,15 +354,22 @@ check('스트로크가 끝나면 배는 활공한다 (봉투 종료 후 감속)'
   oneStroke.end < oneStroke.peak,
   `최고 ${oneStroke.peak.toFixed(3)} → 1.2초 뒤 ${oneStroke.end.toFixed(3)} m/s`);
 
-// ── 연타 상한: 게이트가 정한 최고 케이던스를 넘을 수 없다 ─────────────────────
-const spam = drive('sloop', cadence(BOTH, { period: FIXED_DT }), { seconds: 60 });
+// ── ★ 홀드 입력: 꾹 누르면 게이트가 열릴 때마다 저절로 한 번 더 젓는다 ────────
+//
+// 하니스는 눌려 있는 동안 **매 물리 스텝** 젓기를 요청한다. 회수가 안 끝난 노는
+// `startStroke` 가 거절하므로, 홀드가 곧 최대 케이던스가 된다 — 플레이어가 리듬을 맞추거나
+// 연타할 필요가 없고, 그래도 상한은 입력이 아니라 물리가 정한다.
+const heldInput = drive('sloop', cadence(BOTH, { period: FIXED_DT }), { seconds: 60 });
 const maxCad = drive('sloop', cadence(BOTH), { seconds: 60 });
-console.log(`  연타 상한 — 매 스텝 두드림 ${spam.speed.toFixed(2)} m/s vs ` +
+console.log(`  홀드 입력 — 매 스텝 요청 ${heldInput.speed.toFixed(2)} m/s vs ` +
   `게이트 케이던스 ${maxCad.speed.toFixed(2)} m/s (${(1 / STROKE_SPAN).toFixed(2)} 회/s · ` +
   `쿨다운 ${DEVICE_TUNING.oarStrokeCooldown}s)`);
-check('연타해도 게이트가 정한 상한을 넘지 못한다 (상한은 입력이 아니라 물리가 정한다)',
-  Math.abs(spam.speed - maxCad.speed) < 0.02,
-  `매 스텝 ${spam.speed.toFixed(3)} ≈ 게이트 ${maxCad.speed.toFixed(3)} m/s`);
+check('★ 꾹 누르면 최대 케이던스가 나온다 (리듬도 연타도 필요 없다)',
+  Math.abs(heldInput.speed - maxCad.speed) < 0.02,
+  `홀드 ${heldInput.speed.toFixed(3)} ≈ 게이트 ${maxCad.speed.toFixed(3)} m/s`);
+check('그래도 상한은 입력이 아니라 물리가 정한다 (홀드가 게이트를 넘지 못한다)',
+  heldInput.speed <= maxCad.speed + 1e-6,
+  `홀드 ${heldInput.speed.toFixed(3)} ≤ 게이트 ${maxCad.speed.toFixed(3)} m/s`);
 
 // ── 입력 버퍼: 젓는 중에 누른 것이 씹히지 않는다 ──────────────────────────────
 //

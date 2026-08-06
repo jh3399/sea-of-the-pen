@@ -13,7 +13,7 @@ import { createRuleEngine, loadRules } from './rules/engine.js';
 import ZONES from './field/zones.json';
 import RULE_TABLE from './rules/table.json';
 import {
-  applyDevices, strokesFromKey, strokeProgress, strokeGate, estimateOarTerminal, DEVICE_TUNING,
+  applyDevices, STROKE_KEYMAP, strokeProgress, strokeGate, estimateOarTerminal, DEVICE_TUNING,
 } from './physics/devices.js';
 import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
@@ -130,11 +130,19 @@ class Harness {
     this.bodies = new Set();
     this.keys = new Set();
     /**
-     * ★ 스트로크 요청 큐. 노는 홀드가 아니라 **keydown 엣지**로 젓는다.
-     * 물리 스텝(onPreStep)이 정확히 한 번 소비하고 비운다 — 스텝이 안 도는 프레임에서
-     * 눌린 키도 다음 스텝까지 살아남고, 한 번 누른 것이 두 스텝에 겹쳐 들어가지 않는다.
+     * ★ 노 입력은 **홀드**다. 누르고 있는 동안 매 물리 스텝 젓기를 요청하고, 회수가 끝나
+     * 게이트가 열리는 순간 `startStroke` 가 받아 준다 — 리듬을 맞추지 않아도 최대 케이던스가
+     * 저절로 나온다. 힘 모델은 그대로라 봉투·활공·타이밍 감쇠는 전부 살아 있다.
+     *
+     * 탭도 그대로 된다: 짧게 누르면 게이트가 한 번만 열려 한 번만 젓는다. 즉 홀드 방식은
+     * 엣지 방식의 상위 집합이라 두 조작을 다 지원한다.
      */
-    this.pendingStrokes = [];
+    this.heldStrokes = new Set();
+    /**
+     * 마지막 물리 스텝 이후 눌린 적이 있는 키. 물리 스텝 사이(<16ms)에 눌렀다 뗀 아주 짧은
+     * 탭이 통째로 사라지는 것을 막는다 — 홀드 Set 만 보면 그 입력은 존재한 적이 없게 된다.
+     */
+    this.tappedStrokes = new Set();
     /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — 부스터·키가 읽는다 (§4.3). */
     this.held = {};
     /** 설계 단계에서 손으로 붙인 아이템들 (선체 로컬 좌표). launch() 가 기본 장치에 더한다. */
@@ -323,12 +331,17 @@ class Harness {
   }
 
   onKey(e, down) {
-    const stroke = strokesFromKey(e.key);
-    if (stroke) {
+    if (STROKE_KEYMAP[e.key]) {
       e.preventDefault(); // 방향키는 스크롤을 유발한다
-      // ★ OS 자동 반복(e.repeat)은 버린다. 안 버리면 최대 케이던스가 키보드 반복 속도로
-      //   정해져 버려서, 회수 쿨다운이 만드는 "젓고 활공하기" 리듬이 통째로 사라진다.
-      if (down && !e.repeat && this.mode === 'sail') this.pendingStrokes.push(...stroke);
+      // 홀드 Set 이라 OS 자동 반복(e.repeat)은 그냥 무해하다 — 같은 키를 다시 넣을 뿐이다.
+      // 케이던스는 키보드 반복 속도가 아니라 `strokeGate()` 가 정한다.
+      if (down) {
+        if (this.mode !== 'sail') return;
+        this.heldStrokes.add(e.key);
+        this.tappedStrokes.add(e.key);
+      } else {
+        this.heldStrokes.delete(e.key);
+      }
       return;
     }
     if (e.key === ' ') {
@@ -516,6 +529,9 @@ class Harness {
   clearBodies() {
     for (const body of this.bodies) this.world.destroyBody(body);
     this.bodies.clear();
+    // 모드를 옮기는 순간이다. 누르고 있던 키를 남겨 두면 새 배가 태어나자마자 저절로 젓는다.
+    this.heldStrokes.clear();
+    this.tappedStrokes.clear();
   }
 
   /** 선체 로컬 폴리곤 하나를 기본 장치 + 부착 아이템을 얹은 강체로 만든다. */
@@ -556,7 +572,7 @@ class Harness {
     this.view.ppm = PPM * 0.7;
     this.view.snapTo({ x: 0, y: 0 });
     document.body.dataset.mode = 'sail';
-    this.setStatus('↑ 양쪽 젓기 · ← → 한쪽만 젓기(선회) · ↓ 역젓기 · Space 닻 · ' +
+    this.setStatus('↑ 꾹 눌러 젓기 · ← → 한쪽 노만(선회) · ↓ 역젓기 · Space 닻 · ' +
       'T 궤적선 · 선체 클릭 = 그 지점 차감', 'ok');
     this.renderParams(body.getUserData().hull.params, this.design);
     this.refreshTuner(); // 예상 종단은 선체 저항에 달렸다 — 배가 바뀌면 다시 잰다
@@ -593,23 +609,28 @@ class Harness {
     this.view.snapTo({ x: 0, y: 0 });
     this.view.ppm = PPM * 0.4;
     document.body.dataset.mode = 'sail';
-    this.setStatus(`세 척 동시 주행 — 같은 입력, 다른 형상. ↑ 를 리듬 있게 두드려 ` +
-      `가속과 활공의 차이를, 그다음 ← 로 선회 반경 차를 보세요.`, 'ok');
+    this.setStatus(`세 척 동시 주행 — 같은 입력, 다른 형상. ↑ 를 꾹 눌러 가속 차이를, ` +
+      `그다음 ← 로 선회 반경 차를 보세요.`, 'ok');
     this.refreshTuner();
   }
 
   // ------------------------------------------------------- 장치 · 저항
 
   applyControls(dt) {
-    // 스트로크 요청은 세 척이 **같은 배열을 공유**한다. 수락/거절(회수 쿨다운)은 배마다
-    // 따로 판단하므로, 비교 주행에서 무거운 배만 젓기를 놓치는 일은 생기지 않는다.
-    const input = {
-      strokes: this.pendingStrokes,
-      held: this.held,
-      anchor: this.keys.has(' '),
-    };
+    // 눌려 있는 키 + 이번 스텝 사이에 스쳐 간 탭 → 이번 스텝의 젓기 요청.
+    // 매 스텝 요청해도 회수가 안 끝난 노는 `startStroke` 가 거절하므로, 홀드가 곧
+    // "게이트가 열릴 때마다 자동으로 한 번 더"가 된다.
+    const strokes = [];
+    for (const key of this.heldStrokes) strokes.push(...STROKE_KEYMAP[key]);
+    for (const key of this.tappedStrokes) {
+      if (!this.heldStrokes.has(key)) strokes.push(...STROKE_KEYMAP[key]);
+    }
+    this.tappedStrokes.clear();
+
+    // 요청 배열은 세 척이 **공유**한다. 수락/거절은 배마다 따로 판단하므로, 비교 주행에서
+    // 무거운 배만 젓기를 놓치는 일은 생기지 않는다.
+    const input = { strokes, held: this.held, anchor: this.keys.has(' ') };
     for (const body of this.bodies) applyDevices(body, input, dt);
-    this.pendingStrokes.length = 0;
   }
 
   // ------------------------------------------------------- 스파이크 ②

@@ -88,10 +88,6 @@ export const STROKE_KEYMAP = {
   ArrowRight: [{ side: 'port', dir: 1 }],
 };
 
-/** 키 이름 → 스트로크 요청 배열 (없으면 null). */
-export function strokesFromKey(key) {
-  return STROKE_KEYMAP[key] ?? null;
-}
 
 // ───────────────────────────────────────────────────────── 스트로크 순수 함수
 
