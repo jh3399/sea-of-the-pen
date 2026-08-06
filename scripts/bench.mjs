@@ -13,7 +13,7 @@ import { Settings } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
 import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
-import { applyDevices, DEVICE_TUNING } from '../src/physics/devices.js';
+import { applyDevices, DEVICE_TUNING, oarFalloff } from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
 import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
 import { attachItem, itemsExtraMass } from '../src/items/attach.js';
@@ -468,14 +468,51 @@ check('후진 중에는 같은 조타가 반대로 듣는다 (u·|u| 의 부호 
   Math.sign(helmAstern.yaw) === -Math.sign(helmFast.yaw) && helmAstern.turned > 0.5,
   `전진 ${helmFast.yaw.toFixed(1)}° vs 후진 ${helmAstern.yaw.toFixed(1)}°`);
 
+// ── 노 추력 감쇠 곡선 (§5.1 "노깃이 물을 못 잡는다") ──────────────────────────
+//
+// `oarMaxSpeed` 는 배의 최고 속도가 아니라 **노깃의 스트로크 속도**다. 배가 그만큼 빨라지면
+// 노깃이 더 이상 물을 뒤로 밀 수 없어 추력이 0 이 된다 (프로펠러의 전진비 한계와 같다).
+const M = DEVICE_TUNING.oarMaxSpeed;
+const curve = [0, 0.25, 0.5, 0.75, 0.9, 1].map((r) => oarFalloff(r * M));
+console.log(`  감쇠 곡선 (r = u/${M}) — ${[0, 0.25, 0.5, 0.75, 0.9, 1]
+  .map((r, i) => `${r}:${curve[i].toFixed(3)}`).join(' ')}`);
+check('노 추력은 단조 감소하고 노깃 속도에서 정확히 0 이 된다',
+  curve.every((v, i) => i === 0 || v <= curve[i - 1]) && curve.at(-1) === 0 && curve[0] === 1,
+  `1.000 → 0.000 · ${M} m/s 이상은 전부 0 (${oarFalloff(M * 2).toFixed(3)})`);
+// 선형이면 상단 기울기가 중간과 같아 r=1 에서 툭 끊긴다. 곡선은 그 지점 기울기가 0 이다.
+const slopeMid = curve[2] - curve[3];   // r 0.50 → 0.75
+const slopeTop = curve[4] - curve[5];   // r 0.90 → 1.00
+check('상한에서 절벽이 아니라 매끄럽게 붙는다 (상단 기울기 < 중간 기울기)',
+  slopeTop < slopeMid * 0.6,
+  `중간 구간 −${slopeMid.toFixed(3)} vs 상단 구간 −${slopeTop.toFixed(3)}`);
+check('★ 역젓기는 감쇠를 받지 않는다 — 빠를수록 물을 더 잘 잡는다 (r 을 먼저 clamp)',
+  oarFalloff(-5) === 1 && oarFalloff(-0.1) === 1,
+  `along −5 m/s → ${oarFalloff(-5).toFixed(3)}`);
+
 // ★ 노 조향과 키 조향의 트레이드오프 — 키를 남겨 둔 이유가 수치로 성립하는가.
-// 노는 진행 방향 성분이 oarMaxSpeed 에 닿으면 falloff 가 0 이라 아예 힘을 못 낸다.
+//
+// ⚠ "고속에서 노가 죽는다"는 **앞으로 젓기에만** 해당한다. 역젓기는 along = u·dir 이 음수라
+//   감쇠를 받지 않으므로 고속에서도 만력이다 — 그래서 노는 빠를 때 브레이크이자 역방향
+//   조향 수단이 된다. 조건 분기가 아니라 부호 하나에서 나온다.
 const fastOar = drive('sloop', cadence(['port']), { seconds: 2, v: { x: 5.0, y: 0 } });
+const fastAstern = drive('sloop', cadence(['port'], { dir: -1 }), { seconds: 2, v: { x: 5.0, y: 0 } });
+const fastCoast = drive('sloop', EMPTY_INPUT, { seconds: 2, v: { x: 5.0, y: 0 } });
 const fastHelm = drive('sloop', { steer: 1 }, { seconds: 2, v: { x: 5.0, y: 0 }, rudder: true });
-console.log(`  고속(5 m/s) 조향 — 한쪽 노 ${fastOar.turned.toFixed(2)}° vs 키 ${fastHelm.turned.toFixed(2)}°`);
-check('★ 고속에서는 노 조향이 죽고 키가 이긴다 (키를 아이템으로 남긴 이유 — 원칙 2)',
-  fastHelm.turned > fastOar.turned * 3,
-  `키 ${fastHelm.turned.toFixed(2)}° > 노 ${fastOar.turned.toFixed(2)}° × 3`);
+const speedOf = (r) => r.body.getLinearVelocity().x;
+console.log(`  고속(5 m/s) 2초 — 앞으로 젓기 ${fastOar.turned.toFixed(2)}° (${speedOf(fastOar).toFixed(2)} m/s) · ` +
+  `역젓기 ${fastAstern.turned.toFixed(2)}° (${speedOf(fastAstern).toFixed(2)} m/s) · ` +
+  `무입력 ${fastCoast.turned.toFixed(2)}° (${speedOf(fastCoast).toFixed(2)} m/s) · ` +
+  `키 ${fastHelm.turned.toFixed(2)}°`);
+check('고속에서 **앞으로** 젓기는 무입력과 완전히 같다 (가속도 조향도 0)',
+  Math.abs(fastOar.turned - fastCoast.turned) < 1e-6
+    && Math.abs(speedOf(fastOar) - speedOf(fastCoast)) < 1e-6,
+  `앞으로 젓기 ${speedOf(fastOar).toFixed(4)} m/s = 무입력 ${speedOf(fastCoast).toFixed(4)} m/s`);
+check('★ 고속에서도 한쪽 역젓기는 조향이 된다 (노가 완전히 무용해지지는 않는다)',
+  fastAstern.turned > fastCoast.turned + 0.3 && speedOf(fastAstern) < speedOf(fastCoast),
+  `역젓기 ${fastAstern.turned.toFixed(2)}° · 제동 ${speedOf(fastCoast).toFixed(2)} → ${speedOf(fastAstern).toFixed(2)} m/s`);
+check('★ 그래도 고속 조향은 키가 압도한다 (키를 아이템으로 남긴 이유 — 원칙 2)',
+  fastHelm.turned > fastAstern.turned * 10,
+  `키 ${fastHelm.turned.toFixed(2)}° > 역젓기 ${fastAstern.turned.toFixed(2)}° × 10`);
 
 // ── 기본 닻: 정지 수단 (§5.1) ─────────────────────────────────────────────────
 const anchored = drive('sloop', { anchor: true }, { seconds: 1, v: { x: 5, y: 0 } });

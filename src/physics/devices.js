@@ -42,12 +42,22 @@ export const DEVICE_TUNING = {
   /**
    * 노 하나의 피크 추력 (N/m², 갑판 면적당).
    *
-   * 산정: sin² 봉투의 시간 평균은 0.5, 듀티비는 D/(D+C). 쿨다운 0.3 일 때 듀티 0.6 이라
-   * 노 둘의 합이 0.6 × 250 = 150 N/m² 로 D1 의 지속 추력(oarPerArea 150)과 같았다.
-   * **쿨다운을 0 으로 내리면 듀티가 1.0 이 되어 평균 추력이 그대로 1.67배가 된다.**
+   * 감쇠를 선형에서 `(1 − r²)²` 곡선으로 바꾸면서 250 → 400 으로 올렸다. 곡선은 종단 속도가
+   * 서는 자리(r ≈ 0.8)에서 선형보다 낮아(0.123 vs 0.194) 그대로 두면 배가 느려진다.
+   * 400 이면 종단이 2.91 m/s 로 선형 모델과 같고, 대신 **저·중속 가속만 살아난다** —
+   * 곡선으로 바꾼 목적이 정확히 그것이다.
+   *
+   * 이 값을 건드리면 종단 속도가 움직이고, 종단 속도는 §6 화산대 통과 타이밍(가설 C)의
+   * 전제다. 바꾼 뒤에는 반드시 `npm run bench` 로 젖은 나무배 케이스를 다시 봐야 한다.
    */
-  oarStrokePeak: 250,
-  /** 이 속도에 닿으면 노가 물을 못 잡는다 — 속도가 붙을수록 죽는 것이 원칙 2의 트레이드오프. */
+  oarStrokePeak: 400,
+  /**
+   * 노깃의 스트로크 속도 (m/s). 배가 이만큼 빨라지면 노깃이 더 이상 물을 뒤로 밀지 못해
+   * 추력이 0 이 된다 — 프로펠러의 전진비 한계와 같은 이야기다.
+   *
+   * ⚠ "배의 최고 속도"가 아니다. 노만으로는 종단이 2.9 m/s 라 여기에 점근적으로만 다가간다.
+   * 이 벽에 실제로 닿는 것은 부스터·돛·해류에 실려 갈 때다 (그때 노는 가속을 못 한다).
+   */
   oarMaxSpeed: 3.6,
   /** 역젓기는 더 약하다. */
   oarReverseScale: 0.45,
@@ -96,6 +106,25 @@ export function createStrokeState() {
 /** 다음 스트로크를 시작할 수 있게 되는 시각 (스트로크 시작 기준, s). */
 export function strokeGate() {
   return DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown;
+}
+
+/**
+ * ★ 노 추력 감쇠 — 진행 방향 속도 성분 `along` 에서 0..1 을 낸다.
+ *
+ * `(1 − r²)²` 곡선이다. 선형(1 − r)을 쓰면 감쇠가 두 군데서 어색했다:
+ *  - **저·중속에서 너무 빨리 죽는다.** 2 m/s(r=0.56)에 벌써 절반 아래라 배가 붙기도 전에
+ *    노가 먹통이 된다. 곡선은 같은 자리에서 0.49 → 0.56 으로 버틴다.
+ *  - **상한에서 절벽이다.** 선형은 기울기 −1 로 내려오다 r=1 에서 툭 끊긴다. 곡선은 그
+ *    지점의 기울기가 0 이라 "점점 헛젓다가 이윽고 안 먹는다"로 매끄럽게 붙는다.
+ *
+ * ⚠ **r 을 먼저 clamp 한 다음 곡선에 넣어야 한다.** 역젓기는 along < 0 이라 r < 0 인데,
+ *   clamp 없이 넣으면 (1 − r²)² 이 다시 작아져 뒤로 젓는 힘이 고속에서 줄어든다.
+ *   실제로는 정반대여야 한다 — 배가 빠를수록 역젓기는 물을 더 잘 잡는다.
+ */
+export function oarFalloff(along) {
+  const r = clamp(along / DEVICE_TUNING.oarMaxSpeed, 0, 1);
+  const s = 1 - r * r;
+  return s * s;
 }
 
 /** 조종 상태의 기본값. 강체마다 하나씩 `hull.control` 에 산다. */
@@ -210,8 +239,12 @@ export function deviceForcesLocal(params, devices, vel, control) {
 
       // 진행 방향 성분이 커질수록 추력이 죽는다. 종단 속도를 묶는 동시에,
       // 스트로크 모델에서는 "언제 젓는가"를 실력으로 만든다.
+      //
+      // `along` 은 **젓는 방향 기준** 속도라, 5 m/s 로 달리며 뒤로 저으면 along = −5 →
+      // 감쇠 없음이 된다. 그래서 고속에서 노는 가속을 못 해도 제동과 역젓기 조향은 만력으로
+      // 한다 — 조건 분기가 아니라 u·dir 부호 하나에서 나온다.
       const along = u * s.dir;
-      const falloff = clamp(1 - along / t.oarMaxSpeed, 0, 1);
+      const falloff = oarFalloff(along);
       const scale = s.dir < 0 ? t.oarReverseScale : 1;
       const f = t.oarStrokePeak * params.area * env * s.dir * scale * falloff;
 
