@@ -7,10 +7,10 @@
 import './ui/harness.css';
 import { createWorld, FixedStepper, Vec2 } from './physics/world.js';
 import { applyHydroToWorld } from './physics/hydro.js';
-import { applyDevices, inputFromKeys, DEVICE_TUNING } from './physics/devices.js';
+import { applyDevices, strokesFromKey, strokeProgress, DEVICE_TUNING } from './physics/devices.js';
 import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
-import { defaultDevices, deviceExtraMass } from './items/defaults.js';
+import { defaultDevices, deviceExtraMass, sideAnchors } from './items/defaults.js';
 import { strokeToHull, HULL_DEFAULTS } from './hull/polygon.js';
 import { computeHullParams } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
@@ -68,6 +68,12 @@ class Harness {
     this.design = null;
     this.bodies = new Set();
     this.keys = new Set();
+    /**
+     * ★ 스트로크 요청 큐. 노는 홀드가 아니라 **keydown 엣지**로 젓는다.
+     * 물리 스텝(onPreStep)이 정확히 한 번 소비하고 비운다 — 스텝이 안 도는 프레임에서
+     * 눌린 키도 다음 스텝까지 살아남고, 한 번 누른 것이 두 스텝에 겹쳐 들어가지 않는다.
+     */
+    this.pendingStrokes = [];
     this.compare = false;
     this.showTrajectory = true;
     this.stress = { remaining: 0, rng: null, samples: [] };
@@ -127,8 +133,16 @@ class Harness {
   }
 
   onKey(e, down) {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
-      e.preventDefault(); // Space 는 버튼 재활성화, 방향키는 스크롤을 유발한다
+    const stroke = strokesFromKey(e.key);
+    if (stroke) {
+      e.preventDefault(); // 방향키는 스크롤을 유발한다
+      // ★ OS 자동 반복(e.repeat)은 버린다. 안 버리면 최대 케이던스가 키보드 반복 속도로
+      //   정해져 버려서, 회수 쿨다운이 만드는 "젓고 활공하기" 리듬이 통째로 사라진다.
+      if (down && !e.repeat && this.mode === 'sail') this.pendingStrokes.push(...stroke);
+      return;
+    }
+    if (e.key === ' ') {
+      e.preventDefault(); // Space 는 버튼 재활성화를 유발한다
       if (down) this.keys.add(e.key);
       else this.keys.delete(e.key);
       return;
@@ -244,7 +258,8 @@ class Harness {
     this.view.ppm = PPM * 0.7;
     this.view.snapTo({ x: 0, y: 0 });
     document.body.dataset.mode = 'sail';
-    this.setStatus('↑ 노 · ←→ 키 · Space 닻 · T 궤적선 · 선체 클릭 = 그 지점 차감', 'ok');
+    this.setStatus('↑ 양쪽 젓기 · ← → 한쪽만 젓기(선회) · ↓ 역젓기 · Space 닻 · ' +
+      'T 궤적선 · 선체 클릭 = 그 지점 차감', 'ok');
     this.renderParams(body.getUserData().hull.params, this.design);
   }
 
@@ -279,15 +294,18 @@ class Harness {
     this.view.snapTo({ x: 0, y: 0 });
     this.view.ppm = PPM * 0.4;
     document.body.dataset.mode = 'sail';
-    this.setStatus(`세 척 동시 주행 — 같은 입력, 다른 형상. ↑ 를 계속 눌러 속도 차를, ` +
-      `그다음 ← 로 선회 반경 차를 보세요.`, 'ok');
+    this.setStatus(`세 척 동시 주행 — 같은 입력, 다른 형상. ↑ 를 리듬 있게 두드려 ` +
+      `가속과 활공의 차이를, 그다음 ← 로 선회 반경 차를 보세요.`, 'ok');
   }
 
   // ------------------------------------------------------- 장치 · 저항
 
   applyControls(dt) {
-    const input = inputFromKeys(this.keys);
+    // 스트로크 요청은 세 척이 **같은 배열을 공유**한다. 수락/거절(회수 쿨다운)은 배마다
+    // 따로 판단하므로, 비교 주행에서 무거운 배만 젓기를 놓치는 일은 생기지 않는다.
+    const input = { strokes: this.pendingStrokes, anchor: this.keys.has(' ') };
     for (const body of this.bodies) applyDevices(body, input, dt);
+    this.pendingStrokes.length = 0;
   }
 
   // ------------------------------------------------------- 스파이크 ②
@@ -489,7 +507,9 @@ class Harness {
   }
 
   renderSail(ctx, view) {
-    const input = inputFromKeys(this.keys);
+    // 예측선의 입력은 비어 있다 — "지금 손을 떼면 어디로 가는가"가 스트로크 모델에서
+    // 정직한 유일한 질문이다 (predict.js 머리말 참조).
+    const input = {};
     const labels = [];
 
     for (const body of this.bodies) {
@@ -586,7 +606,10 @@ class Harness {
     ctx.restore();
   }
 
-  /** 기본 3종 장치. 키는 실제 타각만큼 꺾여 그려진다 — 조타 지연이 눈에 보여야 한다. */
+  /**
+   * 기본 장치. 노는 **젓는 동안 부풀고 물 밖으로 뻗는다** — 스트로크 모델은 리듬이 눈에
+   * 보이지 않으면 조작감이 잡히지 않는다. 키(아이템)는 실제 타각만큼 꺾여 그려진다.
+   */
   drawDevices(ctx, view, hull, pos, angle) {
     const rudderAngle = hull.control?.rudder ?? 0;
     for (const item of hull.items) {
@@ -605,9 +628,26 @@ class Harness {
         ctx.stroke();
       }
 
-      ctx.fillStyle = anchored ? '#ff6b6b' : item.type ? '#7fe3ff' : 'rgba(127,227,255,0.5)';
+      let env = 0;
+      if (item.type === 'oar') {
+        env = strokeProgress(hull.control, item.side);
+        // 노깃을 현측 바깥으로 — 봉투가 클수록 길게 뻗는다.
+        const out = Math.sign(item.y || 1);
+        const len = Math.max(hull.params.beam * 0.35, 0.4) * (0.35 + env * 0.65);
+        const a = angle + (out > 0 ? Math.PI / 2 : -Math.PI / 2);
+        ctx.lineWidth = view.px(2 + env * 3);
+        ctx.strokeStyle = env > 0 ? '#ffd35c' : 'rgba(127,227,255,0.5)';
+        ctx.beginPath();
+        ctx.moveTo(w.x, w.y);
+        ctx.lineTo(w.x + Math.cos(a) * len, w.y + Math.sin(a) * len);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = anchored ? '#ff6b6b'
+        : env > 0 ? '#ffd35c'
+          : item.type ? '#7fe3ff' : 'rgba(127,227,255,0.5)';
       ctx.beginPath();
-      ctx.arc(w.x, w.y, view.px(anchored ? 6 : 4), 0, Math.PI * 2);
+      ctx.arc(w.x, w.y, view.px((anchored ? 6 : 4) + env * 3), 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -692,7 +732,7 @@ class Harness {
           <div class="p-row"><span>속도</span><b>${v.length().toFixed(2)} m/s</b></div>
           <div class="p-row"><span>선회율</span><b>${(b.getAngularVelocity() * 180 / Math.PI).toFixed(1)} °/s</b></div>
           <div class="p-row"><span>옆밀림</span><b>${drift.toFixed(2)} m/s</b></div>
-          <div class="p-row"><span>타각</span><b>${((hull.control?.rudder ?? 0) * 180 / Math.PI).toFixed(0)}°</b></div>`;
+          <div class="p-row"><span>노 (좌/우)</span><b>${strokeBar(hull.control, 'port')} ${strokeBar(hull.control, 'starboard')}</b></div>`;
       });
 
     document.getElementById('params').innerHTML = rows.join('')
@@ -723,8 +763,10 @@ class Harness {
   }
 
   /**
-   * 기본 3종 장치(§5.1)와 그 부착점. **선미 오프셋 y 가 0이 아니면 그 배는 직진만 해도
-   * 저절로 돈다** — 비대칭 창발이 수치로 드러나는 자리라 패널에 띄워 둔다.
+   * 기본 장치(§5.1)와 그 부착점. 좌우 노가 만드는 두 수치가 조향의 전부다:
+   *  - **반폭** = 한쪽만 저을 때의 팔길이 → 넓은 배가 잘 돈다
+   *  - **중점 y** = 양쪽을 저어도 남는 토크 → 비대칭 배가 저절로 돈다
+   * 둘 다 형상에서 바로 나오므로, 조향 코드가 0줄이라는 사실이 패널에서 확인된다.
    */
   deviceRows() {
     const outline = this.design?.ok
@@ -733,18 +775,37 @@ class Harness {
     if (!outline) return '';
 
     const devices = defaultDevices(outline);
-    const oar = devices.find((d) => d.type === 'oar');
+    const oars = devices.filter((d) => d.type === 'oar');
     const rows = devices.map((d) =>
       `<div class="p-row"><span>${d.name} <span style="opacity:.5">${d.bind}</span></span>` +
       `<b>(${d.x.toFixed(2)}, ${d.y.toFixed(2)}) · ${d.mass} kg</b></div>`).join('');
 
-    const lever = Math.abs(oar?.y ?? 0);
-    const emergent = lever > 0.02
-      ? `<div class="p-row hl"><span>노 팔길이</span><b>${lever.toFixed(3)} m → 자동 선회</b></div>`
-      : '<div class="p-row"><span>노 팔길이</span><b>0 — 대칭, 직진</b></div>';
+    const span = oars.length === 2 ? sideAnchors(outline, oars[0].x) : null;
+    const offset = span ? Math.abs(span.center) : 0;
+    const emergent = span
+      ? `<div class="p-row hl"><span>노 반폭 (한쪽 젓기)</span><b>${span.halfBeam.toFixed(2)} m</b></div>` +
+        (offset > 0.02
+          ? `<div class="p-row hl"><span>노 중점 어긋남</span><b>${offset.toFixed(3)} m → 양쪽 저어도 선회</b></div>`
+          : '<div class="p-row"><span>노 중점 어긋남</span><b>0 — 대칭, 직진</b></div>')
+      : '';
 
-    return `<div class="p-sep">기본 장치 (§5.1) · 종단 ${DEVICE_TUNING.oarMaxSpeed} m/s 이하</div>${rows}${emergent}`;
+    const cadence = 1 / (DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown);
+    return `<div class="p-sep">기본 장치 (§5.1) · 최대 ${cadence.toFixed(1)}회/s · ` +
+      `종단 ${DEVICE_TUNING.oarMaxSpeed} m/s 이하</div>${rows}${emergent}`;
   }
+}
+
+/** 노 한 자루의 스트로크 상태를 세 칸 막대로 — 젓는 중 ▓ / 회수 중 ▒ / 대기 ░. */
+function strokeBar(control, side) {
+  const s = control?.strokes?.[side];
+  if (!s || !Number.isFinite(s.t)) return '░░░';
+  const env = strokeProgress(control, side);
+  if (env > 0) {
+    const filled = Math.max(1, Math.round(env * 3));
+    return `<span style="color:#ffd35c">${'▓'.repeat(filled)}</span>${'░'.repeat(3 - filled)}`;
+  }
+  const span = DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown;
+  return s.t < span ? '<span style="opacity:.45">▒▒▒</span>' : '░░░';
 }
 
 function diagRows(result) {
