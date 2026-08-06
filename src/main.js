@@ -7,6 +7,11 @@
 import './ui/harness.css';
 import { createWorld, FixedStepper, Vec2 } from './physics/world.js';
 import { applyHydroToWorld } from './physics/hydro.js';
+import { applyFieldsToWorld } from './physics/fields.js';
+import { createFields } from './field/field.js';
+import { createRuleEngine, loadRules } from './rules/engine.js';
+import ZONES from './field/zones.json';
+import RULE_TABLE from './rules/table.json';
 import { applyDevices, strokesFromKey, strokeProgress, DEVICE_TUNING } from './physics/devices.js';
 import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
@@ -14,7 +19,7 @@ import { defaultDevices, sideAnchors } from './items/defaults.js';
 import { attachItem, nextBind, itemsExtraMass } from './items/attach.js';
 import { ITEM_CATALOG, ATTACHABLE, bindLabel } from './items/catalog.js';
 import { strokeToHull, HULL_DEFAULTS } from './hull/polygon.js';
-import { computeHullParams } from './hull/params.js';
+import { computeHullParams, MATERIALS } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
 import { CORPUS, CORPUS_LABELS } from './hull/corpus.js';
 import { applyImpact } from './damage/apply.js';
@@ -67,10 +72,18 @@ class Harness {
     // 2스텝을 돌 때 둘째 스텝은 힘이 0이 되고(planck 은 스텝 후 힘 누산기를 비운다), 반대로
     // 스텝이 안 도는 프레임에서는 힘이 중복 누적된다. 조향이 전부 힘에서 나오는 게임이라
     // 이게 틀리면 D1·D2 의 모든 조종감이 화면 주사율에 따라 달라진다.
+    // 규칙표는 **로드 시점에** 검증한다. 오타 하나로 규칙이 조용히 사라지면 밸런싱 중에
+    // 그것을 물리 버그로 착각하게 된다.
+    this.rules = loadRules(RULE_TABLE);
+    this.material = 'wood';
+    this.setZone('calm');
+
     this.stepper = new FixedStepper(this.world, {
       onPreStep: (dt) => {
         this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
+        applyFieldsToWorld(this.world, this.fields, dt);
+        this.engine.tick(this.world, dt);
       },
     });
 
@@ -166,6 +179,31 @@ class Harness {
     };
     document.getElementById('btn-detach').onclick = () => this.clearAttached();
 
+    // 환경 존 (§6.1) · 선체 재질 (§3) — 둘 다 데이터 선택일 뿐이다.
+    const zoneSel = document.getElementById('zone');
+    for (const [key, zone] of Object.entries(ZONES.zones)) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = zone.label;
+      zoneSel.appendChild(opt);
+    }
+    zoneSel.onchange = () => {
+      this.setZone(zoneSel.value);
+      this.setStatus(`${this.zone.label} — ${this.zone.hint}`, 'ok');
+    };
+    const matSel = document.getElementById('material');
+    for (const key of ['wood', 'iron']) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = MATERIALS[key].name;
+      matSel.appendChild(opt);
+    }
+    matSel.onchange = () => {
+      this.material = matSel.value;
+      this._previewFor = null;
+      this.renderParams(this.previewCache(), this.design);
+    };
+
     document.getElementById('btn-load').onclick = () => this.loadCorpus(select.value);
     document.getElementById('btn-reset').onclick = () => this.enterDesign();
     document.getElementById('btn-sail').onclick = () => this.enterSail();
@@ -243,6 +281,47 @@ class Harness {
       : `선체 확정 — 정점 ${result.diagnostics.verts}개${warn}`, warn ? 'warn' : 'ok');
     document.getElementById('btn-sail').disabled = false;
     this.renderParams(this.previewCache(), result);
+  }
+
+  // ------------------------------------------------------- 필드 · 규칙 (§6)
+
+  /**
+   * 테스트 존 전환. **맵을 바꾸는 코드는 이 세 줄이 전부다** — 필드 정의(JSON)를 갈아 끼우고
+   * 규칙 엔진을 그 위에 새로 세운다. 존마다 다른 처리는 없고, 있을 수도 없다 (원칙 1).
+   */
+  setZone(key) {
+    const zone = ZONES.zones[key] ?? ZONES.zones.calm;
+    this.zoneKey = key;
+    this.zone = zone;
+    this.fields = createFields(zone.fields ?? {});
+    this.engine = createRuleEngine(this.rules, this.fields);
+    for (const body of this.bodies ?? []) {
+      const hull = body.getUserData().hull;
+      hull.status = {};
+      for (const it of hull.items) it.status = {};
+    }
+  }
+
+  /**
+   * 규칙 엔진이 낸 이벤트를 **스텝 밖에서** 소비한다. 스텝 도중에 강체를 부수면 planck 의
+   * 내부 순회가 깨지고, 파라미터 재계산은 어차피 이벤트 시점에만 해야 한다.
+   */
+  consumeRuleEvents() {
+    for (const ev of this.engine.drain()) {
+      if (ev.type === 'destroyed') {
+        // 연소 파괴는 그 자리를 크게 도려낸다 — D3 의 carve 입력이 바로 이 경로다.
+        this.metrics.note('규칙 이벤트', `${ev.target.params.material.name} 연소 파괴`);
+        this.carve(ev.at, IMPACT_RADIUS * 2.2);
+        this.setStatus(`${ev.target.params.material.name} 선체가 타서 무너졌습니다 — ` +
+          `규칙 wood-burns-down (맵 코드 0줄).`, 'bad');
+      } else if (ev.type === 'itemLost') {
+        this.setStatus(`${ev.item.name}(${ev.item.material})이(가) 불타 사라졌습니다 — ` +
+          `장치 상실이 곧 창발 이벤트입니다 (§5.2 원칙 3).`, 'warn');
+        this.renderParamsFromBodies();
+      } else if (ev.type === 'state') {
+        this.metrics.note('규칙 이벤트', `${ev.ruleId} → ${ev.state}`);
+      }
+    }
   }
 
   // ------------------------------------------------------- 아이템 부착 (§4.1)
@@ -518,6 +597,7 @@ class Harness {
     if (this.mode === 'sail') {
       const { ms } = this.stepper.advance(elapsed);
       this.metrics.push('physics', ms);
+      this.consumeRuleEvents();
       this.stepStress();
       this.updateCamera();
       // 패널은 계측 HUD 와 같은 이유로 초당 몇 번이면 충분하다 — 매 프레임 innerHTML 을
@@ -555,9 +635,55 @@ class Harness {
     const { ctx, view } = { ctx: this.view.ctx, view: this.view };
     view.begin();
     drawSeaGrid(ctx, view);
+    this.drawFields(ctx, view);
 
     if (this.mode === 'design') this.renderDesign(ctx, view);
     else this.renderSail(ctx, view);
+  }
+
+  /**
+   * 환경 필드 오버레이 (§6.1). 필드는 눈에 보이지 않으면 배울 수가 없다 — 왜 배가 밀리는지,
+   * 어디가 뜨거운지가 보여야 플레이어가 규칙표를 추론할 수 있다.
+   *
+   * 화면에 보이는 영역만 격자로 샘플한다. 존마다 다른 그리기 코드는 없다 — 같은 샘플러를
+   * 같은 방식으로 훑을 뿐이라, 새 필드 정의를 넣어도 이 함수는 그대로다.
+   */
+  drawFields(ctx, view) {
+    if (this.fields.isEmpty) return;
+    const min = view.screenToWorld(0, view.height);
+    const max = view.screenToWorld(view.width, 0);
+    const stepM = Math.max(4, Math.round((max.x - min.x) / 26));
+
+    for (let x = Math.floor(min.x / stepM) * stepM; x <= max.x; x += stepM) {
+      for (let y = Math.floor(min.y / stepM) * stepM; y <= max.y; y += stepM) {
+        // 스칼라장 — 온도는 붉게, 습기는 푸르게.
+        const temp = this.fields.sampleScalar('temperature', x, y);
+        const wet = this.fields.sampleScalar('moisture', x, y);
+        if (temp > 25) {
+          ctx.fillStyle = `rgba(255, 90, 50, ${Math.min((temp - 20) / 500, 0.35)})`;
+          ctx.fillRect(x - stepM / 2, y - stepM / 2, stepM, stepM);
+        }
+        if (wet > 0.02) {
+          ctx.fillStyle = `rgba(90, 180, 255, ${Math.min(wet * 0.3, 0.3)})`;
+          ctx.fillRect(x - stepM / 2, y - stepM / 2, stepM, stepM);
+        }
+
+        // 벡터장 — 바람 화살표.
+        const wind = this.fields.sampleVector('wind', x, y);
+        const mag = Math.hypot(wind.x, wind.y);
+        if (mag < 0.05) continue;
+        const len = Math.min(mag * 0.22, stepM * 0.42);
+        const ux = wind.x / mag;
+        const uy = wind.y / mag;
+        ctx.strokeStyle = 'rgba(200, 230, 255, 0.35)';
+        ctx.lineWidth = view.px(1.2);
+        ctx.beginPath();
+        ctx.moveTo(x - ux * len, y - uy * len);
+        ctx.lineTo(x + ux * len, y + uy * len);
+        ctx.lineTo(x + ux * len - (ux + uy) * len * 0.35, y + uy * len - (uy - ux) * len * 0.35);
+        ctx.stroke();
+      }
+    }
   }
 
   renderDesign(ctx, view) {
@@ -706,7 +832,7 @@ class Harness {
    * 실제 항적과 어긋나 보이면 그것은 UI 버그가 아니라 예측이 거짓말을 하고 있다는 뜻이다.
    */
   drawTrajectory(ctx, view, body, input, color) {
-    const path = predictPath(body, input);
+    const path = predictPath(body, input, { fields: this.fields });
     if (path.length < 2) return;
     ctx.save();
     ctx.globalAlpha = 0.55;
