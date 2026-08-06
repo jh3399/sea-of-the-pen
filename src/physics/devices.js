@@ -191,10 +191,32 @@ export function deviceForcesLocal(params, devices, vel, control) {
         * u * Math.abs(u) * Math.sin(control.rudder ?? 0);
       fy += lift;
       torque += d.x * lift; // τ = x·Fy − y·Fx, 키는 Fx = 0
+    } else if (d.type === 'booster') {
+      // §4.2 부스터 — **부착 방향으로 미는 상시력.** 트리거를 누르고 있는 동안만.
+      //
+      // ★ 여기가 가설 B 의 검증체다. 조향 코드는 없고 아래 세 줄이 전부인데,
+      //   중심선 후미에 달면 직진, 좌우 비대칭으로 달면 자동 선회, 측면을 향하게 달면
+      //   게걸음이 나온다. 차이는 오로지 (x, y, angle) 셋에서 온다.
+      if (!control.held?.[d.bind]) continue;
+      const fxi = (d.force ?? 0) * Math.cos(d.angle);
+      const fyi = (d.force ?? 0) * Math.sin(d.angle);
+      fx += fxi;
+      fy += fyi;
+      // 일반형 외적. 위의 노(Fy=0)와 키(Fx=0)는 이 식의 특수화일 뿐이다.
+      torque += d.x * fyi - d.y * fxi;
     }
   }
 
   return { fx, fy, torque };
+}
+
+/**
+ * 키(방향타) 아이템의 조타 입력. 방향키는 노가 가져갔으므로 Q/E 를 쓴다.
+ * 부호는 §5.1 과 같이 **좌현 = +**.
+ */
+export function steerFromHeld(held) {
+  if (!held) return 0;
+  return (held.KeyQ ? 1 : 0) - (held.KeyE ? 1 : 0);
 }
 
 // ─────────────────────────────────────────────────────────── planck 적용부
@@ -257,7 +279,7 @@ export function applyDevices(body, input, dt) {
     startStroke(control.strokes[req.side], req.dir);
   }
   control.held = input.held ?? NO_HELD;
-  control.steer = clamp(input.steer ?? 0, -1, 1);
+  control.steer = clamp(input.steer ?? steerFromHeld(control.held), -1, 1);
   // ② 조타 지연
   control.rudder = stepRudder(control.rudder, control.steer, dt);
 

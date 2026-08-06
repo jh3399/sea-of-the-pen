@@ -7,7 +7,9 @@
 // ★ 불변식: 여기서는 hydro.js · devices.js 의 **순수 함수를 그대로 호출한다.** 예측 전용으로
 //   식을 다시 쓰면 그 순간부터 예측선이 거짓말을 시작하고, 없느니만 못한 UI 가 된다.
 import { hydroForcesLocal } from './hydro.js';
-import { deviceForcesLocal, stepRudder, advanceStrokes, createStrokeState } from './devices.js';
+import {
+  deviceForcesLocal, stepRudder, advanceStrokes, createStrokeState, steerFromHeld,
+} from './devices.js';
 import { FIXED_DT } from './world.js';
 
 export const PREDICT_DEFAULTS = {
@@ -53,8 +55,10 @@ export function predictPath(body, input, options = {}) {
       port: { ...(live?.strokes?.port ?? createStrokeState()) },
       starboard: { ...(live?.strokes?.starboard ?? createStrokeState()) },
     },
+    // 트리거(부스터·키)는 **지금 눌린 상태가 유지된다**고 본다. 스트로크와 달리 홀드 입력은
+    // "유지 가정"이 정의되고, 부스터를 켜 둔 채 궤적선이 그것을 무시하면 거짓말이 된다.
     held: input.held ?? live?.held ?? {},
-    steer: input.steer ?? 0,
+    steer: input.steer ?? steerFromHeld(input.held ?? live?.held),
     // 조타 지연까지 재현해야 "지금 꺾는 중"인 상태의 예측이 맞는다.
     rudder: live?.rudder ?? 0,
   };

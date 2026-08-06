@@ -10,7 +10,9 @@ import { applyHydroToWorld } from './physics/hydro.js';
 import { applyDevices, strokesFromKey, strokeProgress, DEVICE_TUNING } from './physics/devices.js';
 import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
-import { defaultDevices, deviceExtraMass, sideAnchors } from './items/defaults.js';
+import { defaultDevices, sideAnchors } from './items/defaults.js';
+import { attachItem, nextBind, itemsExtraMass } from './items/attach.js';
+import { ITEM_CATALOG, ATTACHABLE, bindLabel } from './items/catalog.js';
 import { strokeToHull, HULL_DEFAULTS } from './hull/polygon.js';
 import { computeHullParams } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
@@ -35,6 +37,15 @@ const COMPARE_SPACING = 14;
 const LIVE_PREVIEW_EVERY = 15;
 /** 흘수 게이지의 만수위 기준 (m). 나무 단일 재질이면 0.30 m 근처가 정상이다. */
 const DRAFT_GAUGE_MAX = 1.0;
+/** 트리거로 쓰는 키 코드 — 부스터 바인딩 풀(A~H)과 키 조타(Q/E). T·C 는 하니스 단축키다. */
+const TRIGGER_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyQ', 'KeyE']);
+/** 부착 시 고를 수 있는 방향 (§4.1 의 "방향"). 라디안, +X = 뱃머리. */
+const ATTACH_ANGLES = [
+  { label: '앞으로 ↑', value: 0 },
+  { label: '뒤로 ↓', value: Math.PI },
+  { label: '좌현 ←', value: Math.PI / 2 },
+  { label: '우현 →', value: -Math.PI / 2 },
+];
 
 /** 스트레스 테스트용 결정론적 난수 — 매 실행 같은 지점을 깎아야 수치를 비교할 수 있다. */
 function lcg(seed) {
@@ -74,6 +85,13 @@ class Harness {
      * 눌린 키도 다음 스텝까지 살아남고, 한 번 누른 것이 두 스텝에 겹쳐 들어가지 않는다.
      */
     this.pendingStrokes = [];
+    /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — 부스터·키가 읽는다 (§4.3). */
+    this.held = {};
+    /** 설계 단계에서 손으로 붙인 아이템들 (선체 로컬 좌표). launch() 가 기본 장치에 더한다. */
+    this.attached = [];
+    /** 부착 모드에서 선택된 카탈로그 타입. null 이면 그리기 모드. */
+    this.attachType = null;
+    this.attachAngle = 0;
     this.compare = false;
     this.showTrajectory = true;
     this.stress = { remaining: 0, rng: null, samples: [] };
@@ -108,6 +126,7 @@ class Harness {
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     this.canvas.addEventListener('pointerdown', (e) => {
       if (this.mode === 'sail') this.strikeAt(e);
+      else if (this.attachType) this.attachAt(e);
     });
 
     this.enterDesign();
@@ -124,6 +143,29 @@ class Harness {
       opt.textContent = label;
       select.appendChild(opt);
     }
+
+    // 아이템 부착 (§4.1) — 종류와 방향을 고르고 선체를 클릭하면 그 자리에 붙는다.
+    const itemSel = document.getElementById('item-type');
+    for (const type of ATTACHABLE) {
+      const opt = document.createElement('option');
+      opt.value = type;
+      opt.textContent = `${ITEM_CATALOG[type].name} (${ITEM_CATALOG[type].mass}kg)`;
+      itemSel.appendChild(opt);
+    }
+    const angleSel = document.getElementById('item-angle');
+    for (const a of ATTACH_ANGLES) {
+      const opt = document.createElement('option');
+      opt.value = String(a.value);
+      opt.textContent = a.label;
+      angleSel.appendChild(opt);
+    }
+    document.getElementById('btn-attach').onclick = () => this.toggleAttach(itemSel.value);
+    angleSel.onchange = () => { this.attachAngle = Number(angleSel.value); };
+    itemSel.onchange = () => {
+      if (this.attachType) this.toggleAttach(itemSel.value, true);
+    };
+    document.getElementById('btn-detach').onclick = () => this.clearAttached();
+
     document.getElementById('btn-load').onclick = () => this.loadCorpus(select.value);
     document.getElementById('btn-reset').onclick = () => this.enterDesign();
     document.getElementById('btn-sail').onclick = () => this.enterSail();
@@ -145,6 +187,12 @@ class Harness {
       e.preventDefault(); // Space 는 버튼 재활성화를 유발한다
       if (down) this.keys.add(e.key);
       else this.keys.delete(e.key);
+      return;
+    }
+    // 트리거 바인딩(§4.3) — 홀드다. 부스터는 누르는 동안 켜지고 키는 누르는 동안 꺾인다.
+    if (TRIGGER_KEYS.has(e.code)) {
+      if (down) this.held[e.code] = true;
+      else delete this.held[e.code];
       return;
     }
     if (!down) return;
@@ -197,6 +245,60 @@ class Harness {
     this.renderParams(this.previewCache(), result);
   }
 
+  // ------------------------------------------------------- 아이템 부착 (§4.1)
+
+  /**
+   * 부착 모드 토글. 켜져 있는 동안은 그리기를 멈추고 캔버스 클릭이 부착이 된다.
+   * 별도의 모드를 만들지 않는 이유는 설계와 부착이 §4.3 이 말하는 **같은 한 작업**이기
+   * 때문이다 — "언제 무엇을 작동시킬지까지가 설계의 일부".
+   */
+  toggleAttach(type, force = false) {
+    if (!this.design?.ok) {
+      this.setStatus('선체를 먼저 확정하세요 — 아이템은 선체 로컬에 붙습니다.', 'warn');
+      return;
+    }
+    this.attachType = (!force && this.attachType === type) ? null : type;
+    this.capture.enabled = !this.attachType;
+    document.getElementById('btn-attach').classList.toggle('primary', !!this.attachType);
+    this.setStatus(this.attachType
+      ? `부착 모드 — ${ITEM_CATALOG[this.attachType].name} 을(를) 놓을 자리를 선체 위에서 클릭하세요.`
+      : '부착 모드 해제 — 다시 그릴 수 있습니다.', this.attachType ? 'ok' : '');
+    this.renderParams(this.previewCache(), this.design);
+  }
+
+  /** 캔버스 클릭 지점을 선체 로컬 좌표로 되돌려 아이템을 붙인다. */
+  attachAt(event) {
+    if (!this.design?.ok) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const w = this.view.screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+
+    // 설계 화면은 선체를 원래 그린 자리(origin, angle)에 되돌려 그린다 — 그 변환의 역.
+    const dx = w.x - this.design.origin.x;
+    const dy = w.y - this.design.origin.y;
+    const c = Math.cos(-this.design.angle);
+    const s = Math.sin(-this.design.angle);
+    const local = { x: dx * c - dy * s, y: dx * s + dy * c };
+
+    const hull = { items: this.attached };
+    const item = attachItem(hull, this.attachType, {
+      x: local.x, y: local.y, angle: this.attachAngle,
+      bind: ITEM_CATALOG[this.attachType].bind === null ? null : nextBind(this.attached),
+    });
+    if (!item) return;
+
+    this._previewFor = null; // 흘수·관성이 바뀐다 — 미리보기 캐시 무효화
+    this.setStatus(`${item.name} 부착 — (${item.x.toFixed(2)}, ${item.y.toFixed(2)}) · ` +
+      `트리거 ${bindLabel(item.bind)} · 무게중심에서 팔길이 ${Math.hypot(item.x, item.y).toFixed(2)} m`, 'ok');
+    this.renderParams(this.previewCache(), this.design);
+  }
+
+  clearAttached() {
+    this.attached = [];
+    this._previewFor = null;
+    this.setStatus('부착 아이템을 모두 떼었습니다.', '');
+    this.renderParams(this.previewCache(), this.design);
+  }
+
   // ------------------------------------------------------- 모드 전환
 
   enterDesign() {
@@ -207,6 +309,10 @@ class Harness {
     this.compare = false;
     this.liveMark = 0;
     this.stress.remaining = 0;
+    this.attached = [];
+    this.attachType = null;
+    this._previewFor = null;
+    document.getElementById('btn-attach').classList.remove('primary');
     this.capture.enabled = true;
     this.capture.clear();
     this.view.ppm = PPM;
@@ -222,18 +328,20 @@ class Harness {
     this.bodies.clear();
   }
 
-  /** 선체 로컬 폴리곤 하나를 기본 3종 장치를 얹은 강체로 만든다. */
+  /** 선체 로컬 폴리곤 하나를 기본 장치 + 부착 아이템을 얹은 강체로 만든다. */
   launch(outline, placement = {}) {
     // ★ 여기가 §5.1 "선체 확정 시 자동 장착". 장치 질량은 extraMass 로 흘수에 반영된다.
-    const items = defaultDevices(outline);
+    // 손으로 붙인 아이템(§4.1)은 같은 배열에 그대로 얹힌다 — 기본 장치와 아무 차이가 없다.
+    const items = defaultDevices(outline)
+      .concat((placement.attached ?? []).map((it) => ({ ...it })));
     const body = createHullBody(
       this.world,
       { outline, holes: [], items, tag: placement.tag ?? null },
       {
         position: placement.position ?? { x: 0, y: 0 },
         angle: placement.angle ?? 0,
-        material: 'wood',
-        extraMass: deviceExtraMass(items),
+        material: placement.material ?? this.material ?? 'wood',
+        extraMass: itemsExtraMass(items),
       },
     );
     if (body) this.bodies.add(body);
@@ -245,7 +353,7 @@ class Harness {
 
     // 정규화된 선체를 원점에 세운다. 뱃머리가 +X 를 향한다.
     this.clearBodies();
-    const body = this.launch(this.design.outline);
+    const body = this.launch(this.design.outline, { attached: this.attached });
     if (!body) {
       this.setStatus('강체 생성 실패 — 분해 결과가 비었습니다.', 'bad');
       return;
@@ -303,7 +411,11 @@ class Harness {
   applyControls(dt) {
     // 스트로크 요청은 세 척이 **같은 배열을 공유**한다. 수락/거절(회수 쿨다운)은 배마다
     // 따로 판단하므로, 비교 주행에서 무거운 배만 젓기를 놓치는 일은 생기지 않는다.
-    const input = { strokes: this.pendingStrokes, anchor: this.keys.has(' ') };
+    const input = {
+      strokes: this.pendingStrokes,
+      held: this.held,
+      anchor: this.keys.has(' '),
+    };
     for (const body of this.bodies) applyDevices(body, input, dt);
     this.pendingStrokes.length = 0;
   }
@@ -471,6 +583,13 @@ class Harness {
     ctx.stroke();
 
     const params = this.previewCache();
+    // 설계 화면에서도 아이템을 항해 화면과 **같은 코드로** 그린다. 부착점과 방향이 곧
+    // 조향 특성이므로 (§4.1), 출항 전에 그 배치를 보고 거동을 예상할 수 있어야 한다.
+    if (this.attached.length) {
+      this.drawDevices(ctx, view,
+        { items: this.attached, control: { held: this.held }, params, anchorJoint: null },
+        this.design.origin, this.design.angle);
+    }
     this.drawOverlays(ctx, view, this.design.origin, this.design.angle, params);
     this.drawVertices(ctx, view, world);
     this.drawDraftGauge(view, params);
@@ -507,9 +626,9 @@ class Harness {
   }
 
   renderSail(ctx, view) {
-    // 예측선의 입력은 비어 있다 — "지금 손을 떼면 어디로 가는가"가 스트로크 모델에서
-    // 정직한 유일한 질문이다 (predict.js 머리말 참조).
-    const input = {};
+    // 스트로크는 넘기지 않는다 — "지금 더 젓지 않으면 어디로 가는가"가 정직한 질문이다
+    // (predict.js 머리말). 반면 트리거 홀드는 유지 가정이 정의되므로 그대로 넘긴다.
+    const input = { held: this.held };
     const labels = [];
 
     for (const body of this.bodies) {
@@ -628,6 +747,32 @@ class Harness {
         ctx.stroke();
       }
 
+      if (item.type === 'booster') {
+        // 추력 방향으로 화살촉 — 켜져 있으면 불꽃이 길어진다. §4.1 의 "방향"이 눈에 보여야
+        // "왜 이 배가 도는가"를 부착점만 보고 설명할 수 있다.
+        const on = !!hull.control?.held?.[item.bind];
+        const a = angle + item.angle;
+        const len = Math.max(hull.params.length * 0.18, 0.5) * (on ? 1.6 : 0.8);
+        ctx.lineWidth = view.px(on ? 5 : 3);
+        ctx.strokeStyle = on ? '#ff9f7f' : 'rgba(255,159,127,0.55)';
+        ctx.beginPath();
+        ctx.moveTo(w.x - Math.cos(a) * len * 0.3, w.y - Math.sin(a) * len * 0.3);
+        ctx.lineTo(w.x + Math.cos(a) * len * 0.7, w.y + Math.sin(a) * len * 0.7);
+        ctx.stroke();
+      }
+
+      if (item.type === 'sail') {
+        // 돛은 법선이 item.angle 이므로 **돛폭은 그 수직 방향**으로 그린다.
+        const a = angle + item.angle + Math.PI / 2;
+        const len = Math.sqrt(item.area ?? 6) * 0.6;
+        ctx.lineWidth = view.px(4);
+        ctx.strokeStyle = '#e8dcc0';
+        ctx.beginPath();
+        ctx.moveTo(w.x - Math.cos(a) * len, w.y - Math.sin(a) * len);
+        ctx.lineTo(w.x + Math.cos(a) * len, w.y + Math.sin(a) * len);
+        ctx.stroke();
+      }
+
       let env = 0;
       if (item.type === 'oar') {
         env = strokeProgress(hull.control, item.side);
@@ -645,7 +790,8 @@ class Harness {
 
       ctx.fillStyle = anchored ? '#ff6b6b'
         : env > 0 ? '#ffd35c'
-          : item.type ? '#7fe3ff' : 'rgba(127,227,255,0.5)';
+          : item.kind === 'mass' ? '#8892a0'
+            : item.type ? '#7fe3ff' : 'rgba(127,227,255,0.5)';
       ctx.beginPath();
       ctx.arc(w.x, w.y, view.px((anchored ? 6 : 4) + env * 3), 0, Math.PI * 2);
       ctx.fill();
@@ -703,10 +849,11 @@ class Harness {
   previewCache() {
     if (!this.design?.ok) return null;
     if (this._previewFor !== this.design) {
-      // 설계 화면의 흘수도 **장치를 얹은 뒤**의 값이어야 정직하다 (§5.1 자동 장착).
+      // 설계 화면의 흘수도 **장치와 부착 아이템을 얹은 뒤**의 값이어야 정직하다.
+      // 밸러스트를 붙이면 여기서 곧바로 흘수 게이지가 내려간다 — 대가가 즉시 보인다.
       this._previewParams = computeHullParams(this.design.outline, {
-        material: 'wood',
-        extraMass: deviceExtraMass(defaultDevices(this.design.outline)),
+        material: this.material ?? 'wood',
+        extraMass: itemsExtraMass(defaultDevices(this.design.outline)) + itemsExtraMass(this.attached),
       });
       this._previewFor = this.design;
     }
@@ -759,6 +906,7 @@ class Harness {
       <div class="p-row hl"><span>저항 좌/우</span><b>${params.drag.y.toFixed(0)}</b></div>
       <div class="p-row hl"><span>이방성 비</span><b>${(params.drag.y / Math.max(params.drag.x, 1e-6)).toFixed(1)} : 1</b></div>
       ${this.deviceRows()}
+      ${this.attachedRows()}
       ${result ? diagRows(result) : ''}`;
   }
 
@@ -792,6 +940,30 @@ class Harness {
     const cadence = 1 / (DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown);
     return `<div class="p-sep">기본 장치 (§5.1) · 최대 ${cadence.toFixed(1)}회/s · ` +
       `종단 ${DEVICE_TUNING.oarMaxSpeed} m/s 이하</div>${rows}${emergent}`;
+  }
+
+  /**
+   * 손으로 붙인 아이템 (§4.1). **팔길이 y 와 방향이 곧 조향 특성**이라, 출항 전에 이 표만
+   * 보고 "이 배가 어느 쪽으로 돌지"를 말할 수 있어야 한다. 그게 가설 B 의 통과 조건이다.
+   */
+  attachedRows() {
+    const items = this.mode === 'sail'
+      ? ([...this.bodies][0]?.getUserData().hull.items ?? []).filter((it) => it.kind && it.kind !== 'oar')
+      : this.attached;
+    if (!items.length) return '';
+
+    const rows = items.map((it) => {
+      const dir = ATTACH_ANGLES.find((a) => Math.abs(a.value - (it.angle ?? 0)) < 1e-6);
+      const arm = it.kind === 'thruster' || it.kind === 'sail'
+        // 그 힘이 만드는 토크의 팔길이 — 방향에 수직인 성분만 센다.
+        ? Math.abs(it.x * Math.sin(it.angle) - it.y * Math.cos(it.angle))
+        : Math.hypot(it.x, it.y);
+      return `<div class="p-row"><span>${it.name} ` +
+        `<span style="opacity:.5">${bindLabel(it.bind)} ${dir ? dir.label.slice(-1) : ''}</span></span>` +
+        `<b>(${it.x.toFixed(1)}, ${it.y.toFixed(1)}) · 팔 ${arm.toFixed(2)} m</b></div>`;
+    }).join('');
+
+    return `<div class="p-sep">부착 아이템 (§4.1) · 팔길이 0 이면 직진, 크면 선회</div>${rows}`;
   }
 }
 
