@@ -1,16 +1,42 @@
-// 기본 3종 장치(§5.1)의 힘 모델. `physics/thrust.js` 의 임시 선미 추력을 대체한다.
+// 기본 장치(§5.1)의 힘 모델 — 좌현 노 · 우현 노 · 닻, 그리고 아이템으로 강등된 키.
 //
 // hydro.js 와 같은 구조로 **순수 계산 함수 + 얇은 planck 적용부**로 나눈다. 순수 함수를
 // 따로 두는 이유는 예측 궤적선(predict.js)이 같은 식을 그대로 호출해야 예측과 실제가
 // 일치하기 때문이다.
 //
-// 조향 시스템 코드는 여기에도 없다. 키·노는 **선체 로컬의 한 점에 힘을 주는 것**이 전부이고,
-// 선회는 τ = r × F 에서 저절로 나온다 (§4.1).
+// 조향 시스템 코드는 여기에도 없다. 노는 **선체 로컬의 한 점에 힘을 주는 것**이 전부이고,
+// 선회는 τ = r × F 에서 저절로 나온다 (§4.1). D1 의 단일 노는 비대칭 선체에서만 팔길이를
+// 얻었지만, 좌우로 나뉜 노는 **대칭 선체에서도** 한쪽만 저으면 팔길이를 얻는다 — 조향이
+// 장치 배치의 순수한 결과가 되고 키의 전용 양력식은 기본 장착에서 빠진다.
 import { Vec2, RevoluteJoint } from 'planck';
 import { HYDRO_TUNING } from '../hull/params.js';
 
 export const DEVICE_TUNING = {
-  // --- 기본 키 (§5.1 "유속 비례 선회력, 정지 시 무효") ---
+  // --- 노: 스트로크(한 번 젓기) 모델 ---
+  //
+  // 꾹 누르면 지속 추력이 나오던 D1 모델을 버리고 **누를 때마다 한 번 젓는** 방식으로 바꾼다.
+  // 게임성 이유만이 아니다: 아래 oarMaxSpeed 감쇠가 지속 입력에서는 그저 종단 속도 상한으로만
+  // 느껴지는데, 스트로크에서는 **최적 젓기 타이밍**이 된다 (속도가 붙었을 때 저으면 물을 헛젓고,
+  // 조금 감속했을 때 저어야 온전한 추력이 나온다). 규칙을 더하지 않고 기존 항에서 리듬이 창발한다.
+
+  /** 봉투 길이 D (s) — 입수 → 당김 → 회수 한 사이클. */
+  oarStrokeDuration: 0.45,
+  /** 회수 쿨다운 C (s). 이 구간에는 재입력이 무시된다 — 최대 케이던스 1/(D+C) ≈ 1.33 회/s. */
+  oarStrokeCooldown: 0.3,
+  /**
+   * 노 하나의 피크 추력 (N/m², 갑판 면적당).
+   *
+   * 산정: sin² 봉투의 시간 평균은 0.5, 듀티비는 D/(D+C) = 0.6 이므로 최대 케이던스로 계속
+   * 저을 때 노 하나의 평균 추력은 0.3 × peak. 노가 둘이라 합이 0.6 × 250 = 150 N/m² 로
+   * D1 의 지속 추력(oarPerArea 150)과 같아진다 — 종단 속도 체감을 유지한 채 리듬만 바꾼다.
+   */
+  oarStrokePeak: 250,
+  /** 이 속도에 닿으면 노가 물을 못 잡는다 — 속도가 붙을수록 죽는 것이 원칙 2의 트레이드오프. */
+  oarMaxSpeed: 3.6,
+  /** 역젓기는 더 약하다. */
+  oarReverseScale: 0.45,
+
+  // --- 키 (§5.1 "유속 비례 선회력, 정지 시 무효") — D2 부터는 부착 아이템이다 ---
   /** 키 날개 면적 = 갑판 면적 × 이 비율. 큰 배엔 큰 키를 달아 형상 비교를 공정하게 만든다. */
   rudderAreaRatio: 0.06,
   /** 양력 계수. 실제 값이 아니라 게임 튜닝 노브다. */
@@ -19,25 +45,91 @@ export const DEVICE_TUNING = {
   rudderMaxAngle: 0.6,
   /** 조타 속도 (rad/s). 즉시 꺾이면 배가 아니라 자동차가 된다. */
   rudderRate: 2.0,
-
-  // --- 기본 노 (§5.1 "미약한 무풍 추력", §5.2 원칙 1 "맵 클리어 불가 수준") ---
-  /** 갑판 면적당 노 추력 (N/m²). 종단 속도가 3 m/s 안팎이 되도록 잡았다. */
-  oarPerArea: 150,
-  /** 이 속도에 닿으면 노가 물을 못 잡는다 — 속도가 붙을수록 죽는 것이 원칙 2의 트레이드오프. */
-  oarMaxSpeed: 3.6,
-  /** 역젓기는 더 약하다. */
-  oarReverseScale: 0.45,
 };
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
+/**
+ * ★ 입력 매핑 — 어느 키가 어느 노를 젓는가. **조작 실험은 이 표만 고치면 된다.**
+ *
+ * Y-up · +X = 뱃머리이므로 좌현(port)은 y > 0, 우현(starboard)은 y < 0 이다. 노 하나가 내는
+ * 토크는 τ = −y·F 이므로 **우현 노를 저으면 좌선회**한다 — 카누와 같다. 그래서 ← 가 우현 노다.
+ */
+export const STROKE_KEYMAP = {
+  ArrowUp: [{ side: 'port', dir: 1 }, { side: 'starboard', dir: 1 }],
+  ArrowDown: [{ side: 'port', dir: -1 }, { side: 'starboard', dir: -1 }],
+  ArrowLeft: [{ side: 'starboard', dir: 1 }],
+  ArrowRight: [{ side: 'port', dir: 1 }],
+};
+
+/** 키 이름 → 스트로크 요청 배열 (없으면 null). */
+export function strokesFromKey(key) {
+  return STROKE_KEYMAP[key] ?? null;
+}
+
+// ───────────────────────────────────────────────────────── 스트로크 순수 함수
+
+/** 노 한 자루의 스트로크 상태. t = 시작 후 경과(s), Infinity = 유휴. */
+export function createStrokeState() {
+  return { t: Infinity, dir: 0 };
+}
+
 /** 조종 상태의 기본값. 강체마다 하나씩 `hull.control` 에 산다. */
 export function createControl() {
-  return { throttle: 0, steer: 0, rudder: 0, anchored: false };
+  return {
+    strokes: { port: createStrokeState(), starboard: createStrokeState() },
+    /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — D2 아이템(부스터·키)이 읽는다. */
+    held: {},
+    steer: 0,
+    rudder: 0,
+    anchored: false,
+  };
 }
 
 /**
- * 목표 타각으로 서서히 이동시킨다 (조타 지연).
+ * 스트로크 힘 봉투 — 0..1. sin² 이라 시작과 끝이 0 이고 미분도 연속이라, 임펄스처럼
+ * 한 스텝에 속도가 튀지 않는다 (그래야 predict.js 가 같은 식으로 재현할 수 있다).
+ */
+export function strokeEnvelope(t) {
+  const D = DEVICE_TUNING.oarStrokeDuration;
+  if (!(t >= 0) || t >= D) return 0;
+  const s = Math.sin((Math.PI * t) / D);
+  return s * s;
+}
+
+/**
+ * 새 스트로크를 시작한다. **회수 중(t < D+C)이면 거절**한다 — 연타 상한이 여기서 나온다.
+ * 상한이 없으면 실력 표현이 "타이밍"이 아니라 "연타 속도"가 된다.
+ * @returns {boolean} 수락 여부
+ */
+export function startStroke(state, dir) {
+  if (!state || !dir) return false;
+  const span = DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown;
+  // 1e-9 은 부동소수 여유 — 정확히 회수가 끝나는 순간의 입력은 받아 줘야 한다.
+  // (없으면 dt 누산 오차 때문에 "최대 케이던스"가 실제로는 한 스텝 느려진다.)
+  if (state.t < span - 1e-9) return false;
+  state.t = 0;
+  state.dir = Math.sign(dir);
+  return true;
+}
+
+/** 스트로크 시계를 dt 만큼 전진. **스텝의 맨 끝에서** 호출한다 (predict.js 와 순서 일치). */
+export function advanceStrokes(control, dt) {
+  for (const key of ['port', 'starboard']) {
+    const s = control.strokes?.[key];
+    if (s && Number.isFinite(s.t)) s.t += dt;
+  }
+}
+
+/** 노가 지금 물을 젓고 있는가 (렌더·패널 표시용). */
+export function strokeProgress(control, side) {
+  const s = control?.strokes?.[side];
+  if (!s) return 0;
+  return strokeEnvelope(s.t);
+}
+
+/**
+ * 목표 타각으로 서서히 이동시킨다 (조타 지연). 키 아이템을 장착했을 때만 의미가 있다.
  * @param {number} current 현재 타각 (rad)
  * @param {number} steer -1..1 (+ = 좌현)
  */
@@ -47,13 +139,15 @@ export function stepRudder(current, steer, dt) {
   return current + clamp(target - current, -maxDelta, maxDelta);
 }
 
+// ───────────────────────────────────────────────────────────── 힘 (순수 함수)
+
 /**
  * ★ 순수 함수 — 장치들이 만드는 로컬 좌표계 합력·합토크.
  *
  * @param {object} params computeHullParams 결과
  * @param {Array<object>} devices hull.items 중 type 을 가진 것들
  * @param {{u:number,v:number,w:number}} vel 로컬 전진·횡·각속도
- * @param {{throttle:number, rudder:number}} control
+ * @param {object} control createControl() 결과 (스트로크 상태 포함)
  * @returns {{fx:number, fy:number, torque:number}}
  */
 export function deviceForcesLocal(params, devices, vel, control) {
@@ -64,34 +158,39 @@ export function deviceForcesLocal(params, devices, vel, control) {
   let torque = 0;
 
   for (const d of devices) {
-    if (d.type === 'rudder') {
+    if (d.type === 'oar') {
+      // 스트로크 봉투가 0 이면 이 노는 물 밖에 있다 — 힘이 정확히 0.
+      const s = control.strokes?.[d.side];
+      if (!s || !s.dir) continue;
+      const env = strokeEnvelope(s.t);
+      if (env === 0) continue;
+
+      // 진행 방향 성분이 커질수록 추력이 죽는다. 종단 속도를 묶는 동시에,
+      // 스트로크 모델에서는 "언제 젓는가"를 실력으로 만든다.
+      const along = u * s.dir;
+      const falloff = clamp(1 - along / t.oarMaxSpeed, 0, 1);
+      const scale = s.dir < 0 ? t.oarReverseScale : 1;
+      const f = t.oarStrokePeak * params.area * env * s.dir * scale * falloff;
+
+      fx += f;
+      // ★ 팔길이 창발. 좌우 노의 y 부호가 반대라 한쪽만 저으면 선회하고, 양쪽을 저으면
+      //   토크가 상쇄돼 직진한다 — 단, 비대칭 선체는 두 부착점의 중점이 y=0 이 아니라서
+      //   양쪽을 저어도 저절로 돈다. 조향 코드는 여전히 0줄이다.
+      torque += -d.y * f;
+    } else if (d.type === 'rudder') {
       // L = ½ρ·C_L·A·u·|u|·sin δ — 로컬 y 방향, 타판 부착점에 작용.
       //
       // u·|u| 라서 **정지 시 정확히 0**이고 **후진 시 자동으로 반전**된다. 두 성질 모두
       // 조건 분기가 아니라 식 자체에서 나온다 (§5.1 "키는 물살이 있어야 듣는다").
-      // 부착점이 뒤일수록 팔길이가 길어 잘 듣는 것도 τ = x·F 에서 저절로 따라온다.
       //
       // 여기에 "타판이 만나는 실제 물살 각도"(ω·x_r 로 인한 사향류) 항을 넣어 볼 수 있으나
-      // D1 에서는 넣지 않는다: 그 항은 키를 강한 요잉 감쇠기로 만들어 §4.1 의 비대칭 창발
-      // (직진 입력만으로 선회)을 20초에 70° → 10° 로 눌러 버린다. 실측으로 확인했다.
+      // 넣지 않는다: 그 항은 키를 강한 요잉 감쇠기로 만들어 §4.1 의 비대칭 창발
+      // (직진 입력만으로 선회)을 20초에 70° → 10° 로 눌러 버린다. D1 에서 실측했다.
       const area = t.rudderAreaRatio * params.area;
       const lift = -0.5 * HYDRO_TUNING.waterDensity * t.rudderLift * area
-        * u * Math.abs(u) * Math.sin(control.rudder);
+        * u * Math.abs(u) * Math.sin(control.rudder ?? 0);
       fy += lift;
       torque += d.x * lift; // τ = x·Fy − y·Fx, 키는 Fx = 0
-    } else if (d.type === 'oar') {
-      const drive = control.throttle >= 0
-        ? control.throttle
-        : control.throttle * t.oarReverseScale;
-      if (drive === 0) continue;
-      // 진행 방향 성분이 커질수록 추력이 죽는다. 그래서 종단 속도가 oarMaxSpeed 아래로 묶인다.
-      const along = u * Math.sign(drive);
-      const falloff = clamp(1 - along / t.oarMaxSpeed, 0, 1);
-      const f = t.oarPerArea * params.area * drive * falloff;
-      fx += f;
-      // ★ 부착점이 중심선(y=0)을 벗어나 있으면 여기서 토크가 생긴다 — 비대칭 선체가
-      //   직진 입력만으로 선회하는 이유. 대칭 선체는 d.y = 0 이라 이 항이 사라진다.
-      torque += -d.y * f;
     }
   }
 
@@ -133,12 +232,18 @@ function syncAnchor(body, hull, wanted) {
   hull.control.anchored = hull.anchorJoint != null;
 }
 
+const NO_STROKES = [];
+const NO_HELD = {};
+
 /**
  * 강체 하나에 장치 입력을 적용한다. **매 물리 스텝 직전**에 호출할 것 —
  * 렌더 프레임마다 넣으면 planck 이 스텝 후 힘 누산기를 비우는 탓에 조종감이 주사율에 좌우된다.
  *
+ * ★ 스텝당 순서는 predict.js 가 그대로 재현한다. 바꾸면 예측선이 어긋난다:
+ *   ① 스트로크 요청 소비 → ② 조타 지연 → ③ 힘 계산 → ④ 힘 적용 → ⑤ 스트로크 시계 전진
+ *
  * @param {Body} body 선체 강체
- * @param {{throttle?:number, steer?:number, anchor?:boolean}} input
+ * @param {{strokes?:Array<{side,dir}>, held?:object, steer?:number, anchor?:boolean}} input
  * @param {number} dt 고정 타임스텝
  */
 export function applyDevices(body, input, dt) {
@@ -146,27 +251,37 @@ export function applyDevices(body, input, dt) {
   if (!hull || dt <= 0) return;
 
   const control = (hull.control ??= createControl());
-  control.throttle = clamp(input.throttle ?? 0, -1, 1);
+
+  // ① 스트로크 요청 소비. 요청 배열은 세 척이 공유하지만 수락/거절은 배마다 따로 판단한다.
+  for (const req of input.strokes ?? NO_STROKES) {
+    startStroke(control.strokes[req.side], req.dir);
+  }
+  control.held = input.held ?? NO_HELD;
   control.steer = clamp(input.steer ?? 0, -1, 1);
+  // ② 조타 지연
   control.rudder = stepRudder(control.rudder, control.steer, dt);
 
   syncAnchor(body, hull, !!input.anchor);
 
   const devices = hull.items.filter((it) => it.type);
-  if (devices.length === 0) return;
+  if (devices.length > 0) {
+    const vLocal = body.getLocalVector(body.getLinearVelocity());
+    // ③ 힘
+    const f = deviceForcesLocal(
+      hull.params,
+      devices,
+      { u: vLocal.x, v: vLocal.y, w: body.getAngularVelocity() },
+      control,
+    );
 
-  const vLocal = body.getLocalVector(body.getLinearVelocity());
-  const f = deviceForcesLocal(
-    hull.params,
-    devices,
-    { u: vLocal.x, v: vLocal.y, w: body.getAngularVelocity() },
-    control,
-  );
+    // ④ 힘을 무게중심에, 토크를 따로 넣는다 — 순수 함수가 낸 (fx, fy, τ) 와 완전히 같은
+    //    결과이고, predict.js 가 재현해야 하는 것도 정확히 이 셋이다.
+    body.applyForceToCenter(body.getWorldVector(new Vec2(f.fx, f.fy)), true);
+    body.applyTorque(f.torque, true);
+  }
 
-  // 힘을 무게중심에, 토크를 따로 넣는다 — 순수 함수가 낸 (fx, fy, τ) 와 완전히 같은 결과이고,
-  // predict.js 가 재현해야 하는 것도 정확히 이 셋이다.
-  body.applyForceToCenter(body.getWorldVector(new Vec2(f.fx, f.fy)), true);
-  body.applyTorque(f.torque, true);
+  // ⑤ 스트로크 시계 전진
+  advanceStrokes(control, dt);
 }
 
 /** 월드의 모든 선체에 같은 입력을 적용 (세 척 동시 주행 비교용). */
@@ -176,11 +291,7 @@ export function applyDevicesToWorld(world, input, dt) {
   }
 }
 
-/** 키 상태 → 정규화 입력. */
+/** 홀드 상태(닻·트리거)만 뽑는다. 스트로크는 홀드가 아니라 keydown 엣지에서 온다. */
 export function inputFromKeys(keys) {
-  return {
-    throttle: (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0),
-    steer: (keys.has('ArrowLeft') ? 1 : 0) - (keys.has('ArrowRight') ? 1 : 0),
-    anchor: keys.has(' '),
-  };
+  return { anchor: keys.has(' '), strokes: NO_STROKES, held: NO_HELD };
 }
