@@ -40,8 +40,8 @@ export function attachItem(hull, type, at) {
     impulse: spec.impulse,
     area: spec.area,
     bind: at.bind ?? spec.bind ?? null,
-    /** 규칙 엔진의 상태(불붙음·젖음). 아이템도 규칙표의 예외가 아니다 (§4.4). */
-    state: {},
+    /** 규칙 엔진의 상태 타이머(불붙음·젖음). 아이템도 규칙표의 예외가 아니다 (§4.4). */
+    status: {},
   };
 
   hull.items.push(item);

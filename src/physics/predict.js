@@ -11,6 +11,9 @@ import {
   deviceForcesLocal, stepRudder, advanceStrokes, createStrokeState, steerFromHeld,
 } from './devices.js';
 import { FIXED_DT } from './world.js';
+import { fieldForcesLocal, toLocalVector } from '../field/forces.js';
+
+const ZERO = { fx: 0, fy: 0, torque: 0 };
 
 export const PREDICT_DEFAULTS = {
   /** 예측 구간 (초). */
@@ -41,6 +44,7 @@ export function predictPath(body, input, options = {}) {
   const dt = FIXED_DT;
   const horizon = options.horizon ?? PREDICT_DEFAULTS.horizon;
   const stride = options.stride ?? PREDICT_DEFAULTS.stride;
+  const fields = options.fields ?? null;
   const steps = Math.round(horizon / dt);
 
   const mass = body.getMass();
@@ -85,9 +89,14 @@ export function predictPath(body, input, options = {}) {
 
     const d = deviceForcesLocal(hull.params, devices, vel, control);
     const h = hydroForcesLocal(hull.params.drag, vel, mass, inertia, dt);
-    const fx = d.fx + h.fx;
-    const fy = d.fy + h.fy;
-    const torque = d.torque + h.torque;
+    // 필드도 **적분 중 좌표에서** 샘플한다. 바람 경계를 넘어가는 궤적이 경계를 무시하면
+    // 궤적선이 가장 필요한 순간(돛배가 역풍 지대로 들어가기 직전)에 거짓말을 한다.
+    const f = fields && !fields.isEmpty
+      ? fieldForcesLocal(hull.items, toLocalVector(fields.sampleVector('wind', x, y), angle), vel)
+      : ZERO;
+    const fx = d.fx + h.fx + f.fx;
+    const fy = d.fy + h.fy + f.fy;
+    const torque = d.torque + h.torque + f.torque;
 
     // planck 과 같은 semi-implicit Euler: 속도를 먼저 갱신하고 그 속도로 위치를 옮긴다.
     vx += ((fx * c - fy * s) / mass) * dt;

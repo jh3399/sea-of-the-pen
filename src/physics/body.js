@@ -57,9 +57,14 @@ export function createHullBody(world, piece, placement) {
       // 부착물(§4.1) — D1 부터 여기에 기본 3종 장치가 들어온다. 파손 시 소속 폴리곤을
       // 따라가므로, 키를 얹은 선미가 잘려나가면 조향을 그대로 잃는다 (§5.2 원칙 3).
       items: piece.items ?? [],
-      /** 조종 상태(타각·닻). devices.js 가 첫 호출에서 채운다. */
+      /** 조종 상태(스트로크·타각·닻). devices.js 가 첫 호출에서 채운다. */
       control: null,
       anchorJoint: null,
+      /**
+       * 규칙 엔진의 상태 타이머 (§6.2). `{burning: 탄 시간, wet: 남은 시간}`.
+       * 조각으로 쪼개져도 승계된다 — 불붙은 배가 두 동강 나면 두 조각 다 계속 탄다.
+       */
+      status: { ...(piece.status ?? {}) },
       /** 비교 주행용 표식 {label, color}. 물리에는 영향이 없다. */
       tag: piece.tag ?? null,
       parts,
@@ -94,6 +99,8 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       holes: (piece.holes ?? []).map((h) => translate(h, -m.cx, -m.cy)),
       items,
       tag: oldHull?.tag ?? null,
+      // 불·젖음은 조각을 따라간다 (§6.2). 타는 배를 쪼개서 불을 끌 수는 없다.
+      status: oldHull?.status ?? {},
     };
 
     // 로컬 무게중심의 월드 위치를 새 강체의 원점으로 삼는다.
