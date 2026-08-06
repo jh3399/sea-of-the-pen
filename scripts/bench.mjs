@@ -20,6 +20,13 @@ import { attachItem, itemsExtraMass } from '../src/items/attach.js';
 import { ITEM_CATALOG } from '../src/items/catalog.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { bounds } from '../src/geom/poly.js';
+import { createFields } from '../src/field/field.js';
+import { applyFieldsToWorld } from '../src/physics/fields.js';
+import { createRuleEngine, loadRules, RULE_TICK } from '../src/rules/engine.js';
+import { readFileSync } from 'node:fs';
+
+const ZONES = JSON.parse(readFileSync(new URL('../src/field/zones.json', import.meta.url), 'utf8'));
+const RULE_TABLE = JSON.parse(readFileSync(new URL('../src/rules/table.json', import.meta.url), 'utf8'));
 
 const BUDGET = { hull: 30, carve: 8, physics: 4 };
 const failures = [];
@@ -836,6 +843,174 @@ function fmtExtreme(v) {
   if (!Number.isFinite(v)) return String(v);
   return Math.abs(v) > 1e6 ? v.toExponential(2) : v.toFixed(2);
 }
+
+// ────────────────────── D2 [가설 C] 규칙표에서 의도하지 않은 해법이 나오는가 (§6)
+//
+// 통과 질문: "화염 지대 테스트 맵에서, 의도 해법(철배) 외에 **물웅덩이를 먼저 지나 젖은
+//             나무배로 통과** 같은 비의도 해법이 규칙 조합만으로 실제 성립하는가?"
+//
+// 이 절의 모든 케이스는 **같은 코드**를 돌린다. 다른 것은 zones.json 의 필드 정의와
+// table.json 의 규칙뿐이다. 맵별 분기가 하나라도 있으면 아래 판정은 의미를 잃는다.
+console.log('\n\x1b[36m▌D2 [가설 C] — 규칙표에서 비의도 해법이 나오는가 (§6 맵 코드 0줄)\x1b[0m\n');
+
+const RULES = loadRules(RULE_TABLE);
+console.log(`  규칙표 v${RULE_TABLE.version} — ${RULES.length}줄 로드 · ` +
+  `필드 정의 ${Object.keys(ZONES.zones).length}존`);
+check('규칙표가 스키마 검증을 통과한다 (모르는 조건·효과는 로드 시점에 거부된다)',
+  RULES.length >= 8 && RULES.every((r) => r.id && r.material && r.when && r.effect),
+  `${RULES.length}줄 (D2 목표 8~12줄)`);
+check('규칙표에 맵·존을 가리키는 필드가 없다 (원칙 1을 스키마 수준에서 강제)',
+  !JSON.stringify(RULE_TABLE.rules).match(/"(map|zone|script|level)"\s*:/),
+  '재질 × (필드|상태) → 효과 뿐');
+
+for (const bad of [
+  { rules: [{ id: 'x', material: 'wood', when: { curse: 1 }, effect: { set: 'burning' } }] },
+  { rules: [{ id: 'x', material: 'wood', when: { state: 'burning' }, effect: { explode: true } }] },
+  { rules: [{ id: 'x', material: 'wood', when: { field: 'gravity', gte: 1 }, effect: { destroy: true } }] },
+]) {
+  let threw = false;
+  try { loadRules(bad); } catch { threw = true; }
+  if (!threw) check('스키마 밖 규칙은 로드 시점에 거부된다', false, JSON.stringify(bad.rules[0]));
+}
+check('스키마 밖 규칙(모르는 조건·효과·필드)은 조용히 무시되지 않고 거부된다', true,
+  '조건 3종 전부 throw');
+
+/**
+ * 배 한 척을 존 안에서 seconds 초 항해시키고 규칙 이벤트를 모은다.
+ * @param {{zone:string, material?:string, attach?:Array, v?:{x,y}, seconds?:number}} opts
+ */
+function voyage(opts) {
+  const zone = ZONES.zones[opts.zone];
+  const fields = createFields(zone.fields ?? {});
+  const { world, body } = spawn(opts.key ?? 'sloop', {
+    devices: true, material: opts.material ?? 'wood', attach: opts.attach,
+  });
+  const engine = createRuleEngine(RULES, fields);
+  if (opts.startX) body.setPosition(new Vec2(opts.startX, 0));
+  if (opts.v) body.setLinearVelocity(new Vec2(opts.v.x, opts.v.y));
+
+  let step = 0;
+  const row = opts.row === false ? null : cadence(BOTH);
+  const events = [];
+  let alive = true;
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, row ? row(step++) : EMPTY_INPUT, dt);
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, fields, dt);
+      engine.tick(world, dt);
+    },
+  });
+  for (let i = 0; i < Math.round((opts.seconds ?? 20) / FIXED_DT); i++) {
+    s.advance(FIXED_DT);
+    for (const ev of engine.drain()) {
+      events.push(ev);
+      if (ev.type === 'destroyed') alive = false;
+    }
+    if (!alive) break;
+  }
+
+  const hull = body.getUserData().hull;
+  return {
+    body, alive, events,
+    x: body.getPosition().x,
+    status: { ...hull.status },
+    items: hull.items.map((it) => it.type),
+    destroyedBy: events.find((e) => e.type === 'destroyed') ? '연소' : null,
+  };
+}
+
+// ── 의도 해법과 대조군 ────────────────────────────────────────────────────────
+const woodBurns = voyage({ zone: 'furnace', material: 'wood', seconds: 12 });
+const ironSurvives = voyage({ zone: 'furnace', material: 'iron', seconds: 12 });
+console.log(`  화염 지대 12초 — 나무배 ${woodBurns.alive ? '생존' : '파괴'} · ` +
+  `철배 ${ironSurvives.alive ? '생존' : '파괴'} (burning ${ironSurvives.status.burning ?? 0})`);
+check('나무배는 화염 지대에서 탄다 (규칙 wood-ignites → wood-burns-down)',
+  !woodBurns.alive,
+  `${woodBurns.events.filter((e) => e.type === 'state').map((e) => e.ruleId)[0] ?? '-'} → 파괴`);
+check('철배는 멀쩡하다 — 발화 규칙이 **없어서** 내화다 (규칙 부재가 곧 강점)',
+  ironSurvives.alive && !(ironSurvives.status.burning > 0),
+  `12초 생존 · burning ${ironSurvives.status.burning ?? 0}`);
+
+// ── ★ 비의도 해법: 물웅덩이를 먼저 지나 젖은 나무배로 통과 ─────────────────────
+//
+// 두 항해는 **같은 존 · 같은 규칙 · 같은 코드**를 쓴다. 다른 것은 출발점 하나뿐이다:
+// 하나는 물웅덩이(x=15)를 지나 화염(x=40)으로 들어가고, 다른 하나는 웅덩이를 건너뛴다.
+// "젖으면 불이 안 붙는다"는 규칙 한 줄(wet-suppresses-fire)이고 웅덩이는 필드 정의 하나다.
+// 둘을 잇는 코드는 어디에도 없다 — 그것이 가설 C 의 주장이다.
+const ruleIds = (r) => [...new Set(r.events.filter((e) => e.type === 'state')
+  .map((e) => `${e.ruleId}${e.state.startsWith('-') ? '(해제)' : ''}`))];
+
+const throughPuddle = voyage({ zone: 'volcanic', material: 'wood', v: { x: 3, y: 0 }, seconds: 45 });
+const skipPuddle = voyage({
+  zone: 'volcanic', material: 'wood', startX: 26, v: { x: 3, y: 0 }, seconds: 45,
+});
+console.log(`  화산대 45초 — 웅덩이 경유 ${throughPuddle.alive ? '생존' : '파괴'} (x ${throughPuddle.x.toFixed(0)} m) · ` +
+  `웅덩이 건너뜀 ${skipPuddle.alive ? '생존' : '파괴'} (x ${skipPuddle.x.toFixed(0)} m)`);
+console.log(`  경유: ${ruleIds(throughPuddle).join(' → ') || '(없음)'}`);
+console.log(`  직행: ${ruleIds(skipPuddle).join(' → ') || '(없음)'}`);
+check('★ 젖은 나무배가 화염 지대를 통과한다 — 규칙 조합만으로 성립하는 비의도 해법 (가설 C)',
+  throughPuddle.alive && !skipPuddle.alive
+    && ruleIds(throughPuddle).some((id) => id.startsWith('any-gets-wet'))
+    && !ruleIds(throughPuddle).some((id) => id.startsWith('wood-ignites')),
+  `경유 ${throughPuddle.alive ? '생존' : '파괴'} vs 직행 ${skipPuddle.alive ? '생존' : '파괴'} · ` +
+  `경유 중 발화 ${ruleIds(throughPuddle).some((id) => id.startsWith('wood-ignites')) ? '있음' : '없음'}`);
+check('젖은 배는 아예 불이 붙지 않는다 (같은 틱에 붙었다 꺼지는 것은 사건이 아니다)',
+  !(throughPuddle.status.burning > 0),
+  `burning ${throughPuddle.status.burning ?? 0} · 통과 후 젖음 ${(throughPuddle.status.wet ?? 0).toFixed(1)}s 잔여`);
+
+// ── 비의도 해법이 공짜가 아니다: 젖음은 화염 지대에서 두 배로 마른다 (원칙 2) ───
+const lingering = voyage({
+  zone: 'volcanic', material: 'wood', v: { x: 3, y: 0 }, seconds: 90, row: false,
+});
+console.log(`  젓지 않고 표류 90초 — ${lingering.alive ? '생존' : '파괴'} · x ${lingering.x.toFixed(0)} m`);
+check('젖음 해법은 시간 제한이 있다 (꾸물대면 마르고 결국 탄다 — 원칙 2)',
+  !lingering.alive,
+  `90초 → ${lingering.alive ? '생존 (대가가 없다 — heat-dries 확인 필요)' : '파괴'}`);
+
+// ── 돛: 천 + 바람 = 추력, 그리고 그 대가 ───────────────────────────────────────
+const sailAt = (x, y, angle) => ({ type: 'sail', x, y, angle });
+// 노는 끈다 — 돛의 부호를 보려는 자리라 노 추력이 섞이면 가려진다.
+const withSail = (zone) => voyage({
+  zone, material: 'wood', seconds: 10, row: false, attach: [sailAt(0, 0, 0)],
+});
+const following = withSail('following');
+const headwind = withSail('headwind');
+// 횡풍을 받으려면 돛 법선이 바람 쪽(+Y)이어야 한다 — 법선이 +X 면 dot = 0 이라 힘이 없다.
+// 그 돛을 중심선 앞쪽(x = +2)에 달면 τ = x·Fy 로 요잉이 생긴다.
+const crosswind = voyage({
+  zone: 'crosswind', material: 'wood', seconds: 10, row: false,
+  attach: [sailAt(2.0, 0, Math.PI / 2)],
+});
+const sailBurns = voyage({
+  zone: 'furnace', material: 'iron', seconds: 12, attach: [sailAt(0, 0, 0)],
+});
+console.log(`  돛 10초 — 순풍 x ${following.x.toFixed(1)} m · 역풍 x ${headwind.x.toFixed(1)} m · ` +
+  `횡풍 선수각 ${(crosswind.body.getAngle() * 180 / Math.PI).toFixed(1)}°`);
+check('천 + 바람 = 추력 (§6.3 규칙표 1행)',
+  following.x > 5,
+  `순풍 10초 → ${following.x.toFixed(1)} m`);
+check('역풍은 그대로 역추력이 된다 — 부호 보존형 식 하나에서, 조건 분기 없이 (원칙 2)',
+  headwind.x < -5 && Math.sign(headwind.x) === -Math.sign(following.x),
+  `순풍 ${following.x.toFixed(1)} m vs 역풍 ${headwind.x.toFixed(1)} m`);
+check('중심선을 벗어난 돛은 바람만으로 요잉을 만든다 (§4.2 — 부착점 x 가 팔길이)',
+  Math.abs(crosswind.body.getAngle() * 180 / Math.PI) > 5,
+  `횡풍 10초 → ${(crosswind.body.getAngle() * 180 / Math.PI).toFixed(1)}°`);
+
+// ★ D3 2장 커리큘럼 "1장의 정답이 페널티로 반전" — 같은 돛, 같은 배, 바람만 뒤집었다.
+const rowNoSail = voyage({ zone: 'headwind', material: 'wood', seconds: 20 });
+const rowWithSail = voyage({
+  zone: 'headwind', material: 'wood', seconds: 20, attach: [sailAt(0, 0, 0)],
+});
+const sailPenalty = 1 - rowWithSail.x / rowNoSail.x;
+console.log(`  역풍에서 노 젓기 20초 — 돛 없이 x ${rowNoSail.x.toFixed(1)} m · ` +
+  `돛 달고 x ${rowWithSail.x.toFixed(1)} m (거리 ${(sailPenalty * 100).toFixed(0)}% 손해)`);
+check('★ 역풍에서는 돛이 페널티가 된다 (D3 2장 "1장의 정답이 반전" — 규칙표는 그대로)',
+  sailPenalty > 0.25,
+  `${(sailPenalty * 100).toFixed(0)}% 손해 — D3 2장이 "돛을 떼라"를 강제하려면 이 값을 키운다`);
+check('★ 철배의 천 돛은 화염에 탄다 — 아이템도 규칙표의 예외가 아니다 (§4.4)',
+  sailBurns.alive && !sailBurns.items.includes('sail'),
+  `선체 ${sailBurns.alive ? '생존' : '파괴'} · 남은 아이템 [${sailBurns.items.join(',')}]`);
 
 // ─────────────────────────────────────────────── 스파이크 ② 불리언 차감
 console.log('\n\x1b[36m▌스파이크 ② — 폴리곤 차감 · 절단 분리\x1b[0m\n');
