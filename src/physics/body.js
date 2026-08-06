@@ -67,6 +67,18 @@ export function createHullBody(world, piece, placement) {
       status: { ...(piece.status ?? {}) },
       /** 마지막 충돌 차감 시각 (s). 조각에 승계된다 — damage/contact.js 의 쿨다운이 이걸 읽는다. */
       lastCarveAt: piece.lastCarveAt,
+      /**
+       * ★ 연소 반경의 기준이 되는 **출항 시** 면적.
+       *
+       * 현재 면적을 쓰면 매 사이클 일정 **비율**만 사라져 지수 감쇠가 되고 배가 영영 안 죽는다
+       * (실측: 8사이클에 −28%, 최소 파편까지 약 78사이클 = 5분). 출항 면적으로 고정하면
+       * 매번 같은 크기가 사라져 유한 사이클에 전손하고, 반경이 √면적에 비례하므로
+       * **배 크기와 무관하게 비슷한 사이클 수**가 된다 — 내화는 크기가 아니라 재질이
+       * 사는 것이라는 §3 과 맞는다.
+       */
+      launchArea: piece.launchArea ?? params.area,
+      /** 직전 화점 (선체 로컬). 불이 여기서 번진다 — damage/hotspot.js */
+      burnAt: piece.burnAt ?? null,
       /** 비교 주행용 표식 {label, color}. 물리에는 영향이 없다. */
       tag: piece.tag ?? null,
       parts,
@@ -106,6 +118,12 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       // ★ 마지막 차감 시각도 따라가야 한다. 안 그러면 차감이 곧 쿨다운 초기화가 되어
       //   (강체가 여기서 바뀌므로) 충돌 파손이 물리 스텝마다 터진다 — damage/contact.js.
       lastCarveAt: oldHull?.lastCarveAt,
+      // 연소 반경의 기준. 조각이 되어도 불의 세기는 그대로다.
+      launchArea: oldHull?.launchArea,
+      // 화점은 **아이템과 같은 변환**을 받아야 한다 — 로컬 원점이 새 무게중심으로 옮겨간다.
+      burnAt: oldHull?.burnAt
+        ? { x: oldHull.burnAt.x - m.cx, y: oldHull.burnAt.y - m.cy }
+        : null,
     };
 
     // 로컬 무게중심의 월드 위치를 새 강체의 원점으로 삼는다.

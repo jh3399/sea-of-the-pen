@@ -1449,6 +1449,7 @@ const flatPick = hotspot
   ? hotspot.hottestOutlinePoint(carveOutline, identity, sampleWith(flatFields))
   : null;
 const exposed = hotspot ? hotspot.mostExposedPoint(carveOutline) : null;
+const { nearestOutlinePoint, mostExposedPoint } = hotspot ?? {};
 const maxReach = Math.max(...carveOutline.map((p) => Math.hypot(p.x, p.y)));
 
 if (hotPick) {
@@ -1465,10 +1466,83 @@ check('★ 연소 파괴는 가장 뜨거운 쪽을 깎는다 (열원 쪽 외곽
     && carveOutline.some((p) => p.x === hotPick.local.x && p.y === hotPick.local.y),
   hotPick ? `로컬 y ${hotPick.local.y.toFixed(2)} m · 구배 ${hotPick.spread.toFixed(1)}°` : 'hotspot.js 미구현');
 
-check('필드가 평평하면 가장 돌출한 부위를 깎는다 (§2.2 "뾰족한 돌출부에 데미지 집중")',
+check('첫 발화는 가장 돌출한 부위에서 시작한다 (§2.2 "뾰족한 돌출부에 데미지 집중")',
   !!exposed && flatPick?.spread < 1e-3
     && Math.abs(Math.hypot(exposed.x, exposed.y) - maxReach) < 1e-9,
   exposed ? `반경 ${Math.hypot(exposed.x, exposed.y).toFixed(3)} = 최대 ${maxReach.toFixed(3)} m` : 'hotspot.js 미구현');
+
+// ── ★ 균일한 화염 지대에서 배가 원이 되지 않는가 ─────────────────────────────────
+//
+// §6.1 의 disc 는 `radius × (1−falloff)` 안쪽이 평평하다 (화염 지대는 27 m, 화산대는 7.15 m).
+// 그 안에서는 구배가 0 이라 폴백이 거의 항상 쓰인다. 그런데 "가장 먼 점"을 반복하면 그것은
+// **폴리곤을 원으로 만드는 알고리즘**이다 — 실측으로 차감 지점이 26°→358°→50°→339°→317°
+// 처럼 반대편을 오가며 선체를 빙 돈다. 플레이어가 그린 설계가 지워진다.
+// 직전 화점에서 번지게 하면 한쪽 호를 따라 기어가고 반대편은 손대지 않은 채 남는다.
+function burnWalk(key, mode, rounds = 12) {
+  const src = hulls[key];
+  const world = createWorld();
+  let body = createHullBody(world, { outline: src.outline, holes: [], items: [] },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const octants = new Set();
+  let cycles = 0;
+  for (let i = 0; i < rounds; i++) {
+    const h = body.getUserData().hull;
+    const local = mode === 'far'
+      ? mostExposedPoint(h.outline)
+      : (nearestOutlinePoint(h.outline, h.burnAt) ?? mostExposedPoint(h.outline));
+    if (!local) break;
+    h.burnAt = { x: local.x, y: local.y };
+    const a = (Math.atan2(local.y, local.x) * 180 / Math.PI + 360) % 360;
+    octants.add(Math.floor(a / 45));
+    cycles++;
+    const w = body.getWorldPoint(new Vec2(local.x, local.y));
+    const out = applyImpact(world, body, { x: w.x, y: w.y },
+      burnRadius(mode === 'far' ? h.params.area : (h.launchArea ?? h.params.area)));
+    if (!out || out.bodies.length === 0) return { octants: octants.size, cycles, dead: true };
+    body = out.bodies.sort((x, y) =>
+      y.getUserData().hull.params.area - x.getUserData().hull.params.area)[0];
+  }
+  return { octants: octants.size, cycles, dead: false };
+}
+
+const walkFar = burnWalk('round', 'far');
+const walkSpread = burnWalk('round', 'spread');
+const walkFarSloop = burnWalk('sloop', 'far');
+const walkSpreadSloop = burnWalk('sloop', 'spread');
+console.log(`\n  12회 연속 연소, 차감 지점이 건드린 8분면 (적을수록 한쪽만 먹는다)`);
+console.log(`  ${pad('', 14)}${pad('가장 먼 점', 12)}번짐`);
+console.log(`  ${pad('둥근 배', 14)}${pad(walkFar.octants + '/8', 12)}${walkSpread.octants}/8`);
+console.log(`  ${pad('슬루프', 14)}${pad(walkFarSloop.octants + '/8', 12)}${walkSpreadSloop.octants}/8`);
+check('★ 균일한 화염에서도 배가 원이 되지 않는다 (직전 화점에서 번진다)',
+  walkSpread.octants < walkFar.octants && walkSpread.octants <= 4,
+  `둥근 배 — 가장 먼 점 ${walkFar.octants}/8 vs 번짐 ${walkSpread.octants}/8`);
+
+// ── ★ 배가 유한 사이클에 전손하는가 ─────────────────────────────────────────────
+//
+// 반경을 √현재면적 으로 두면 매 사이클 일정 **비율**만 사라져 지수 감쇠가 되고 배가 영영
+// 안 죽는다 (실측 8사이클에 −28%, 최소 파편까지 약 78사이클 = 5분). 출항 면적으로 고정한다.
+const doomed = burnWalk('sloop', 'spread', 60);
+const survives = burnWalk('sloop', 'far', 60);
+console.log(`  전손까지 — 출항 면적 기준 ${doomed.dead ? doomed.cycles + '사이클' : '60+ (안 죽음)'} · ` +
+  `현재 면적 기준 ${survives.dead ? survives.cycles + '사이클' : '60+ (안 죽음)'}`);
+check('★ 연소는 유한 사이클에 전손시킨다 (반경이 출항 면적 기준이라 지수 감쇠가 아니다)',
+  doomed.dead && doomed.cycles <= 30,
+  `${doomed.cycles}사이클에 전손 (규칙표 4초 주기 → 약 ${(doomed.cycles * 4)}초)`);
+
+const fixedR = (() => {
+  const world = createWorld();
+  const body = createHullBody(world, { outline: hulls.sloop.outline, holes: [], items: [] },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const h = body.getUserData().hull;
+  const before = burnRadius(h.launchArea);
+  const out = applyImpact(world, body, body.getWorldPoint(new Vec2(mostExposedPoint(h.outline).x,
+    mostExposedPoint(h.outline).y)), before);
+  const next = out.bodies[0].getUserData().hull;
+  return { before, after: burnRadius(next.launchArea), area: next.params.area, launch: next.launchArea };
+})();
+check('연소 반경의 기준(출항 면적)이 조각에 승계된다',
+  Math.abs(fixedR.before - fixedR.after) < 1e-9 && fixedR.launch > fixedR.area,
+  `반경 ${fixedR.before.toFixed(2)} m 유지 · 면적 ${fixedR.area.toFixed(2)} < 출항 ${fixedR.launch.toFixed(2)} m²`);
 
 // ── 필드 이름은 **규칙표에서** 온다 (코드가 'temperature' 를 알면 규칙표 밖에 규칙이 생긴다) ──
 //

@@ -52,7 +52,37 @@ export function hottestOutlinePoint(outline, toWorld, sampleAt) {
 }
 
 /**
- * 폴백 — 무게중심에서 가장 먼 외곽 점.
+ * ★ 폴백 ① — 직전에 탄 자리에서 **번진다.**
+ *
+ * 균일한 화염 지대에는 구배가 없다(§6.1 의 disc 는 `radius × (1−falloff)` 안쪽이 평평하다).
+ * 그때 "가장 먼 점"을 반복해 고르면 **폴리곤을 원으로 만드는 알고리즘**이 되어 버린다 —
+ * 실측: 슬루프 세장비가 8사이클에 4.79 → 2.65, 둘레²/면적 33.6 → 18.4 (원은 12.57).
+ * 플레이어가 그린 설계가 지워지므로 이 게임에서 제일 나쁜 종류의 결함이다.
+ *
+ * 대신 직전 화점 근처의 외곽선을 이어서 깎는다. 직전 자리는 이미 파여 있으므로 가장 가까운
+ * 외곽 점은 그 **분화구 가장자리**이고, 결과적으로 불이 한쪽으로 먹어 들어간다 — §7 이
+ * 말하는 "한 구획이 무너지고 남은 부분이 다시 타들어간다"가 그대로 나오고, 비대칭이
+ * 유지되므로 §7.3.1 의 거동 변화도 살아남는다.
+ *
+ * @param {Array<{x,y}>} outline 선체 로컬 폴리곤
+ * @param {{x,y}} from 직전 화점 (선체 로컬)
+ */
+export function nearestOutlinePoint(outline, from) {
+  if (!outline?.length || !from) return null;
+  let best = null;
+  let near = Infinity;
+  for (const p of outline) {
+    const d = (p.x - from.x) ** 2 + (p.y - from.y) ** 2;
+    if (d < near) {
+      near = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/**
+ * 폴백 ② — 무게중심에서 가장 먼 외곽 점. **첫 발화에만 쓴다** (번질 자리가 아직 없다).
  *
  * 필드가 평평하면 "어느 쪽이 더 탔는가"를 말할 근거가 없다. 그때 돌출부를 고르는 것은
  * 임의의 선택이 아니라 §2.2 그대로다: **"뾰족한 돌출부는 충돌 데미지가 집중된다."**

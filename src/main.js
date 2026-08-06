@@ -25,7 +25,7 @@ import { computeHullParams, MATERIALS } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
 import { CORPUS, CORPUS_LABELS } from './hull/corpus.js';
 import { applyImpact } from './damage/apply.js';
-import { hottestOutlinePoint, mostExposedPoint } from './damage/hotspot.js';
+import { hottestOutlinePoint, nearestOutlinePoint, mostExposedPoint } from './damage/hotspot.js';
 import { burnRadius } from './damage/impact.js';
 import { fieldBehind } from './rules/provenance.js';
 import { View, drawSeaGrid, tracePolygon, traceOpenPath, fillPolygonWithHoles } from './render/view.js';
@@ -439,7 +439,8 @@ class Harness {
         // 연소 파괴는 **가장 뜨거운 외곽선 위**를 도려낸다 — D3 의 carve 입력이 이 경로다.
         this.metrics.note('규칙 이벤트', `${ev.target.params.material.name} 연소 파괴`);
         const spot = this.burnSpot(ev);
-        this.carveBody(ev.body, spot.world, burnRadius(ev.target.params.area));
+        // 반경은 **출항 면적** 기준이다 (현재 면적이면 지수 감쇠라 배가 영영 안 죽는다).
+        this.carveBody(ev.body, spot.world, burnRadius(ev.target.launchArea ?? ev.target.params.area));
         this.setStatus(`${ev.target.params.material.name} 선체의 ${spot.where}이(가) 타서 ` +
           `무너졌습니다 — ${this.zone.label}의 온도와 재질만으로. 맵에는 코드가 없습니다.`, 'bad');
       } else if (ev.type === 'itemLost') {
@@ -467,19 +468,26 @@ class Harness {
     const body = ev.body;
     const field = fieldBehind(this.rules, ev.ruleId);
 
-    if (field) {
-      const hot = hottestOutlinePoint(
-        hull.outline,
-        (x, y) => body.getWorldPoint(new Vec2(x, y)),
-        (x, y) => this.fields.sampleScalar(field, x, y),
-      );
-      // 구배가 없으면 어느 쪽이 더 탔는지 말할 근거가 없다 — 폴백으로 넘어간다.
-      if (hot && hot.spread > 1e-3) return { world: hot.world, where: sideName(hot.local) };
-    }
+    const local = (() => {
+      if (field) {
+        const hot = hottestOutlinePoint(
+          hull.outline,
+          (x, y) => body.getWorldPoint(new Vec2(x, y)),
+          (x, y) => this.fields.sampleScalar(field, x, y),
+        );
+        // 구배가 없으면 어느 쪽이 더 탔는지 말할 근거가 없다 — 폴백으로 넘어간다.
+        if (hot && hot.spread > 1e-3) return hot.local;
+      }
+      // 균일한 지대에서는 직전 화점에서 번진다. "가장 먼 점"을 반복하면 배가 원이 된다.
+      return nearestOutlinePoint(hull.outline, hull.burnAt)
+        ?? mostExposedPoint(hull.outline)
+        ?? { x: 0, y: 0 };
+    })();
 
-    const tip = mostExposedPoint(hull.outline) ?? { x: 0, y: 0 };
-    const w = body.getWorldPoint(new Vec2(tip.x, tip.y));
-    return { world: { x: w.x, y: w.y }, where: sideName(tip) };
+    // 다음 사이클이 여기서 이어 붙는다. 조각으로 쪼개져도 승계된다 (body.js).
+    hull.burnAt = { x: local.x, y: local.y };
+    const w = body.getWorldPoint(new Vec2(local.x, local.y));
+    return { world: { x: w.x, y: w.y }, where: sideName(local) };
   }
 
   // ------------------------------------------------------- 아이템 부착 (§4.1)

@@ -147,12 +147,16 @@ body[data-mode='sail'] #stage { cursor: pointer; }
   font-size: 12px;
 }
 
-/* 노 튜닝 패널 — 몰면서 바로 돌려 보라고 화면 왼쪽에 따로 세운다. */
+/* 노 튜닝 패널 — 몰면서 바로 돌려 보라고 화면 왼쪽에 따로 세운다.
+   .status 와 같은 왼쪽 기둥을 쓰므로 상태줄 아래로 내린다. 상태줄은 최대 60ch 라
+   D3 의 파손 메시지쯤 되면 세 줄까지 감기고, 58px 에 두면 그때 겹친다. */
 .tuner {
   position: fixed;
-  top: 58px;
-  left: 12px;
+  top: 132px;
+  left: 14px;
   width: 260px;
+  max-height: calc(100vh - 190px);
+  overflow-y: auto;
   padding: 10px 12px;
   background: rgba(8, 20, 32, 0.88);
   border: 2px solid rgba(240, 201, 135, 0.25);
