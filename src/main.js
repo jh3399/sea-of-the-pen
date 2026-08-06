@@ -313,7 +313,7 @@ class Harness {
         this.metrics.note('규칙 이벤트', `${ev.target.params.material.name} 연소 파괴`);
         this.carve(ev.at, IMPACT_RADIUS * 2.2);
         this.setStatus(`${ev.target.params.material.name} 선체가 타서 무너졌습니다 — ` +
-          `규칙 wood-burns-down (맵 코드 0줄).`, 'bad');
+          `${this.zone.label}의 온도와 재질만으로. 맵에는 코드가 없습니다.`, 'bad');
       } else if (ev.type === 'itemLost') {
         this.setStatus(`${ev.item.name}(${ev.item.material})이(가) 불타 사라졌습니다 — ` +
           `장치 상실이 곧 창발 이벤트입니다 (§5.2 원칙 3).`, 'warn');
