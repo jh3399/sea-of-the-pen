@@ -16,6 +16,8 @@ import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
 import { applyDevices, DEVICE_TUNING } from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
 import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
+import { attachItem, itemsExtraMass } from '../src/items/attach.js';
+import { ITEM_CATALOG } from '../src/items/catalog.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { bounds } from '../src/geom/poly.js';
 
@@ -117,12 +119,16 @@ function spawn(key, options = {}) {
   const hull = hulls[key];
   const items = options.devices ? defaultDevices(hull.outline) : [];
   if (options.rudder) items.push(rudderItem(hull.outline));
+  // §4.1 부착 아이템 — 기본 장치와 **같은 배열, 같은 형식**으로 얹힌다.
+  for (const spec of options.attach ?? []) {
+    attachItem({ items }, spec.type, spec);
+  }
   const body = createHullBody(world, { outline: hull.outline, holes: [], items },
     {
       position: { x: 0, y: 0 },
       angle: 0,
-      material: 'wood',
-      extraMass: deviceExtraMass(items),
+      material: options.material ?? 'wood',
+      extraMass: itemsExtraMass(items),
     });
   return { world, body };
 }
@@ -211,7 +217,9 @@ const BOTH = ['port', 'starboard'];
  */
 function drive(key, input, setup = {}) {
   const seconds = setup.seconds ?? 3;
-  const { world, body } = spawn(key, { devices: true, rudder: setup.rudder });
+  const { world, body } = spawn(key, {
+    devices: setup.devices ?? true, rudder: setup.rudder, attach: setup.attach,
+  });
   if (setup.v) body.setLinearVelocity(new Vec2(setup.v.x, setup.v.y));
   if (setup.w) body.setAngularVelocity(setup.w);
   const inputAt = typeof input === 'function' ? input : () => input;
@@ -468,6 +476,166 @@ check('대칭 선체는 같은 입력에 똑바로 간다 (창발이 형상에�
   straightRuns.sloop.turned < straightRuns.lopsided.turned * 0.1
     && straightRuns.round.turned < straightRuns.lopsided.turned * 0.1,
   `슬루프 ${straightRuns.sloop.turned.toFixed(2)}° · 둥근 배 ${straightRuns.round.turned.toFixed(2)}°`);
+
+// ─────────────────────────────── D2 [가설 B] 아이템 배치에서 조향이 창발하는가 (§4.1)
+//
+// 통과 질문: "조향 코드를 한 줄도 안 짰는데, 좌우 부스터 배치만으로 슬라럼을 통과하는가?
+//             닻 드리프트가 성립하는가?"
+//
+// 슬라럼 실통과는 사람이 몰아 봐야 하지만, 그 전제인 **"부착점 (x, y, angle) 셋만 바꿔서
+// 직진 · 좌선회 · 우선회 · 게걸음이 전부 나오는가"** 는 여기서 수치로 판정할 수 있다.
+// 아래 다섯 케이스는 같은 부스터 정의를 위치와 방향만 달리해 얹은 것이다.
+console.log('\n\x1b[36m▌D2 [가설 B] — 아이템 배치 = 조향 (§4.1 조향 코드 0줄)\x1b[0m\n');
+
+const sloopBox = bounds(hulls.sloop.outline);
+/** 부스터를 다는 선미 위치와 현측 오프셋 — 노와 같은 자리를 쓴다. */
+const BOOST_X = sloopBox.minX + sloopBox.width * 0.15;
+const BOOST_Y = sideAnchors(hulls.sloop.outline, BOOST_X).halfBeam;
+
+const booster = (x, y, angle, bind = 'KeyA') => ({ type: 'booster', x, y, angle, bind });
+const fire = (...binds) => {
+  const held = {};
+  for (const b of binds) held[b] = true;
+  return { held };
+};
+
+const boost = {
+  중심선: drive('sloop', fire('KeyA'), { seconds: 6, attach: [booster(BOOST_X, 0, 0)] }),
+  좌현: drive('sloop', fire('KeyA'), { seconds: 6, attach: [booster(BOOST_X, BOOST_Y, 0)] }),
+  우현: drive('sloop', fire('KeyA'), { seconds: 6, attach: [booster(BOOST_X, -BOOST_Y, 0)] }),
+  양현: drive('sloop', fire('KeyA', 'KeyS'), {
+    seconds: 6,
+    attach: [booster(BOOST_X, BOOST_Y, 0, 'KeyA'), booster(BOOST_X, -BOOST_Y, 0, 'KeyS')],
+  }),
+  // 측면을 향하게 달면 §4.2 가 말하는 "게걸음"이 나온다 — 뱃머리는 그대로 두고 옆으로 간다.
+  게걸음: drive('sloop', fire('KeyA'), {
+    seconds: 6, attach: [booster(0, 0, -Math.PI / 2)],
+  }),
+};
+for (const [label, r] of Object.entries(boost)) {
+  const v = r.body.getLocalVector(r.body.getLinearVelocity());
+  console.log(`  ${pad(label, 8)}6초 → 선수각 ${num(r.yaw, 1, 8)}°  ` +
+    `전진 ${num(v.x, 2, 6)} m/s  옆 ${num(v.y, 2, 6)} m/s`);
+}
+
+check('부스터를 중심선에 달면 직진한다 (팔길이 0 → 토크 0)',
+  boost.중심선.turned < 1.0,
+  `6초 점화 → ${boost.중심선.yaw.toFixed(2)}°`);
+check('★ 편측 부스터만으로 선회한다 (조향 코드 0줄 — 부착점 y 가 곧 팔길이)',
+  boost.좌현.turned > 45 && boost.우현.turned > 45,
+  `좌현 ${boost.좌현.yaw.toFixed(0)}° · 우현 ${boost.우현.yaw.toFixed(0)}°`);
+check('좌우 미러 배치는 정확히 반대로 돈다 (부호도 τ = x·Fy − y·Fx 에서 나온다)',
+  Math.sign(boost.좌현.yaw) === -Math.sign(boost.우현.yaw)
+    && Math.abs(boost.좌현.turned - boost.우현.turned) < boost.좌현.turned * 0.1,
+  `${boost.좌현.yaw.toFixed(0)}° vs ${boost.우현.yaw.toFixed(0)}°`);
+check('양현 부스터를 동시에 켜면 토크가 상쇄돼 직진한다 (슬라럼의 전제)',
+  boost.양현.turned < boost.좌현.turned * 0.05,
+  `양현 ${boost.양현.turned.toFixed(2)}° < 편측 ${boost.좌현.turned.toFixed(0)}° × 0.05`);
+{
+  const v = boost.게걸음.body.getLocalVector(boost.게걸음.body.getLinearVelocity());
+  check('측면을 향한 부스터는 게걸음을 만든다 (§4.2 — 방향 하나만 바꿨다)',
+    Math.abs(v.y) > Math.abs(v.x) * 2,
+    `옆 ${v.y.toFixed(2)} m/s vs 전진 ${v.x.toFixed(2)} m/s`);
+}
+
+// ── 슬라럼 대리 판정: 좌우를 번갈아 점화하면 실제로 지그재그가 되는가 ──────────
+const slalom = (() => {
+  const { world, body } = spawn('sloop', {
+    devices: true,
+    attach: [booster(BOOST_X, BOOST_Y, 0, 'KeyA'), booster(BOOST_X, -BOOST_Y, 0, 'KeyS')],
+  });
+  const PERIOD = Math.round(1.6 / FIXED_DT); // 1.6초마다 좌↔우 전환
+  let step = 0;
+  const yaws = [];
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      // 첫 구간만 반 주기다. 온전한 주기로 시작하면 진동의 중심이 0 이 아니라 한쪽으로
+      // 치우쳐(첫 구간이 ω=0 에서 출발하므로) 지그재그가 아니라 완만한 나선이 된다.
+      const left = Math.floor((step + PERIOD / 2) / PERIOD) % 2 === 0;
+      applyDevices(body, fire(left ? 'KeyA' : 'KeyS'), dt);
+      applyHydroToWorld(world, dt);
+      step++;
+    },
+  });
+  const heading = [];
+  for (let i = 0; i < Math.round(12 / FIXED_DT); i++) {
+    s.advance(FIXED_DT);
+    yaws.push(body.getAngularVelocity());
+    heading.push(body.getAngle());
+  }
+  // 각속도의 부호가 몇 번 뒤집히는가 = 몇 번 꺾었는가.
+  // ⚠ 부호가 바뀌는 그 스텝은 ω ≈ 0 이라 잡음과 구분되지 않는다. **마지막으로 유의미했던
+  //   부호**와 비교해야 한다 (스텝 대 스텝으로 비교하면 전환이 통째로 안 세진다).
+  let flips = 0;
+  let lastSign = 0;
+  for (const w of yaws) {
+    if (Math.abs(w) < 0.02) continue;
+    const sign = Math.sign(w);
+    if (lastSign !== 0 && sign !== lastSign) flips++;
+    lastSign = sign;
+  }
+  // 지그재그와 나선을 가르는 것은 **선수각이 한쪽으로 쌓이지 않는가**다.
+  const deg = heading.map((a) => a * 180 / Math.PI);
+  return {
+    flips,
+    travelled: body.getPosition().length(),
+    swing: Math.max(...deg) - Math.min(...deg),
+    drift: Math.abs(deg.at(-1)),
+  };
+})();
+console.log(`  좌↔우 1.6초 교대 12초 — 선회 방향 전환 ${slalom.flips}회 · ` +
+  `선수각 진폭 ${slalom.swing.toFixed(1)}° · 최종 누적 ${slalom.drift.toFixed(1)}° · ` +
+  `이동 ${slalom.travelled.toFixed(0)} m`);
+check('★ 좌우 부스터를 번갈아 켜면 지그재그가 된다 (슬라럼 통과의 전제 — 나머지는 사람 판정)',
+  slalom.flips >= 5 && slalom.travelled > 10 && slalom.drift < slalom.swing,
+  `전환 ${slalom.flips}회 · 진폭 ${slalom.swing.toFixed(1)}° · ` +
+  `누적 ${slalom.drift.toFixed(1)}° (나선이면 누적이 진폭을 넘는다)`);
+
+// ── 닻 드리프트: 현측에 던진 닻은 그 점을 축으로 배를 돌린다 (§4.2) ─────────────
+const anchorDrift = (side) => {
+  const { world, body } = spawn('sloop', {
+    devices: false,
+    attach: [{ type: 'anchor', x: BOOST_X, y: side * BOOST_Y, angle: 0 }],
+  });
+  const anchorAt = body.getWorldPoint(new Vec2(BOOST_X, side * BOOST_Y)).clone();
+  body.setLinearVelocity(new Vec2(5, 0));
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => { applyDevices(body, { anchor: true }, dt); applyHydroToWorld(world, dt); },
+  });
+  for (let i = 0; i < Math.round(3 / FIXED_DT); i++) s.advance(FIXED_DT);
+
+  // 닻점이 제자리인가 = 정말 "그 점을 축으로" 도는가. 조인트가 이를 보장하지만,
+  // 측정해 두면 나중에 닻을 다른 방식으로 바꿨을 때 이 성질이 깨지는 것을 잡는다.
+  const now = body.getWorldPoint(new Vec2(BOOST_X, side * BOOST_Y));
+  return {
+    yaw: body.getAngle() * 180 / Math.PI,
+    pivotSlip: Math.hypot(now.x - anchorAt.x, now.y - anchorAt.y),
+  };
+};
+const driftSide = anchorDrift(1);
+const driftCentre = anchorDrift(0);
+console.log(`  5 m/s 주행 중 닻 투하 3초 — 현측 ${driftSide.yaw.toFixed(1)}° ` +
+  `(닻점 이동 ${(driftSide.pivotSlip * 1000).toFixed(1)} mm) vs 중심선 ${driftCentre.yaw.toFixed(2)}°`);
+check('★ 현측에 던진 닻은 그 점을 축으로 배를 돌린다 (닻 드리프트 — §4.2)',
+  Math.abs(driftSide.yaw) > 10 && Math.abs(driftSide.yaw) > Math.abs(driftCentre.yaw) * 5
+    && driftSide.pivotSlip < 0.05,
+  `현측 ${driftSide.yaw.toFixed(1)}° vs 중심선 ${driftCentre.yaw.toFixed(2)}° · ` +
+  `닻점 이동 ${(driftSide.pivotSlip * 1000).toFixed(1)} mm`);
+
+// ── 밸러스트: 힘 코드 0줄. 질량만으로 흘수와 관성을 바꾼다 (§4.2) ───────────────
+const bare = computeHullParams(hulls.sloop.outline, {
+  material: 'wood', extraMass: itemsExtraMass(defaultDevices(hulls.sloop.outline)),
+});
+const ballasted = computeHullParams(hulls.sloop.outline, {
+  material: 'wood',
+  extraMass: itemsExtraMass(defaultDevices(hulls.sloop.outline)) + ITEM_CATALOG.ballast.mass,
+});
+console.log(`  밸러스트 ${ITEM_CATALOG.ballast.mass} kg — 흘수 ${bare.draft.toFixed(3)} → ` +
+  `${ballasted.draft.toFixed(3)} m · 전진 저항 ${bare.drag.x.toFixed(0)} → ${ballasted.drag.x.toFixed(0)}`);
+check('밸러스트는 힘 코드 0줄로 흘수와 저항을 바꾼다 (§4.2 "순수 질량")',
+  ballasted.draft > bare.draft && ballasted.drag.x > bare.drag.x,
+  `흘수 +${((ballasted.draft - bare.draft) * 100).toFixed(1)} cm · ` +
+  `저항 +${(ballasted.drag.x - bare.drag.x).toFixed(0)}`);
 
 // ── 예측 궤적선이 실제와 일치하는가 ──────────────────────────────────────────
 console.log('\n\x1b[36m▌D1 — 예측 궤적선 (predict.js ↔ 실제 시뮬레이션)\x1b[0m\n');
