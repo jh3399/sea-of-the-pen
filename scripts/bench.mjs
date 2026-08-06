@@ -16,7 +16,7 @@ import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
 import { applyDevices, DEVICE_TUNING, oarFalloff, strokeGate } from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
 import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
-import { attachItem, itemsExtraMass } from '../src/items/attach.js';
+import { attachItem, itemsExtraMass, canAttachAt } from '../src/items/attach.js';
 import { ITEM_CATALOG } from '../src/items/catalog.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { bounds } from '../src/geom/poly.js';
@@ -787,6 +787,40 @@ check('★ 현측에 던진 닻은 그 점을 축으로 배를 돌린다 (닻 �
     && driftSide.pivotSlip < 0.05,
   `현측 ${driftSide.yaw.toFixed(1)}° vs 중심선 ${driftCentre.yaw.toFixed(2)}° · ` +
   `닻점 이동 ${(driftSide.pivotSlip * 1000).toFixed(1)} mm`);
+
+// ── 부착점은 선체 안이어야 한다 (§7.5 가 전제하는 불변식) ─────────────────────
+//
+// 파손 판정은 아이템을 담은 조각을 pointInPolygon 으로 찾고 어느 조각에도 없으면 탈락시킨다.
+// 그래서 선체 밖 부착은 **첫 파손에 무조건 사라지고**, 그 전까지는 팔길이만 공짜로 늘어난
+// 치트가 된다. UI 편의가 아니라 D3 파손 파이프라인의 전제라 여기서 회귀로 고정한다.
+const attachBox = bounds(hulls.sloop.outline);
+const insidePt = { x: 0, y: 0 };
+const outsidePt = { x: attachBox.maxX + 3, y: attachBox.maxY + 3 };
+const donutHole = [
+  { x: -1, y: -1 }, { x: -1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: -1 },
+];
+console.log(`  부착 판정 — 선체 안 (0,0) ${canAttachAt(hulls.sloop.outline, [], insidePt)} · ` +
+  `밖 (${outsidePt.x.toFixed(0)},${outsidePt.y.toFixed(0)}) ${canAttachAt(hulls.sloop.outline, [], outsidePt)} · ` +
+  `구멍 속 ${canAttachAt(hulls.sloop.outline, [donutHole], insidePt)}`);
+check('선체 밖·구멍 속에는 아이템을 붙일 수 없다 (§7.5 소속 폴리곤 판정의 전제)',
+  canAttachAt(hulls.sloop.outline, [], insidePt)
+    && !canAttachAt(hulls.sloop.outline, [], outsidePt)
+    && !canAttachAt(hulls.sloop.outline, [donutHole], insidePt),
+  '안 ✔ · 밖 ✘ · 구멍 속 ✘');
+
+// 막지 않았다면 실제로 어떻게 됐는지 — 검증이 무엇을 막고 있는지 수치로 남긴다.
+const strayLoss = (() => {
+  const { world, body } = spawn('sloop', { devices: true });
+  const hull = body.getUserData().hull;
+  attachItem(hull, 'booster', { ...outsidePt, angle: 0, bind: 'KeyA' });
+  // 선체 반대편 끝을 살짝 때린다 — 부스터 근처는 건드리지도 않는다.
+  const at = body.getWorldPoint(new Vec2(attachBox.minX + 0.5, 0));
+  const out = applyImpact(world, body, { x: at.x, y: at.y }, 0.5);
+  return out.result.droppedItems.map((i) => i.type);
+})();
+check('실제로 선체 밖 아이템은 스치는 타격 한 번에 탈락한다 (검증이 막고 있는 것)',
+  strayLoss.includes('booster'),
+  `부스터 근처를 건드리지도 않았는데 탈락 [${strayLoss.join(',')}]`);
 
 // ── 밸러스트: 힘 코드 0줄. 질량만으로 흘수와 관성을 바꾼다 (§4.2) ───────────────
 const bare = computeHullParams(hulls.sloop.outline, {

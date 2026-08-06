@@ -18,7 +18,7 @@ import {
 import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
 import { defaultDevices, sideAnchors } from './items/defaults.js';
-import { attachItem, nextBind, itemsExtraMass } from './items/attach.js';
+import { attachItem, nextBind, itemsExtraMass, canAttachAt } from './items/attach.js';
 import { ITEM_CATALOG, ATTACHABLE, bindLabel } from './items/catalog.js';
 import { strokeToHull, HULL_DEFAULTS } from './hull/polygon.js';
 import { computeHullParams, MATERIALS } from './hull/params.js';
@@ -481,6 +481,14 @@ class Harness {
     const c = Math.cos(-this.design.angle);
     const s = Math.sin(-this.design.angle);
     const local = { x: dx * c - dy * s, y: dx * s + dy * c };
+
+    // ★ 선체 밖에는 못 붙인다. §7.5 소속 폴리곤 판정이 "아이템은 선체 안에 있다"를 전제해서,
+    //   밖에 붙은 것은 첫 파손에 그대로 탈락한다 (그 전까지는 팔길이만 늘어난 치트가 된다).
+    if (!canAttachAt(this.design.outline, this.design.holes, local)) {
+      this.setStatus('선체 안을 클릭하세요 — 밖에 붙은 아이템은 첫 파손에 떨어져 나갑니다 (§7.5).',
+        'warn');
+      return;
+    }
 
     const hull = { items: this.attached };
     const item = attachItem(hull, this.attachType, {

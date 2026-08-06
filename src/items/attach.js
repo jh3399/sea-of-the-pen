@@ -7,9 +7,31 @@
 //   D3 에서 "부스터 두 개 중 좌현 것만 잘려나갔다"를 표현할 수 있다. 타입에 키를 하드코딩하면
 //   그 순간 §7.5 의 트리거 무효화가 불가능해진다.
 import { Vec2 } from 'planck';
+import { pointInPolygon } from '../geom/poly.js';
 import { ITEM_CATALOG, BIND_POOL } from './catalog.js';
 
 let serial = 0;
+
+/**
+ * ★ 그 자리에 아이템을 붙일 수 있는가 — **선체 안이어야 한다.**
+ *
+ * 단순한 UI 검사처럼 보이지만 §7.5 가 전제하는 불변식이다. 파손 판정(`damage/carve.js`)은
+ * 아이템을 담고 있는 조각을 `pointInPolygon` 으로 찾고, 어느 조각에도 없으면 그대로 탈락
+ * 시킨다. 그래서 선체 밖에 붙인 아이템은 **첫 파손에서 무조건 사라진다** — 게다가 파손
+ * 전까지는 팔길이만 공짜로 늘어난 치트로 동작한다. 둘 다 여기서 막는다.
+ *
+ * 경계에 **가까운** 것은 막지 않는다. 현측 끝에 단 부스터가 작은 타격에도 떨어지는 것은
+ * 버그가 아니라 §7.5 가 의도한 트레이드오프이고, 플레이어가 감수하고 고를 수 있어야 한다.
+ *
+ * @param {Array<{x,y}>} outline 선체 로컬 폴리곤
+ * @param {Array<Array<{x,y}>>} holes 구멍들 (없으면 생략)
+ * @param {{x:number, y:number}} pt 선체 로컬 좌표
+ */
+export function canAttachAt(outline, holes, pt) {
+  if (!outline?.length || !pt) return false;
+  if (!pointInPolygon(pt, outline)) return false;
+  return !(holes ?? []).some((hole) => pointInPolygon(pt, hole));
+}
 
 /**
  * 카탈로그 항목 하나를 선체 로컬 좌표에 붙인다.
