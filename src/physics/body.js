@@ -65,6 +65,8 @@ export function createHullBody(world, piece, placement) {
        * 조각으로 쪼개져도 승계된다 — 불붙은 배가 두 동강 나면 두 조각 다 계속 탄다.
        */
       status: { ...(piece.status ?? {}) },
+      /** 마지막 충돌 차감 시각 (s). 조각에 승계된다 — damage/contact.js 의 쿨다운이 이걸 읽는다. */
+      lastCarveAt: piece.lastCarveAt,
       /** 비교 주행용 표식 {label, color}. 물리에는 영향이 없다. */
       tag: piece.tag ?? null,
       parts,
@@ -101,6 +103,9 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       tag: oldHull?.tag ?? null,
       // 불·젖음은 조각을 따라간다 (§6.2). 타는 배를 쪼개서 불을 끌 수는 없다.
       status: oldHull?.status ?? {},
+      // ★ 마지막 차감 시각도 따라가야 한다. 안 그러면 차감이 곧 쿨다운 초기화가 되어
+      //   (강체가 여기서 바뀌므로) 충돌 파손이 물리 스텝마다 터진다 — damage/contact.js.
+      lastCarveAt: oldHull?.lastCarveAt,
     };
 
     // 로컬 무게중심의 월드 위치를 새 강체의 원점으로 삼는다.

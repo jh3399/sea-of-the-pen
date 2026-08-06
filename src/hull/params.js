@@ -47,10 +47,44 @@ export const HYDRO_TUNING = {
  * areaDensity(kg/m²)는 "갑판 면적당 총 질량"이라 물 밀도로 나누면 곧 흘수(m)가 된다.
  * 나무 300 → 흘수 0.30 m, 철 900 → 0.90 m.
  */
+/**
+ * §7.4 재질별 파손 거동. 세 칸이 추가로 붙는다:
+ *
+ * - `impactThreshold` (J) — 이 에너지 아래의 충격은 흠집도 안 난다. 스치는 접촉이 초당
+ *   60번 배를 깎는 것을 막는 1차 방어선이다.
+ * - `toughness` (J/m²) — 임계를 넘은 에너지가 얼마나 넓은 면적을 뜯어내는가.
+ * - `maxCarveRadius` (m) — 한 번에 뚫릴 수 있는 최대 반경.
+ *
+ * ★ `maxCarveRadius` 가 `toughness` 와 **별도로** 있어야 하는 이유:
+ *   철배는 면밀도가 3배라 같은 속도에서 충격 에너지도 3배다. toughness 만 올리면 그 3배와
+ *   상쇄돼 결국 나무와 비슷하게 깎인다. §7.4 의 "고내구(대포알에 함몰만, 관통 어려움)"를
+ *   표현하는 항은 **캡 하나뿐**이다.
+ *
+ * 원칙 2 점검 — 철은 내구가 강점이고 areaDensity 900(무게·흘수)이 이미 약점이다.
+ * 천은 최저 밀도가 강점이고 스치기만 해도 찢어지는 것이 그 대가다.
+ */
 export const MATERIALS = {
-  wood: { key: 'wood', name: '나무', areaDensity: 300, color: '#a8763e' },
-  iron: { key: 'iron', name: '철', areaDensity: 900, color: '#8892a0' },
-  cloth: { key: 'cloth', name: '천', areaDensity: 40, color: '#e8dcc0' },
+  wood: {
+    key: 'wood', name: '나무', areaDensity: 300, color: '#a8763e',
+    impactThreshold: 8000, toughness: 40000, maxCarveRadius: null,
+  },
+  iron: {
+    key: 'iron', name: '철', areaDensity: 900, color: '#8892a0',
+    impactThreshold: 15000, toughness: 200000, maxCarveRadius: 0.30,
+  },
+  cloth: {
+    key: 'cloth', name: '천', areaDensity: 40, color: '#e8dcc0',
+    impactThreshold: 500, toughness: 5000, maxCarveRadius: null,
+  },
+  /**
+   * 암초. 선체 재질이 아니라 **장애물 재질**이라 흘수 계산에는 안 쓰인다.
+   * 안 깎이는 이유는 이 값들이 아니라 `hull` userData 가 없다는 사실이다 —
+   * `applyImpact` 가 null 을 돌려준다. 여기 임계가 무한대인 것은 이중 안전장치다.
+   */
+  rock: {
+    key: 'rock', name: '암초', areaDensity: 2400, color: '#5a5f66',
+    impactThreshold: Infinity, toughness: Infinity, maxCarveRadius: 0,
+  },
 };
 
 /**

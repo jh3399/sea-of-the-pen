@@ -6,7 +6,7 @@
 // D0 은 성능("세 스파이크가 프레임 드랍 없이 도는가")을, D1 은 설계 의도가 코드로 성립하는지를
 // 묻는다 — 정지 시 키가 무효인가, 비대칭 선체가 조향 코드 0줄로 도는가, 예측선이 정직한가.
 import { strokeToHull } from '../src/hull/polygon.js';
-import { computeHullParams, HYDRO_TUNING } from '../src/hull/params.js';
+import { computeHullParams, HYDRO_TUNING, MATERIALS } from '../src/hull/params.js';
 import { decomposeHull } from '../src/hull/decompose.js';
 import { CORPUS, CORPUS_LABELS } from '../src/hull/corpus.js';
 import { Settings } from 'planck';
@@ -19,7 +19,9 @@ import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../sr
 import { attachItem, itemsExtraMass, canAttachAt } from '../src/items/attach.js';
 import { ITEM_CATALOG } from '../src/items/catalog.js';
 import { applyImpact } from '../src/damage/apply.js';
-import { burnRadius } from '../src/damage/impact.js';
+import { burnRadius, carveRadiusFromImpact } from '../src/damage/impact.js';
+import { installImpactListener, offCooldown, CONTACT_TUNING } from '../src/damage/contact.js';
+import { createObstacle } from '../src/physics/obstacle.js';
 import { fieldBehind } from '../src/rules/provenance.js';
 import { bounds } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
@@ -1494,6 +1496,167 @@ const rSmall = burnRadius(paramTable.sloop.p.area);
 check('연소 반경이 선체 크기에 비례한다 (고정 반경은 큰 배를 긁고 작은 배를 죽인다)',
   Math.abs(rBig / rSmall - 2) < 1e-9,
   `면적 4배 → 반경 ${rSmall.toFixed(2)} → ${rBig.toFixed(2)} m (정확히 2배)`);
+
+// ─────────────────────────────────────────────── D3 ② 충돌 파손
+//
+// §7.2 의 입력 중 "암초 충돌"을 실제 물리 접촉에서 만든다. planck 의 post-solve 는
+// 강체를 만들거나 부술 수 없으므로 큐에만 쌓고 스텝 밖에서 소비한다.
+console.log('\n\x1b[36m▌D3 ② — 충돌 파손 (암초 · 재질 내구)\x1b[0m\n');
+
+/**
+ * 배를 암초에 정면으로 박아 본다.
+ * @returns {{hits, removed, split, alive, radius, energy, bodies}}
+ */
+function ram(key, { material = 'wood', speed = 6, seconds = 3, reefX = 14 } = {}) {
+  const { world, body } = spawn(key, { devices: true, material });
+  const area0 = body.getUserData().hull.params.area;
+  createObstacle(world, { shape: 'circle', x: reefX, y: 0, radius: 3, material: 'rock' });
+
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  let fleet = new Set([body]);
+  const hits = [];
+
+  const s = new FixedStepper(world, { onPreStep: (dt) => applyHydroToWorld(world, dt) });
+  for (const b of fleet) b.setLinearVelocity(new Vec2(speed, 0));
+
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) {
+    s.advance(FIXED_DT);
+    elapsed += FIXED_DT;
+    // ── 스텝 밖 ── 여기서만 강체가 나고 죽는다.
+    for (const im of queue.drain()) {
+      if (!fleet.has(im.body)) continue;               // 이미 파괴된 강체 (댕글링)
+      const out = applyImpact(world, im.body, im.at, im.radius);
+      if (!out) continue;
+      hits.push({ radius: im.radius, energy: im.energy, removed: out.result.removedArea, source: im.source });
+      fleet.delete(im.body);
+      for (const nb of out.bodies) fleet.add(nb);
+    }
+  }
+
+  const alive = [...fleet];
+  const areaNow = alive.reduce((t, b) => t + b.getUserData().hull.params.area, 0);
+  return {
+    hits, alive, bodies: alive.length,
+    removed: 1 - areaNow / area0,
+    split: alive.length > 1,
+    radius: hits.length ? Math.max(...hits.map((h) => h.radius)) : 0,
+    energy: hits.length ? Math.max(...hits.map((h) => h.energy)) : 0,
+    finite: alive.every((b) => Number.isFinite(b.getPosition().x) && Number.isFinite(b.getPosition().y)),
+  };
+}
+
+const hardHit = ram('sloop', { speed: 6 });
+const softHit = ram('sloop', { speed: 1.5 });
+const ironHit = ram('sloop', { speed: 6, material: 'iron' });
+
+console.log(`  ${pad('', 20)}${pad('타격', 7)}${pad('최대 에너지', 13)}${pad('반경', 9)}${pad('면적 손실', 11)}조각`);
+for (const [label, r] of [['나무 6 m/s', hardHit], ['나무 1.5 m/s (스침)', softHit], ['철 6 m/s', ironHit]]) {
+  console.log(`  ${pad(label, 20)}${pad(r.hits.length + '회', 7)}${pad(num(r.energy / 1000, 1, 8) + ' kJ', 13)}` +
+    `${pad(num(r.radius, 2, 5) + ' m', 9)}${pad(num(r.removed * 100, 1, 5) + '%', 11)}${r.bodies}개`);
+}
+
+check('세게 부딪히면 깎이고 살살 스치면 흠집도 안 난다 (임계는 에너지, 재질이 정한다)',
+  hardHit.removed > 0.01 && softHit.hits.length === 0,
+  `6 m/s → −${(hardHit.removed * 100).toFixed(1)}% · 1.5 m/s → 타격 ${softHit.hits.length}회`);
+
+check('★ 철은 함몰만 한다 (§7.4 "고내구 — 대포알에 함몰만, 관통 어려움")',
+  ironHit.removed < hardHit.removed / 4 && !ironHit.split,
+  `나무 −${(hardHit.removed * 100).toFixed(1)}% vs 철 −${(ironHit.removed * 100).toFixed(1)}% · 철 반경 ${ironHit.radius.toFixed(2)} m`);
+
+check('암초는 안 깎인다 — hull userData 가 없어서 (물리·규칙 어디에도 장애물 분기 0줄)',
+  (() => {
+    const w = createWorld();
+    const rock = createObstacle(w, { shape: 'circle', x: 0, y: 0, radius: 3, material: 'rock' });
+    return applyImpact(w, rock, { x: 0, y: 0 }, 1.0) === null;
+  })(),
+  'applyImpact → null');
+
+// ── ★ 연속 충돌: post-solve 가 **매 스텝** 불린다는 함정의 회귀 ─────────────────
+//
+// ⚠ 그냥 벽에 밀어붙이면 이 회귀는 아무것도 검증하지 못한다. 지속 압력의 스텝당 임펄스는
+//   F·dt = 150 N·s 이고 에너지는 J²/2μ ≈ 2.8 J — 나무 임계(8 kJ)의 3천분의 1이라
+//   쿨다운을 통째로 없애도 차감이 안 일어난다. **임계를 넘는 충격이 반복돼야** 쿨다운이
+//   짐을 진다. 그래서 매 스텝 암초 쪽으로 6 m/s 를 다시 실어 준다 (계속 들이받는 배).
+function grindReef(seconds = 30) {
+  const { world, body } = spawn('sloop', { devices: true });
+  const area0 = body.getUserData().hull.params.area;
+  createObstacle(world, { shape: 'circle', x: 11, y: 0, radius: 3, material: 'rock' });
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  let fleet = new Set([body]);
+  let carves = 0;
+  const s = new FixedStepper(world, { onPreStep: (dt) => applyHydroToWorld(world, dt) });
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) {
+    for (const b of fleet) b.setLinearVelocity(new Vec2(6, 0));
+    s.advance(FIXED_DT);
+    elapsed += FIXED_DT;
+    for (const im of queue.drain()) {
+      if (!fleet.has(im.body)) continue;                 // 이미 파괴된 강체 (댕글링)
+      const out = applyImpact(world, im.body, im.at, im.radius);
+      if (!out) continue;
+      carves++;
+      fleet.delete(im.body);
+      for (const nb of out.bodies) fleet.add(nb);
+    }
+  }
+  const alive = [...fleet];
+  const areaNow = alive.reduce((t, b) => t + b.getUserData().hull.params.area, 0);
+  return {
+    carves, bodies: alive.length, removed: 1 - areaNow / area0,
+    finite: alive.every((b) => Number.isFinite(b.getPosition().x) && Number.isFinite(b.getPosition().y)),
+  };
+}
+
+const realGrind = grindReef();
+console.log(`\n  30초 연속 충돌 (매 스텝 6 m/s 재장전) — 차감 ${realGrind.carves}회 · ` +
+  `면적 −${(realGrind.removed * 100).toFixed(1)}% · 조각 ${realGrind.bodies}개 · ` +
+  `좌표 ${realGrind.finite ? '유한' : '발산'}`);
+check('30초 연속 충돌 후에도 강체가 터지지 않는다',
+  realGrind.finite && hardHit.finite && realGrind.bodies > 0,
+  `조각 ${realGrind.bodies}개 · 면적 −${(realGrind.removed * 100).toFixed(1)}%`);
+
+// ── 지속 접촉을 실제로 막는 것은 무엇인가 ────────────────────────────────────────
+//
+// 처음에는 쿨다운이라고 적었지만 A/B 로 재 보니 아니었다. 벽에 기댄 스텝당 임펄스는
+// F·dt = 150 N·s 이고 에너지는 J²/2μ ≈ 2.8 J — 나무 임계(8 kJ)의 3천분의 1이다. 설령
+// 임계를 넘겨도 반경이 √(1.8/40000) = 0.007 m 라 minCarveRadius(0.12)에서 걸린다.
+// **짐을 지는 것은 임계와 최소 반경 둘이고, 쿨다운은 밸런싱 중 임계를 낮췄을 때를 위한
+// 백스톱이다.** 그러니 그 둘을 재고, 쿨다운은 판정과 승계를 직접 잰다.
+const leanImpulse = 9000 * FIXED_DT;
+const leanEnergy = (leanImpulse * leanImpulse) / (2 * spawn('sloop', { devices: true }).body.getMass());
+const leanRadius = carveRadiusFromImpact({
+  impulse: leanImpulse, effectiveMass: spawn('sloop', { devices: true }).body.getMass(),
+  material: MATERIALS.wood, hullArea: paramTable.sloop.p.area,
+});
+console.log(`  벽에 기대기(9000 N) — 스텝당 에너지 ${leanEnergy.toFixed(1)} J vs 나무 임계 ` +
+  `${MATERIALS.wood.impactThreshold} J → 반경 ${leanRadius.toFixed(3)} m`);
+check('지속 압력은 애초에 임계를 못 넘는다 (기대는 것으로는 배가 안 깎인다)',
+  leanEnergy < MATERIALS.wood.impactThreshold && leanRadius === 0,
+  `${leanEnergy.toFixed(1)} J < ${MATERIALS.wood.impactThreshold} J`);
+
+// ★ 진짜 버그였던 것: 쿨다운을 **강체로** 키잉하면 respawnPieces 가 강체를 갈아치울 때마다
+//   초기화된다. 차감하는 순간이 곧 쿨다운 해제라서, 쿨다운 0.2s 와 0 의 결과가 한 치도
+//   다르지 않았다. 시각은 hull 에 얹고 status 처럼 조각에 승계돼야 한다.
+const inherit = (() => {
+  const { world, body } = spawn('barbell', { devices: true });
+  body.getUserData().hull.lastCarveAt = 12.5;
+  const out = applyImpact(world, body, { x: 0, y: 0 }, 0.9);
+  return out.bodies.map((b) => b.getUserData().hull.lastCarveAt);
+})();
+console.log(`  절단 후 조각들의 lastCarveAt — [${inherit.join(', ')}] (원본 12.5)`);
+check('★ 차감 쿨다운 시각이 조각에 승계된다 (안 그러면 차감이 곧 쿨다운 초기화다)',
+  inherit.length > 1 && inherit.every((t) => t === 12.5),
+  `조각 ${inherit.length}개 전부 12.5`);
+
+const cdHull = { lastCarveAt: 10 };
+// 경계값(정확히 창 끝)으로 재지 않는다 — 10 + 0.2 − 10 = 0.19999999999999929 라
+// 부동소수점에서 미끄러진다. 가드가 보장하는 것은 "창 안은 막고 창 밖은 통과"뿐이다.
+check('쿨다운 창 안이면 거절하고 밖이면 허용한다',
+  !offCooldown(cdHull, 10 + CONTACT_TUNING.cooldown * 0.5)
+    && offCooldown(cdHull, 10 + CONTACT_TUNING.cooldown * 1.5)
+    && offCooldown({}, 0),
+  `${CONTACT_TUNING.cooldown}s 창 · 이력 없으면 즉시 허용`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +

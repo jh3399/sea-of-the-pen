@@ -27,3 +27,41 @@ export const DAMAGE_TUNING = {
 export function burnRadius(hullArea) {
   return Math.sqrt(Math.max(hullArea, 0)) * DAMAGE_TUNING.burnRadiusOfHull;
 }
+
+/**
+ * 충돌·피탄의 차감 반경 (§7.2 "충격 지점·강도·재질 내구도에 따라").
+ *
+ * ★ 임펄스가 아니라 **에너지**로 잰다. `E = J²/2μ`.
+ *   임펄스를 그대로 쓰면 무거운 배가 **무겁다는 이유만으로** 더 깎인다 — 같은 벽에 같은
+ *   속도로 부딪혀도 철배의 임펄스가 3배라서다. 에너지로 정규화하면 그 교란이 사라지고,
+ *   "얼마나 세게 부딪혔는가"만 남는다. 재질 차이는 임계·인성으로만 들어온다.
+ *
+ * 암초가 안 깎이는 것은 여기가 아니라 `applyImpact` 가 hull 없는 강체에 null 을 내는
+ * 덕이다. 이 함수는 rock 의 무한대 임계로 한 번 더 막을 뿐이다.
+ *
+ * @param {{impulse:number, effectiveMass:number, material:object, hullArea:number}} p
+ *   effectiveMass 는 환산질량 μ. 상대가 static 이면 동적 쪽 질량이 곧 μ 다.
+ * @returns {number} 반경 (m). 0 이면 흠집도 안 났다는 뜻.
+ */
+export function carveRadiusFromImpact({ impulse, effectiveMass, material, hullArea }) {
+  if (!material || !(effectiveMass > 0)) return 0;
+  const energy = (impulse * impulse) / (2 * effectiveMass);
+  const over = energy - material.impactThreshold;
+  if (!(over > 0)) return 0;
+
+  return Math.min(
+    Math.sqrt(over / material.toughness),
+    material.maxCarveRadius ?? Infinity,                        // §7.4 철 = "함몰만"
+    Math.sqrt(Math.max(hullArea, 0)) * DAMAGE_TUNING.maxCarveOfHull,
+  );
+}
+
+/**
+ * 두 강체의 환산질량. static(질량 0) 상대면 동적 쪽 질량이 그대로 μ 가 된다
+ * (무한 질량과의 환산질량 극한).
+ */
+export function reducedMass(massA, massB) {
+  if (!(massA > 0)) return massB;
+  if (!(massB > 0)) return massA;
+  return (massA * massB) / (massA + massB);
+}
