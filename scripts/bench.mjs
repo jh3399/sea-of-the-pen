@@ -1314,6 +1314,158 @@ for (let i = 0; i < 600; i++) {
 check('20회 차감 후에도 10초간 시뮬레이션이 안정적', postOk,
   `${bodies.length}개 조각 · 좌표 유한성 유지`);
 
+// ─────────────────────────────────────────────── D3 ① 파손이 거동으로 읽히는가
+//
+// D3 통과 질문 (a): "HP바 없이 **거동 변화만으로** 자기 배의 피해 상태를 인지하는가."
+// 최종 판정은 사람이 몰아 보고 해야 하지만, 그 **전제**는 여기서 잰다 —
+// 깎인 형상이 실제로 조종 특성을 바꾸는가.
+//
+// ★ 지금 코드가 이걸 못 지키는 이유: `main.js` 의 연소 파괴는 **무게중심에서** 깎는데,
+//   그 원이 선체 안쪽이면 clipper 결과가 hole 이 되어 `outline` 이 그대로 남는다.
+//   `projectedExtent` 로 뽑는 length·beam 이 안 변하니 저항 타원도 안 변한다.
+console.log('\n\x1b[36m▌D3 ① — 파손이 거동으로 읽히는가 (통과 질문 a 의 전제)\x1b[0m\n');
+
+/**
+ * 선체를 한 번 깎고 나서 **같은 입력**(양쪽 고르게 젓기)으로 몰아 본다.
+ *
+ * 20초를 도는 이유는 D1 에서 배운 그대로다 (CLAUDE.md): 비대칭 선회는 각가속도가 작아
+ * 몇 초로는 회전 저항과 구분되지 않는다.
+ *
+ * @param {{x,y}|null} at 선체 로컬 차감 지점. null 이면 무손상 대조군.
+ */
+function driveAfterCarve(key, at, radius, seconds = 20) {
+  const { world, body } = spawn(key, { devices: true });
+  const before = body.getUserData().hull;
+  const area0 = before.params.area;
+  const beam0 = before.params.beam;
+
+  let fleet = [body];
+  if (at) {
+    const wp = body.getWorldPoint(new Vec2(at.x, at.y));
+    const out = applyImpact(world, body, { x: wp.x, y: wp.y }, radius);
+    fleet = out.bodies;
+  }
+  // 파편이 아니라 "그 배"의 거동을 본다 — 가장 큰 조각만 몬다.
+  const ship = fleet.sort((a, b) =>
+    b.getUserData().hull.params.area - a.getUserData().hull.params.area)[0];
+  if (!ship) return null;
+
+  const hull = ship.getUserData().hull;
+  // 두 노의 y 합 — 0 이 아니면 τ = −y·F 가 상쇄되지 않는다. 비대칭 창발의 단일 원인.
+  const oars = hull.items.filter((it) => it.type === 'oar');
+  const oarOffset = oars.reduce((s, it) => s + it.y, 0);
+
+  const row = cadence(BOTH);
+  let step = 0;
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => { applyDevices(ship, row(step++), dt); applyHydroToWorld(world, dt); },
+  });
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) s.advance(FIXED_DT);
+
+  return {
+    yaw: ship.getAngle() * 180 / Math.PI,
+    oarOffset,
+    areaLost: 1 - hull.params.area / area0,
+    beamChanged: Math.abs(hull.params.beam - beam0) > 1e-6,
+  };
+}
+
+// 대칭 선체를 골라야 한다 — 애초에 비대칭인 배를 쓰면 파손 때문인지 형상 때문인지 모른다.
+const CARVE_KEY = 'round';
+const carveOutline = hulls[CARVE_KEY].outline;
+const carveArea = paramTable[CARVE_KEY].p.area;
+/** §7 의 "한 번의 연소가 깎는 몫" — 선체 크기 비례 (고정 반경은 큰 배를 긁고 작은 배를 죽인다). */
+const CARVE_R = Math.sqrt(carveArea) * 0.30;
+const pickOutline = (score) => carveOutline.reduce((b, p) => (score(p) > score(b) ? p : b));
+
+const portPoint = pickOutline((p) => p.y);        // 좌현 현측 (+Y)
+const starPoint = pickOutline((p) => -p.y);       // 우현 현측 (−Y)
+const bowPoint = pickOutline((p) => p.x);         // 뱃머리 — 중심선 위라 대칭이 유지된다
+
+const intact = driveAfterCarve(CARVE_KEY, null, 0);
+const portCarved = driveAfterCarve(CARVE_KEY, portPoint, CARVE_R);
+const starCarved = driveAfterCarve(CARVE_KEY, starPoint, CARVE_R);
+const bowCarved = driveAfterCarve(CARVE_KEY, bowPoint, CARVE_R);
+
+console.log(`  차감 반경 ${CARVE_R.toFixed(2)} m (√면적 × 0.30) · 대칭 코퍼스 '${CORPUS_LABELS[CARVE_KEY] ?? CARVE_KEY}'`);
+console.log(`  ${pad('', 18)}${pad('20초 요잉', 12)}${pad('노 y 합', 11)}${pad('면적 손실', 11)}선폭 변화`);
+for (const [label, r] of [['무손상 (대조군)', intact], ['좌현 차감', portCarved],
+  ['우현 차감', starCarved], ['뱃머리 차감', bowCarved]]) {
+  console.log(`  ${pad(label, 18)}${pad(num(r.yaw, 2, 7) + '°', 12)}` +
+    `${pad(num(r.oarOffset * 100, 2, 6) + ' cm', 11)}${pad(num(r.areaLost * 100, 1, 5) + '%', 11)}` +
+    `${r.beamChanged ? '있음' : '없음'}`);
+}
+
+// ⚠ 판정은 **무손상 대비**로 한다. 0 과 비교하면 안 된다 — 완전히 대칭인 코퍼스도 RDP
+//   단순화가 남긴 미세 비대칭(여기서는 노 y 합 0.8 cm)으로 20초에 십수 도를 돈다.
+//   그 노이즈를 기준선으로 두지 않으면 이 케이스가 무엇을 보증하는지 알 수 없다 (D2 의 교훈).
+const NOISE = Math.abs(intact.yaw);
+
+check('★ 한쪽 현측을 깎으면 같은 입력에 배가 돌기 시작한다 (통과 질문 a 의 전제)',
+  Math.abs(portCarved.yaw) > NOISE * 10 && Math.abs(portCarved.yaw) >= 90,
+  `무손상 ${intact.yaw.toFixed(2)}° → 좌현 차감 ${portCarved.yaw.toFixed(2)}° (${(Math.abs(portCarved.yaw) / NOISE).toFixed(0)}배)`);
+
+check('★ 대조군: 중심선 위를 같은 반경으로 깎으면 무손상과 같은 수준이다 (원인은 차감이 아니라 비대칭)',
+  bowCarved.areaLost > 0.01 && Math.abs(bowCarved.yaw) < NOISE * 2 + 5,
+  `뱃머리 차감 ${bowCarved.yaw.toFixed(2)}° vs 무손상 ${intact.yaw.toFixed(2)}° · 면적 −${(bowCarved.areaLost * 100).toFixed(1)}%`);
+
+check('깎인 쪽이 선회 부호를 정한다 (좌현 차감과 우현 차감이 반대로 돈다)',
+  Math.sign(portCarved.yaw) === -Math.sign(starCarved.yaw)
+    && Math.abs(starCarved.yaw) > NOISE * 10,
+  `좌현 ${portCarved.yaw.toFixed(2)}° vs 우현 ${starCarved.yaw.toFixed(2)}°`);
+
+// ★ 기전 자체를 직접 재는 케이스 — 요잉은 끝단 관측이라 노이즈가 섞이지만 노 y 합은 안 섞인다.
+check('비대칭 선회의 단일 원인은 두 노의 y 합이다 (조향 코드 0줄 — τ = −y·F)',
+  Math.abs(portCarved.oarOffset) > 0.2 && Math.abs(bowCarved.oarOffset) < 0.02,
+  `현측 차감 ${(portCarved.oarOffset * 100).toFixed(1)} cm · 중심선 차감 ${(bowCarved.oarOffset * 100).toFixed(2)} cm · ` +
+  `무손상 ${(intact.oarOffset * 100).toFixed(2)} cm`);
+
+// ── 연소 파괴는 **가장 뜨거운 쪽**을 깎아야 한다 ──────────────────────────────
+//
+// 무게중심을 깎으면 열원이 어디 있든 같은 자리가 사라져 "어느 쪽이 탔는가"라는 정보가
+// 통째로 버려진다 (원칙 3 위반). 지점은 **외곽선 위**여야 outline 이 실제로 바뀐다.
+let hotspot = null;
+try {
+  hotspot = await import('../src/damage/hotspot.js');
+} catch {
+  // S1 에서 만든다. 없으면 아래 두 케이스가 FAIL 로 남아 판정선 노릇을 한다.
+}
+
+const hotFields = createFields({
+  temperature: [{ shape: 'disc', x: 0, y: 12, radius: 20, falloff: 0.35, value: 380 }],
+});
+const flatFields = createFields({});
+const identity = (x, y) => ({ x, y });
+const sampleWith = (fields) => (x, y) => fields.sampleScalar('temperature', x, y);
+
+const hotPick = hotspot
+  ? hotspot.hottestOutlinePoint(carveOutline, identity, sampleWith(hotFields))
+  : null;
+const flatPick = hotspot
+  ? hotspot.hottestOutlinePoint(carveOutline, identity, sampleWith(flatFields))
+  : null;
+const exposed = hotspot ? hotspot.mostExposedPoint(carveOutline) : null;
+const maxReach = Math.max(...carveOutline.map((p) => Math.hypot(p.x, p.y)));
+
+if (hotPick) {
+  console.log(`\n  열원 +Y 12 m — 가장 뜨거운 외곽점 (${hotPick.local.x.toFixed(2)}, ` +
+    `${hotPick.local.y.toFixed(2)}) · ${hotPick.value.toFixed(0)}° · 구배 ${hotPick.spread.toFixed(1)}°`);
+  console.log(`  필드 평평 — 구배 ${flatPick.spread.toFixed(3)}° · ` +
+    `가장 돌출한 점 반경 ${Math.hypot(exposed.x, exposed.y).toFixed(2)} / 최대 ${maxReach.toFixed(2)} m`);
+} else {
+  console.log('\n  src/damage/hotspot.js 없음 — S1 에서 만든다');
+}
+
+check('★ 연소 파괴는 가장 뜨거운 쪽을 깎는다 (열원 쪽 외곽선 위)',
+  !!hotPick && hotPick.local.y > 0 && hotPick.spread > 1e-3
+    && carveOutline.some((p) => p.x === hotPick.local.x && p.y === hotPick.local.y),
+  hotPick ? `로컬 y ${hotPick.local.y.toFixed(2)} m · 구배 ${hotPick.spread.toFixed(1)}°` : 'hotspot.js 미구현');
+
+check('필드가 평평하면 가장 돌출한 부위를 깎는다 (§2.2 "뾰족한 돌출부에 데미지 집중")',
+  !!exposed && flatPick?.spread < 1e-3
+    && Math.abs(Math.hypot(exposed.x, exposed.y) - maxReach) < 1e-9,
+  exposed ? `반경 ${Math.hypot(exposed.x, exposed.y).toFixed(3)} = 최대 ${maxReach.toFixed(3)} m` : 'hotspot.js 미구현');
+
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
   'D2 "배치에서 조향이 창발하는가?"\x1b[0m\n');
