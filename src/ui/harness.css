@@ -147,6 +147,35 @@ body[data-mode='sail'] #stage { cursor: pointer; }
   font-size: 12px;
 }
 
+/* 노 튜닝 패널 — 몰면서 바로 돌려 보라고 화면 왼쪽에 따로 세운다. */
+.tuner {
+  position: fixed;
+  top: 58px;
+  left: 12px;
+  width: 260px;
+  padding: 10px 12px;
+  background: rgba(8, 20, 32, 0.88);
+  border: 2px solid rgba(240, 201, 135, 0.25);
+}
+
+.tuner .t-row { padding: 5px 0 2px; font-size: 12px; }
+.tuner .t-head { display: flex; justify-content: space-between; gap: 8px; }
+.tuner .t-head span { opacity: 0.72; }
+.tuner .t-head b { color: var(--cyan); font-weight: normal; }
+.tuner .t-note { opacity: 0.42; font-size: 11px; margin-top: 1px; }
+.tuner .btn { width: 100%; margin-top: 8px; }
+
+.tuner input[type='range'] {
+  width: 100%;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+@media (max-width: 1180px) {
+  .tuner { display: none; }
+}
+
 .metrics {
   position: fixed;
   bottom: 44px;

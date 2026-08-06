@@ -12,7 +12,9 @@ import { createFields } from './field/field.js';
 import { createRuleEngine, loadRules } from './rules/engine.js';
 import ZONES from './field/zones.json';
 import RULE_TABLE from './rules/table.json';
-import { applyDevices, strokesFromKey, strokeProgress, DEVICE_TUNING } from './physics/devices.js';
+import {
+  applyDevices, strokesFromKey, strokeProgress, strokeGate, estimateOarTerminal, DEVICE_TUNING,
+} from './physics/devices.js';
 import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
 import { defaultDevices, sideAnchors } from './items/defaults.js';
@@ -44,6 +46,41 @@ const LIVE_PREVIEW_EVERY = 15;
 const DRAFT_GAUGE_MAX = 1.0;
 /** 트리거로 쓰는 키 코드 — 부스터 바인딩 풀(A~H)과 키 조타(Q/E). T·C 는 하니스 단축키다. */
 const TRIGGER_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyQ', 'KeyE']);
+/**
+ * ★ 노 튜닝 슬라이더 (§5.2 "밸런싱 중 항상 정답이 나오면 약점을 추가한다").
+ *
+ * DEVICE_TUNING 을 직접 쓴다. 예측 궤적선도 벤치도 같은 객체를 읽으므로, 슬라이더를 돌리면
+ * 물리·예측·계측이 한꺼번에 따라온다 — 튜닝을 한 곳에 모아 둔 것의 배당금이다.
+ *
+ * "젓는 속도"는 봉투 길이가 아니라 **회/s** 로 노출한다. 쿨다운이 0 인 지금은 최대 케이던스가
+ * 곧 1/봉투길이라, 플레이어가 실제로 조절하고 싶은 양은 이쪽이다.
+ */
+const OAR_SLIDERS = [
+  {
+    key: 'rate', label: '젓는 속도', unit: '회/s', min: 1, max: 6, step: 0.1,
+    note: '빠를수록 짧고 촘촘하게 젓는다',
+    get: () => 1 / strokeGate(),
+    set: (v) => {
+      DEVICE_TUNING.oarStrokeDuration = Math.max(0.08, 1 / v - DEVICE_TUNING.oarStrokeCooldown);
+    },
+    fmt: (v) => v.toFixed(2),
+  },
+  {
+    key: 'peak', label: '젓는 힘', unit: 'N/m²', min: 100, max: 1600, step: 25,
+    note: '갑판 면적당 피크 추력 — 저속 가속을 지배한다',
+    get: () => DEVICE_TUNING.oarStrokePeak,
+    set: (v) => { DEVICE_TUNING.oarStrokePeak = v; },
+    fmt: (v) => v.toFixed(0),
+  },
+  {
+    key: 'max', label: '한계 속도', unit: 'm/s', min: 2, max: 12, step: 0.2,
+    note: '노깃의 스트로크 속도 — 여기 닿으면 추력이 0',
+    get: () => DEVICE_TUNING.oarMaxSpeed,
+    set: (v) => { DEVICE_TUNING.oarMaxSpeed = v; },
+    fmt: (v) => v.toFixed(1),
+  },
+];
+
 /** 부착 시 고를 수 있는 방향 (§4.1 의 "방향"). 라디안, +X = 뱃머리. */
 const ATTACH_ANGLES = [
   { label: '앞으로 ↑', value: 0 },
@@ -179,6 +216,8 @@ class Harness {
     };
     document.getElementById('btn-detach').onclick = () => this.clearAttached();
 
+    this.bindTuner();
+
     // 환경 존 (§6.1) · 선체 재질 (§3) — 둘 다 데이터 선택일 뿐이다.
     const zoneSel = document.getElementById('zone');
     for (const [key, zone] of Object.entries(ZONES.zones)) {
@@ -210,6 +249,77 @@ class Harness {
     document.getElementById('btn-compare').onclick = () => this.enterCompare();
     document.getElementById('btn-stress').onclick = () => this.startStress();
     document.getElementById('btn-clear-worst').onclick = () => this.metrics.resetWorst();
+  }
+
+  /** 노 튜닝 슬라이더를 세운다. 값은 DEVICE_TUNING 에 바로 쓴다 — 다음 물리 스텝부터 반영. */
+  bindTuner() {
+    // 기본값은 처음 한 번만 떠 둔다. 슬라이더가 원본을 덮어쓰기 전에 잡아야 한다.
+    this.tunerDefaults = OAR_SLIDERS.map((s) => s.get());
+
+    const host = document.getElementById('tuner-rows');
+    this.tunerInputs = OAR_SLIDERS.map((spec, i) => {
+      const row = document.createElement('div');
+      row.className = 't-row';
+      row.innerHTML = `<div class="t-head"><span>${spec.label}</span>` +
+        `<b id="tuner-v-${spec.key}"></b></div>` +
+        `<div class="t-note">${spec.note}</div>`;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(spec.min);
+      input.max = String(spec.max);
+      input.step = String(spec.step);
+      input.value = String(this.tunerDefaults[i]);
+      input.oninput = () => {
+        spec.set(Number(input.value));
+        this.refreshTuner();
+      };
+      row.appendChild(input);
+      host.appendChild(row);
+      return input;
+    });
+
+    document.getElementById('btn-tuner-reset').onclick = () => {
+      OAR_SLIDERS.forEach((spec, i) => spec.set(this.tunerDefaults[i]));
+      this.syncTunerInputs();
+      this.refreshTuner();
+      this.setStatus('노 튜닝을 기본값으로 되돌렸습니다.', '');
+    };
+
+    this.syncTunerInputs();
+    this.refreshTuner();
+  }
+
+  /** 슬라이더 손잡이를 현재 DEVICE_TUNING 값에 맞춘다 (리셋·외부 변경 후). */
+  syncTunerInputs() {
+    OAR_SLIDERS.forEach((spec, i) => { this.tunerInputs[i].value = String(spec.get()); });
+  }
+
+  /**
+   * 숫자 표시 갱신. **예상 종단 속도를 같이 띄우는 게 핵심**이다 — 60초 몰아보지 않고도
+   * "이 설정이면 얼마나 빠른가"를 알 수 있어야 노브를 감으로 돌릴 수 있다.
+   */
+  refreshTuner() {
+    for (const spec of OAR_SLIDERS) {
+      document.getElementById(`tuner-v-${spec.key}`).textContent =
+        `${spec.fmt(spec.get())} ${spec.unit}`;
+    }
+    document.getElementById('tuner-cadence').textContent =
+      `${(1 / strokeGate()).toFixed(2)} 회/s (봉투 ${DEVICE_TUNING.oarStrokeDuration.toFixed(2)}s)`;
+
+    const params = [...this.bodies][0]?.getUserData().hull.params ?? this.previewCache();
+    const v = params ? estimateOarTerminal(params) : 0;
+    document.getElementById('tuner-terminal').textContent = params
+      ? `${v.toFixed(2)} m/s` : '선체 없음';
+
+    // 패널의 "종단 N m/s 이하" 문구도 같은 값을 봐야 한다.
+    if (this.design || this.bodies.size) this.renderParamsFromCurrent();
+  }
+
+  /** 지금 화면이 무엇이든 그에 맞는 파라미터로 패널을 다시 그린다. */
+  renderParamsFromCurrent() {
+    if (this.compare) return; // 비교 표는 자기 주기로 갱신된다
+    if (this.mode === 'sail') this.renderParamsFromBodies();
+    else this.renderParams(this.previewCache(), this.design);
   }
 
   onKey(e, down) {
@@ -281,6 +391,7 @@ class Harness {
       : `선체 확정 — 정점 ${result.diagnostics.verts}개${warn}`, warn ? 'warn' : 'ok');
     document.getElementById('btn-sail').disabled = false;
     this.renderParams(this.previewCache(), result);
+    this.refreshTuner();
   }
 
   // ------------------------------------------------------- 필드 · 규칙 (§6)
@@ -448,6 +559,7 @@ class Harness {
     this.setStatus('↑ 양쪽 젓기 · ← → 한쪽만 젓기(선회) · ↓ 역젓기 · Space 닻 · ' +
       'T 궤적선 · 선체 클릭 = 그 지점 차감', 'ok');
     this.renderParams(body.getUserData().hull.params, this.design);
+    this.refreshTuner(); // 예상 종단은 선체 저항에 달렸다 — 배가 바뀌면 다시 잰다
   }
 
   /**
@@ -483,6 +595,7 @@ class Harness {
     document.body.dataset.mode = 'sail';
     this.setStatus(`세 척 동시 주행 — 같은 입력, 다른 형상. ↑ 를 리듬 있게 두드려 ` +
       `가속과 활공의 차이를, 그다음 ← 로 선회 반경 차를 보세요.`, 'ok');
+    this.refreshTuner();
   }
 
   // ------------------------------------------------------- 장치 · 저항
@@ -1063,9 +1176,13 @@ class Harness {
           : '<div class="p-row"><span>노 중점 어긋남</span><b>0 — 대칭, 직진</b></div>')
       : '';
 
-    const cadence = 1 / (DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown);
-    return `<div class="p-sep">기본 장치 (§5.1) · 최대 ${cadence.toFixed(1)}회/s · ` +
-      `종단 ${DEVICE_TUNING.oarMaxSpeed} m/s 이하</div>${rows}${emergent}`;
+    const params = this.mode === 'sail'
+      ? [...this.bodies][0]?.getUserData().hull.params
+      : this.previewCache();
+    const terminal = params ? estimateOarTerminal(params) : 0;
+    return `<div class="p-sep">기본 장치 (§5.1) · ${(1 / strokeGate()).toFixed(1)}회/s · ` +
+      `종단 ${terminal.toFixed(2)} / 한계 ${DEVICE_TUNING.oarMaxSpeed.toFixed(1)} m/s</div>` +
+      `${rows}${emergent}`;
   }
 
   /**

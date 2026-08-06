@@ -494,12 +494,17 @@ check('★ 역젓기는 감쇠를 받지 않는다 — 빠를수록 물을 더 �
 // ⚠ "고속에서 노가 죽는다"는 **앞으로 젓기에만** 해당한다. 역젓기는 along = u·dir 이 음수라
 //   감쇠를 받지 않으므로 고속에서도 만력이다 — 그래서 노는 빠를 때 브레이크이자 역방향
 //   조향 수단이 된다. 조건 분기가 아니라 부호 하나에서 나온다.
-const fastOar = drive('sloop', cadence(['port']), { seconds: 2, v: { x: 5.0, y: 0 } });
-const fastAstern = drive('sloop', cadence(['port'], { dir: -1 }), { seconds: 2, v: { x: 5.0, y: 0 } });
-const fastCoast = drive('sloop', EMPTY_INPUT, { seconds: 2, v: { x: 5.0, y: 0 } });
-const fastHelm = drive('sloop', { steer: 1 }, { seconds: 2, v: { x: 5.0, y: 0 }, rudder: true });
+// ⚠ 시험 속도를 절대값으로 박으면 안 된다. 한계 속도는 튜닝 슬라이더로 움직이는 값이라,
+//   5 m/s 로 고정해 두면 노브를 올리는 순간 시험 속도가 벽 아래로 내려가 회귀가 조용히
+//   의미를 잃는다. 케이던스 회귀와 같은 교훈이다 — **설계 상수에 상대적으로** 잰다.
+const FAST = M * 1.4;
+const fastOar = drive('sloop', cadence(['port']), { seconds: 2, v: { x: FAST, y: 0 } });
+const fastAstern = drive('sloop', cadence(['port'], { dir: -1 }), { seconds: 2, v: { x: FAST, y: 0 } });
+const fastCoast = drive('sloop', EMPTY_INPUT, { seconds: 2, v: { x: FAST, y: 0 } });
+const fastHelm = drive('sloop', { steer: 1 }, { seconds: 2, v: { x: FAST, y: 0 }, rudder: true });
 const speedOf = (r) => r.body.getLinearVelocity().x;
-console.log(`  고속(5 m/s) 2초 — 앞으로 젓기 ${fastOar.turned.toFixed(2)}° (${speedOf(fastOar).toFixed(2)} m/s) · ` +
+console.log(`  고속(${FAST.toFixed(1)} m/s = 한계 ×1.4) 2초 — ` +
+  `앞으로 젓기 ${fastOar.turned.toFixed(2)}° (${speedOf(fastOar).toFixed(2)} m/s) · ` +
   `역젓기 ${fastAstern.turned.toFixed(2)}° (${speedOf(fastAstern).toFixed(2)} m/s) · ` +
   `무입력 ${fastCoast.turned.toFixed(2)}° (${speedOf(fastCoast).toFixed(2)} m/s) · ` +
   `키 ${fastHelm.turned.toFixed(2)}°`);
@@ -1092,6 +1097,33 @@ check('★ 역풍에서는 돛이 페널티가 된다 (D3 2장 "1장의 정답�
 check('★ 철배의 천 돛은 화염에 탄다 — 아이템도 규칙표의 예외가 아니다 (§4.4)',
   sailBurns.alive && !sailBurns.items.includes('sail'),
   `선체 ${sailBurns.alive ? '생존' : '파괴'} · 남은 아이템 [${sailBurns.items.join(',')}]`);
+
+// ── §5.2 원칙 1 점검: 기본 장치가 아이템을 이기면 안 된다 ─────────────────────
+//
+// "기본 장치만으로 어떤 맵도 클리어 불가"가 성립하려면, 노만 저어서 가는 속도가 아이템을
+// 붙여서 가는 속도보다 낮아야 한다. 노 튜닝 슬라이더를 올리면 여기가 제일 먼저 깨진다 —
+// 그래서 수치를 표로 찍는다. 밸런싱 중 "항상 정답"이 나오면 즉시 약점을 추가하라는 원칙 2 의
+// 감시 지점이기도 하다.
+const oarOnly = drive('sloop', cadence(BOTH), { seconds: 60 }).speed;
+const sailOnly = voyage({
+  zone: 'following', material: 'wood', seconds: 60, row: false, attach: [sailAt(0, 0, 0)],
+}).body.getLinearVelocity().length();
+const boosterOnly = drive('sloop', fire('KeyA'), {
+  seconds: 60, attach: [booster(BOOST_X, 0, 0)],
+}).speed;
+console.log(`  추진 수단별 종단 — 기본 노 ${oarOnly.toFixed(2)} · ` +
+  `돛(순풍 해협) ${sailOnly.toFixed(2)} · 부스터 ${boosterOnly.toFixed(2)} m/s`);
+check('기본 노는 부스터보다 느리다 (§5.2 원칙 1 "기본 장치만으로 클리어 불가")',
+  oarOnly < boosterOnly * 0.75,
+  `노 ${oarOnly.toFixed(2)} < 부스터 ${boosterOnly.toFixed(2)} m/s × 0.75`);
+if (oarOnly >= sailOnly) {
+  console.log(`  \x1b[33m⚠ 기본 노가 순풍의 돛보다 빠르다 (${oarOnly.toFixed(2)} ≥ ${sailOnly.toFixed(2)} m/s).\x1b[0m`);
+  console.log('    D3 1장 "천 + 바람 = 추력, 큰 돛이 정답"이 성립하지 않는다. 노 튜닝을 낮추거나,');
+  console.log('    돛 면적·풍속을 올리거나, 1장을 노가 통하지 않는 맵으로 설계해야 한다.');
+}
+check('D3 1장이 성립한다: 순풍에서 돛이 기본 노보다 빠르다 (천 + 바람 = 추력이 정답)',
+  sailOnly > oarOnly,
+  `돛 ${sailOnly.toFixed(2)} vs 노 ${oarOnly.toFixed(2)} m/s`);
 
 // ─────────────────────────────────────────────── 스파이크 ② 불리언 차감
 console.log('\n\x1b[36m▌스파이크 ② — 폴리곤 차감 · 절단 분리\x1b[0m\n');

@@ -50,7 +50,7 @@ export const DEVICE_TUNING = {
    * 이 값을 건드리면 종단 속도가 움직이고, 종단 속도는 §6 화산대 통과 타이밍(가설 C)의
    * 전제다. 바꾼 뒤에는 반드시 `npm run bench` 로 젖은 나무배 케이스를 다시 봐야 한다.
    */
-  oarStrokePeak: 400,
+  oarStrokePeak: 800,
   /**
    * 노깃의 스트로크 속도 (m/s). 배가 이만큼 빨라지면 노깃이 더 이상 물을 뒤로 밀지 못해
    * 추력이 0 이 된다 — 프로펠러의 전진비 한계와 같은 이야기다.
@@ -58,7 +58,7 @@ export const DEVICE_TUNING = {
    * ⚠ "배의 최고 속도"가 아니다. 노만으로는 종단이 2.9 m/s 라 여기에 점근적으로만 다가간다.
    * 이 벽에 실제로 닿는 것은 부스터·돛·해류에 실려 갈 때다 (그때 노는 가속을 못 한다).
    */
-  oarMaxSpeed: 3.6,
+  oarMaxSpeed: 6.0,
   /** 역젓기는 더 약하다. */
   oarReverseScale: 0.45,
 
@@ -198,6 +198,30 @@ export function strokeProgress(control, side) {
   const s = control?.strokes?.[side];
   if (!s) return 0;
   return strokeEnvelope(s.t);
+}
+
+/**
+ * 진단용 — 최대 케이던스로 계속 저을 때의 종단 속도 추정치 (m/s).
+ *
+ * 균형식: `peak × area × mean(env) × duty × 2자루 × falloff(v) = drag.x × v²`.
+ * sin² 봉투의 시간 평균이 0.5 라 노 둘의 duty 1.0 기준 좌변이 `peak × area × falloff(v)` 로
+ * 깔끔하게 정리된다. falloff 가 4차라 해석해 대신 이분법으로 푼다 — UI 한 줄 값이라 충분하다.
+ *
+ * 튜닝 슬라이더가 이 값을 실시간으로 띄운다. 60초 몰아보지 않고도 "이 설정이면 얼마나
+ * 빠른가"를 알 수 있어야 노브를 감으로 돌릴 수 있다. 실측과 1% 안쪽으로 맞는다.
+ */
+export function estimateOarTerminal(params) {
+  if (!params?.area || !(params.drag?.x > 0)) return 0;
+  const supply = (v) => DEVICE_TUNING.oarStrokePeak * params.area * oarFalloff(v);
+  const demand = (v) => params.drag.x * v * v;
+  let lo = 0;
+  let hi = DEVICE_TUNING.oarMaxSpeed;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (supply(mid) > demand(mid)) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 /**
