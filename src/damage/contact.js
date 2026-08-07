@@ -120,6 +120,9 @@ export function installImpactListener(world, clock) {
           effectiveMass: mu,
           material: hull.params.material,
           hullArea: hull.params.area,
+          // 발사체만 자기 총 에너지를 알고 다닌다 → 재질별 입사각 감쇠가 걸린다.
+          // 암초·선체끼리는 `E_총` 을 모르므로 법선분 그대로 (= deflection 1 과 같다).
+          strikeEnergy: acc.shot ? acc.shot.strikeEnergy : null,
         });
         // 임계 아래는 **큐에 넣지도 않는다.** 넣으면 형상은 그대로인데 재구성 비용만 나간다.
         if (radius < DAMAGE_TUNING.minCarveRadius) continue;

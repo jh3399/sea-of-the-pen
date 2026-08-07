@@ -2083,6 +2083,75 @@ check('★ 철 선체는 포탄에 함몰만 한다 (§7.4 — 대포알에 함�
     && ironShelled.removed < shelled.removed / 4 && !ironShelled.split,
   `나무 −${(shelled.removed * 100).toFixed(1)}% vs 철 −${(ironShelled.removed * 100).toFixed(2)}%`);
 
+// ── ★ 입사각 감쇠는 **재질이 정한다** (`MATERIALS[m].deflection`) ─────────────────
+//
+// 접촉의 법선 임펄스는 그 자체로 `E_총 × cos²(입사각)` 이라, 노브가 없으면 **모든 재질이
+// 경사 장갑을 공짜로 얻는다** — 나무배도 45°로 맞으면 절반을 튕겨 낸다. 그건 틀렸다.
+// 경사 장갑은 매끄럽고 질긴 강판의 성질이고, 나무는 빗맞아도 섬유가 쪼개지며 뚫린다.
+//
+// 입사각을 **정확히** 통제하려고 직사각형 선체를 쓴다. 코퍼스는 RDP 로 단순화된 다각형이라
+// 국소 법선이 매끄럽지 않아, 오프셋을 훑는 방식으로는 각도와 꼭짓점 효과가 섞인다.
+const PLATE = [{ x: -4, y: -2 }, { x: 4, y: -2 }, { x: 4, y: 2 }, { x: -4, y: 2 }];
+
+/** 판때기를 thetaDeg 만큼 돌려 놓고 +X 로 한 발 쏜다. θ=45° 면 입사각도 정확히 45°. */
+function obliqueShot(material, thetaDeg) {
+  const world = createWorld();
+  const body = createHullBody(world, { outline: PLATE, holes: [], items: [] },
+    { position: { x: 0, y: 0 }, angle: thetaDeg * Math.PI / 180, material, extraMass: 0 });
+  const area0 = body.getUserData().hull.params.area;
+  installProjectileContacts(world);
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  spawnProjectile(world, {
+    x: -25, y: 0, angle: 0, speed: TURRET_TUNING.speed,
+    radius: TURRET_TUNING.projectileRadius, mass: TURRET_TUNING.mass,
+    material: 'iron', bornAt: 0, lifetime: 4,
+  });
+  const s = new FixedStepper(world, {});
+  for (let i = 0; i < 120; i++) {
+    s.advance(FIXED_DT);
+    elapsed += FIXED_DT;
+    for (const im of queue.drain()) {
+      const out = applyImpact(world, im.body, im.at, im.radius);
+      return { radius: im.radius, removed: out ? out.result.removedArea / area0 : 0 };
+    }
+  }
+  return { radius: 0, removed: 0 };   // 튕겨 나갔다 (임계·최소 반경 미달)
+}
+
+const plate = {
+  woodHead: obliqueShot('wood', 0), woodTilt: obliqueShot('wood', 45),
+  ironHead: obliqueShot('iron', 0), ironTilt: obliqueShot('iron', 45),
+};
+console.log(`  8×4 판때기에 한 발 — 나무 정타 ${plate.woodHead.radius.toFixed(3)} m / 45° ` +
+  `${plate.woodTilt.radius.toFixed(3)} m · 철 정타 ${plate.ironHead.radius.toFixed(3)} m / 45° ` +
+  `${plate.ironTilt.radius.toFixed(3)} m`);
+
+// A/B 의 짝. 둘을 **같이** 봐야 "각도가 무의미해졌다"와 "각도가 전부다"를 구분한다.
+check('★ 나무는 빗맞아도 뚫린다 (각도로 도망칠 수 없는 것이 나무의 약점이다)',
+  plate.woodTilt.radius > 0 && plate.woodTilt.radius > plate.woodHead.radius * 0.6,
+  `45° 반경 ${plate.woodTilt.radius.toFixed(3)} m = 정타의 ` +
+  `${(plate.woodTilt.radius / plate.woodHead.radius * 100).toFixed(0)}%`);
+
+check('★ 철은 빗맞으면 미끄러진다 — 경사 장갑 (비스듬히 몰면 조선이 곧 방어다)',
+  plate.ironHead.radius > 0 && plate.ironTilt.radius === 0,
+  `정타 ${plate.ironHead.radius.toFixed(3)} m → 45° 무해`);
+
+check('감쇠 노브의 방향이 뒤집히지 않는다 (나무 < 철)',
+  MATERIALS.wood.deflection < MATERIALS.iron.deflection && MATERIALS.iron.deflection === 1,
+  `나무 ${MATERIALS.wood.deflection} < 철 ${MATERIALS.iron.deflection}`);
+
+// ★ 감쇠 노브가 **정타를 건드리면 안 된다.** 건드리면 D3 ② 의 암초 밸런스와 위 명중 수치가
+//   통째로 흔들린다. 정타에서는 법선분이 곧 총 에너지라 되돌려 줄 접선분이 0 이다.
+const headOnUnaffected = carveRadiusFromImpact({
+  impulse: 690, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
+}) === carveRadiusFromImpact({
+  impulse: 690, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
+  strikeEnergy: 0.5 * TURRET_TUNING.mass * TURRET_TUNING.speed ** 2,
+});
+check('입사각 감쇠는 정타를 건드리지 않는다 (기존 암초·정타 밸런스가 그대로여야 한다)',
+  headOnUnaffected, '법선분 ≥ 총 에너지면 되돌려 줄 접선분이 0');
+
 // ★★ 핸드오프가 요구한 「포탑은 자기 탄에 안 맞는다」는 **동어반복이라 쓰지 않는다.**
 //    포탑 몸체는 createObstacle 산물이라 hull userData 가 없고 contact.js 가 무조건 먼저
 //    빠지므로, 그 시험은 **총구 오프셋이 0 이어도 통과한다.** 실제 위험은 정반대 방향이다:

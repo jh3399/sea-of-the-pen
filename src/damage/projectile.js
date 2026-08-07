@@ -76,6 +76,12 @@ export function spawnProjectile(world, req) {
       bornAt,
       expiresAt: bornAt + lifetime,
       material, mass, radius, speed,
+      /**
+       * 이 탄이 **가지고 있는** 총 운동에너지 (J). `carveRadiusFromImpact` 의 입사각 감쇠가
+       * 이 값을 쓴다 — 솔버가 주는 것은 법선분뿐이라 흘려보낸 접선분을 알 길이 없다.
+       * 항력이 0 이라 속력이 안 변하므로 태어날 때 한 번 재면 끝까지 정확하다.
+       */
+      strikeEnergy: 0.5 * mass * speed * speed,
       /** 임무를 마쳤는가. `installProjectileContacts` 가 찍고 `cullProjectiles` 가 치운다. */
       spent: false,
       turret: req.turret ?? null,

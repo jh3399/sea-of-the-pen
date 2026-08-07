@@ -60,21 +60,34 @@ export const HYDRO_TUNING = {
  *   상쇄돼 결국 나무와 비슷하게 깎인다. §7.4 의 "고내구(대포알에 함몰만, 관통 어려움)"를
  *   표현하는 항은 **캡 하나뿐**이다.
  *
- * 원칙 2 점검 — 철은 내구가 강점이고 areaDensity 900(무게·흘수)이 이미 약점이다.
- * 천은 최저 밀도가 강점이고 스치기만 해도 찢어지는 것이 그 대가다.
+ * - `deflection` (0~1) — 빗맞은 충격을 얼마나 흘려보내는가. **경사 장갑의 노브다.**
+ *
+ *   접촉의 법선 임펄스는 그 자체로 `E_총 × cos²(입사각)` 이라, 이 항이 없으면 **모든 재질이
+ *   경사 장갑을 공짜로 얻는다** — 나무배도 45°로 맞으면 절반을 튕겨 낸다. 그건 틀렸다.
+ *   경사 장갑은 매끄럽고 질긴 강판의 성질이고, 나무는 빗맞아도 섬유가 쪼개지며 뚫린다.
+ *   `damage/impact.js` 가 이 값으로 접선 성분을 되돌려 준다.
+ *
+ * 원칙 2 점검 — 철은 내구·경사 장갑이 강점이고 areaDensity 900(무게·흘수)이 이미 약점이다
+ * (흘수 3배 → 노 종단 4.66 → 2.69 m/s). 나무는 얕은 흘수가 강점이고, 각도로 도망칠 수 없어
+ * **맞으면 반드시 뚫리는 것**이 그 대가다. 천은 최저 밀도가 강점이고 스치기만 해도 찢어진다.
  */
 export const MATERIALS = {
   wood: {
     key: 'wood', name: '나무', areaDensity: 300, color: '#a8763e',
     impactThreshold: 8000, toughness: 40000, maxCarveRadius: null,
+    // 거의 안 흘린다. 빗맞아도 뚫린다 — 각도로 도망칠 수 없는 것이 나무의 약점이다.
+    deflection: 0.35,
   },
   iron: {
     key: 'iron', name: '철', areaDensity: 900, color: '#8892a0',
     impactThreshold: 15000, toughness: 200000, maxCarveRadius: 0.30,
+    // 완전한 경사 장갑. 비스듬히 몰면 포탄이 미끄러진다 — 조선(操船)이 곧 방어가 된다.
+    deflection: 1,
   },
   cloth: {
     key: 'cloth', name: '천', areaDensity: 40, color: '#e8dcc0',
     impactThreshold: 500, toughness: 5000, maxCarveRadius: null,
+    deflection: 0,   // 각도와 무관하게 찢어진다
   },
   /**
    * 암초. 선체 재질이 아니라 **장애물 재질**이라 흘수 계산에는 안 쓰인다.
@@ -84,6 +97,7 @@ export const MATERIALS = {
   rock: {
     key: 'rock', name: '암초', areaDensity: 2400, color: '#5a5f66',
     impactThreshold: Infinity, toughness: Infinity, maxCarveRadius: 0,
+    deflection: 1,   // 안 깎이므로 무의미 — 스키마를 비워 두지 않을 뿐이다
   },
 };
 

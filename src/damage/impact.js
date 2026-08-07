@@ -39,13 +39,33 @@ export function burnRadius(hullArea) {
  * 암초가 안 깎이는 것은 여기가 아니라 `applyImpact` 가 hull 없는 강체에 null 을 내는
  * 덕이다. 이 함수는 rock 의 무한대 임계로 한 번 더 막을 뿐이다.
  *
- * @param {{impulse:number, effectiveMass:number, material:object, hullArea:number}} p
+ * ★ **입사각 감쇠는 재질이 정한다** (`material.deflection`).
+ *
+ *   `J` 는 접촉의 **법선** 임펄스라 `E = J²/2μ` 는 이미 `E_총 × cos²(입사각)` 이다. 즉 아무것도
+ *   안 하면 **모든 재질이 경사 장갑을 공짜로 얻는다** — 나무배도 비스듬히 맞으면 튕겨 낸다.
+ *   그건 물리적으로 틀렸다. 경사 장갑은 매끄럽고 질긴 강판의 성질이고, 나무는 빗맞아도
+ *   섬유가 쪼개지며 뚫린다.
+ *
+ *   그래서 흘려보낸 접선 성분(`E_총 − E_법선`)을 재질에 따라 **되돌려 준다**:
+ *     `deflection 1` → 법선분만 (완전한 경사 장갑 — 철)
+ *     `deflection 0` → 전체 에너지 (입사각 무관 — 천)
+ *   `E_총` 을 모르는 충돌(암초·선체끼리)은 그대로 법선분만 쓴다. 발사체만 자기 질량·속력을
+ *   userData 에 들고 다녀서 `E_총` 이 정확히 알려져 있다 — 항력이 0 이라 속력이 안 변한다.
+ *
+ * @param {{impulse:number, effectiveMass:number, material:object, hullArea:number,
+ *          strikeEnergy?:number}} p
  *   effectiveMass 는 환산질량 μ. 상대가 static 이면 동적 쪽 질량이 곧 μ 다.
+ *   strikeEnergy 는 때린 쪽이 **가지고 있던** 총 운동에너지 (J). 모르면 생략한다.
  * @returns {number} 반경 (m). 0 이면 흠집도 안 났다는 뜻.
  */
-export function carveRadiusFromImpact({ impulse, effectiveMass, material, hullArea }) {
+export function carveRadiusFromImpact({
+  impulse, effectiveMass, material, hullArea, strikeEnergy = null,
+}) {
   if (!material || !(effectiveMass > 0)) return 0;
-  const energy = (impulse * impulse) / (2 * effectiveMass);
+  const normalEnergy = (impulse * impulse) / (2 * effectiveMass);
+  // 솔버가 낸 법선분이 총 에너지를 넘길 수 있어(측정: 20.0 vs 18.1 kJ) 음수로 새지 않게 막는다.
+  const glanced = strikeEnergy != null ? Math.max(0, strikeEnergy - normalEnergy) : 0;
+  const energy = normalEnergy + (1 - (material.deflection ?? 1)) * glanced;
   const over = energy - material.impactThreshold;
   if (!(over > 0)) return 0;
 
