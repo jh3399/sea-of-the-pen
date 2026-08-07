@@ -136,6 +136,24 @@ export function strokeToHull(rawPoints, options = {}) {
   };
 }
 
+/**
+ * 월드 좌표 → 선체 로컬 좌표. `strokeToHull` 이 낸 배치의 **역변환**이다
+ * (world = origin + R(angle)·local 이므로 local = R(−angle)·(world − origin)).
+ *
+ * 이 파일에 두는 이유는 CLAUDE.md 의 규약이다 — 캔버스는 Y-down, 물리 세계는 Y-up 이고
+ * 그 사이의 변환은 여기 한 곳에서만 한다. 아이템 부착점도 주인공의 자리도 같은 식을 쓴다.
+ *
+ * @param {{origin:{x,y}, angle:number}} placement strokeToHull 결과 (또는 같은 모양)
+ * @param {{x:number, y:number}} worldPoint
+ */
+export function toHullLocal(placement, worldPoint) {
+  const dx = worldPoint.x - placement.origin.x;
+  const dy = worldPoint.y - placement.origin.y;
+  const c = Math.cos(-placement.angle);
+  const s = Math.sin(-placement.angle);
+  return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
+
 function fail(reason, message, diag, t0) {
   diag.ms = performance.now() - t0;
   return { ok: false, reason, message, diagnostics: diag, warnings: diag.warnings };

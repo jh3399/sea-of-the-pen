@@ -33,7 +33,7 @@ export function carveHull(hull, brushes, options = {}) {
   const { outers, holes } = differencePolys(subject, brushes);
 
   // 구멍을 자신을 감싸는 가장 작은 외곽 링에 귀속시킨다.
-  const pieces = outers.map((outline) => ({ outline, holes: [], items: [] }));
+  const pieces = outers.map((outline) => ({ outline, holes: [], items: [], crew: null }));
   for (const hole of holes) {
     const owner = smallestContainer(pieces, hole[0]);
     if (owner) owner.holes.push(hole);
@@ -47,6 +47,15 @@ export function carveHull(hull, brushes, options = {}) {
     else droppedItems.push(item);
   }
 
+  // ★ 주인공도 **같은 판정**을 탄다 — 발밑의 조각을 타고 간다 (game/crew.js).
+  //   다른 것은 실패했을 때뿐이다: 아이템은 탈락이고 주인공은 물에 빠진 것이라 항해가 끝난다.
+  let crewLost = false;
+  if (hull.crew) {
+    const owner = smallestContainer(pieces, hull.crew);
+    if (owner) owner.crew = hull.crew;
+    else crewLost = true;
+  }
+
   // 최소 파편 크기 미만 소멸
   const kept = [];
   let droppedArea = 0;
@@ -56,6 +65,8 @@ export function carveHull(hull, brushes, options = {}) {
       droppedArea += netArea(piece);
       droppedPieces++;
       droppedItems.push(...piece.items);
+      // 발밑의 조각이 파편 하한에 못 미쳐 사라졌다 — 그 위에 서 있던 사람도 남지 않는다.
+      if (piece.crew) crewLost = true;
       continue;
     }
     kept.push(piece);
@@ -69,6 +80,8 @@ export function carveHull(hull, brushes, options = {}) {
     droppedPieces,
     droppedArea,
     droppedItems,
+    /** 주인공이 어느 조각에도 남지 못했는가 — 도착 판정의 주체를 잃었다는 뜻이다. */
+    crewLost,
     /** 조각이 둘 이상이면 절단 — 버그가 아니라 공식 기능(§7.3.3). */
     split: kept.length > 1,
     destroyed: kept.length === 0,

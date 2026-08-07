@@ -20,7 +20,7 @@ import { createHullBody } from './physics/body.js';
 import { defaultDevices, sideAnchors } from './items/defaults.js';
 import { attachItem, nextBind, itemsExtraMass, canAttachAt } from './items/attach.js';
 import { ITEM_CATALOG, ATTACHABLE, bindLabel } from './items/catalog.js';
-import { strokeToHull, HULL_DEFAULTS } from './hull/polygon.js';
+import { strokeToHull, toHullLocal, HULL_DEFAULTS } from './hull/polygon.js';
 import { computeHullParams, MATERIALS } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
 import { CORPUS, CORPUS_LABELS } from './hull/corpus.js';
@@ -31,6 +31,8 @@ import { installImpactListener, CONTACT_TUNING } from './damage/contact.js';
 import { spawnProjectile, cullProjectiles, installProjectileContacts } from './damage/projectile.js';
 import { createObstacle } from './physics/obstacle.js';
 import { createTurrets, TURRET_TUNING, MIN_PERIOD } from './game/turrets.js';
+import { CREW, crewWorldPoint, findCrewBody } from './game/crew.js';
+import { createGoal, goalDistance, goalReached } from './game/goal.js';
 import { fieldBehind } from './rules/provenance.js';
 import { View, drawSeaGrid, tracePolygon, traceOpenPath, fillPolygonWithHoles } from './render/view.js';
 import { Metrics } from './ui/metrics.js';
@@ -54,6 +56,12 @@ const COMPARE_SPACING = 14;
 const LIVE_PREVIEW_EVERY = 15;
 /** 흘수 게이지의 만수위 기준 (m). 나무 단일 재질이면 0.30 m 근처가 정상이다. */
 const DRAFT_GAUGE_MAX = 1.0;
+/**
+ * 도착 지점 — **맵 JSON 이 들어오기 전까지의 임시 배치다** (`startTurretDrill` 과 같은 처지).
+ * 출항 지점에서 뱃머리(+X) 방향으로 이만큼 앞. 값이 아니라 **판정 주체**가 요점이다:
+ * 이 원에 들어와야 하는 것은 선체가 아니라 주인공이다 (`game/goal.js`).
+ */
+const DEMO_GOAL = { x: 60, y: 0, radius: 5, label: '도착' };
 /** 트리거로 쓰는 키 코드 — 부스터 바인딩 풀(A~H)과 키 조타(Q/E). T·C 는 하니스 단축키다. */
 const TRIGGER_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyQ', 'KeyE']);
 /**
@@ -197,6 +205,9 @@ class Harness {
     this.attachAngle = 0;
     this.compare = false;
     this.showTrajectory = true;
+    /** 도착 지점 (맵 데이터). null 이면 클리어 조건이 없는 자유 항해다. */
+    this.goal = null;
+    this.cleared = false;
     this.stress = { remaining: 0, rng: null, samples: [] };
     this.lastFrame = performance.now();
     this.status = '선체를 그리세요 — 폐곡선 하나면 됩니다.';
@@ -224,7 +235,15 @@ class Harness {
     });
 
     this.bindUI();
-    window.addEventListener('resize', () => this.view.resize());
+    window.addEventListener('resize', () => {
+      this.view.resize();
+      // 주인공은 설계 화면의 **화면 한가운데**에 산다. 창 크기가 바뀌면 그 자리도 옮겨가므로
+      // 카메라를 다시 잡고, 이미 그린 선체가 여전히 그를 태우고 있는지 다시 본다.
+      if (this.mode === 'design') {
+        this.view.snapTo({ x: this.view.width / 2 / PPM, y: -this.view.height / 2 / PPM });
+        if (this.design?.ok) this.syncSailButton();
+      }
+    });
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     this.canvas.addEventListener('pointerdown', (e) => {
@@ -444,11 +463,24 @@ class Harness {
     }
 
     const warn = result.warnings.length ? ` · 경고: ${result.warnings.join(', ')}` : '';
+    // ★ 주인공을 태웠는가. 자기교차와 **같은 급의** 확정 조건이라 같은 자리에서 같은 즉시성으로
+    //   알린다 — 손이 아직 움직이는 동안 알아야 그리는 김에 고친다 (§2.3).
+    const aboard = this.syncSailButton();
+    if (!aboard) {
+      this.setStatus(options.live
+        ? `그리는 중 — 아직 주인공이 배 밖입니다 (면적 ${result.diagnostics.area.toFixed(1)} m²)`
+        : '주인공이 배 밖입니다 — 화면 한가운데의 그를 감싸도록 그려야 출항할 수 있습니다.',
+        'warn');
+      this.renderParams(this.previewCache(), result);
+      this.refreshTuner();
+      return;
+    }
+
     // §2.3 — 자기교차는 그리는 즉시 알려야 손이 아직 움직이는 동안 고칠 수 있다.
     this.setStatus(options.live
       ? `그리는 중 — 면적 ${result.diagnostics.area.toFixed(1)} m²${warn}`
-      : `선체 확정 — 정점 ${result.diagnostics.verts}개${warn}`, warn ? 'warn' : 'ok');
-    document.getElementById('btn-sail').disabled = false;
+      : `선체 확정 — 정점 ${result.diagnostics.verts}개 · 주인공 승선${warn}`,
+      warn ? 'warn' : 'ok');
     this.renderParams(this.previewCache(), result);
     this.refreshTuner();
   }
@@ -561,11 +593,7 @@ class Harness {
     const w = this.view.screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
 
     // 설계 화면은 선체를 원래 그린 자리(origin, angle)에 되돌려 그린다 — 그 변환의 역.
-    const dx = w.x - this.design.origin.x;
-    const dy = w.y - this.design.origin.y;
-    const c = Math.cos(-this.design.angle);
-    const s = Math.sin(-this.design.angle);
-    const local = { x: dx * c - dy * s, y: dx * s + dy * c };
+    const local = toHullLocal(this.design, w);
 
     // ★ 선체 밖에는 못 붙인다. §7.5 소속 폴리곤 판정이 "아이템은 선체 안에 있다"를 전제해서,
     //   밖에 붙은 것은 첫 파손에 그대로 탈락한다 (그 전까지는 팔길이만 늘어난 치트가 된다).
@@ -595,6 +623,44 @@ class Harness {
     this.renderParams(this.previewCache(), this.design);
   }
 
+  // ------------------------------------------------------- 주인공 (game/crew.js)
+
+  /**
+   * 설계 화면의 주인공 위치 — **언제나 화면 한가운데**다.
+   *
+   * 설계 모드의 카메라는 캔버스 좌상단을 원점으로 고정해 두므로(`enterDesign`), 화면 중앙의
+   * 월드 좌표는 곧 `view.center` 다. 배를 그 위에 그리는 것이지 그를 배 위로 옮기는 게 아니다 —
+   * 자리가 고정돼 있어야 "어디를 감쌀 것인가"가 형상 설계의 제약이 된다.
+   */
+  crewWorld() {
+    return { x: this.view.center.x, y: this.view.center.y };
+  }
+
+  /** 지금 확정된 선체 기준으로 본 주인공의 로컬 좌표. 선체가 없으면 null. */
+  crewLocal() {
+    return this.design?.ok ? toHullLocal(this.design, this.crewWorld()) : null;
+  }
+
+  /**
+   * 주인공이 갑판 위에 있는가.
+   *
+   * 판정은 `canAttachAt` 을 그대로 쓴다 — 아이템에 쓰는 것과 같은 함수여야 하는 이유가 있다.
+   * §7.5 의 소속 폴리곤 판정이 `pointInPolygon` 이므로, 선체 **밖**에 선 주인공은 첫 파손에
+   * 무조건 사라진다. 아이템에는 그것이 "떨어져 나갔다"지만 주인공에게는 "그 배는 처음부터
+   * 아무도 태우지 않았다"가 된다.
+   */
+  crewAboard() {
+    const local = this.crewLocal();
+    return !!local && canAttachAt(this.design.outline, [], local);
+  }
+
+  /** 출항 버튼은 **주인공을 태운 배에만** 열린다. */
+  syncSailButton() {
+    const ok = !!this.design?.ok && this.crewAboard();
+    document.getElementById('btn-sail').disabled = !ok;
+    return ok;
+  }
+
   // ------------------------------------------------------- 모드 전환
 
   enterDesign() {
@@ -603,6 +669,8 @@ class Harness {
     this.design = null;
     this.mode = 'design';
     this.compare = false;
+    this.goal = null;
+    this.cleared = false;
     this.liveMark = 0;
     this.stress.remaining = 0;
     this.attached = [];
@@ -615,7 +683,8 @@ class Harness {
     this.view.snapTo({ x: this.view.width / 2 / PPM, y: -this.view.height / 2 / PPM });
     document.getElementById('btn-sail').disabled = true;
     document.body.dataset.mode = 'design';
-    this.setStatus('선체를 그리세요 — 폐곡선 하나면 됩니다. (또는 코퍼스 불러오기 / C = 세 척 비교)');
+    this.setStatus('선체를 그리세요 — 화면 한가운데의 주인공을 감싸는 폐곡선 하나면 됩니다. ' +
+      '(또는 코퍼스 불러오기 / C = 세 척 비교)');
     this.renderParams(null, null);
   }
 
@@ -639,7 +708,8 @@ class Harness {
       .concat((placement.attached ?? []).map((it) => ({ ...it })));
     const body = createHullBody(
       this.world,
-      { outline, holes: [], items, tag: placement.tag ?? null },
+      // 주인공은 items 에 넣지 않는다 — 형식은 같아도 잃었을 때의 뜻이 다르다 (game/crew.js).
+      { outline, holes: [], items, crew: placement.crew ?? null, tag: placement.tag ?? null },
       {
         position: placement.position ?? { x: 0, y: 0 },
         angle: placement.angle ?? 0,
@@ -653,10 +723,17 @@ class Harness {
 
   enterSail() {
     if (!this.design?.ok) return;
+    // 주인공을 태우지 못한 배는 출항할 수 없다. 버튼은 이미 잠겨 있지만, 창 크기 변경처럼
+    // 버튼과 판정 사이에 시간이 흐를 수 있는 경로가 있으므로 여기서도 한 번 더 본다.
+    const crew = this.crewLocal();
+    if (!this.crewAboard()) {
+      this.setStatus('주인공이 배 밖입니다 — 화면 한가운데의 그를 감싸도록 그려 주세요.', 'warn');
+      return;
+    }
 
     // 정규화된 선체를 원점에 세운다. 뱃머리가 +X 를 향한다.
     this.clearBodies();
-    const body = this.launch(this.design.outline, { attached: this.attached });
+    const body = this.launch(this.design.outline, { attached: this.attached, crew });
     if (!body) {
       this.setStatus('강체 생성 실패 — 분해 결과가 비었습니다.', 'bad');
       return;
@@ -666,11 +743,14 @@ class Harness {
     this.compare = false;
     this.mode = 'sail';
     this.capture.enabled = false;
+    // 도착 지점은 출항 지점(원점) 기준이다. 맵 JSON 이 생기면 이 한 줄이 맵 데이터를 읽는다.
+    this.goal = createGoal(DEMO_GOAL);
+    this.cleared = false;
     this.view.ppm = PPM * 0.7;
     this.view.snapTo({ x: 0, y: 0 });
     document.body.dataset.mode = 'sail';
     this.setStatus('↑ 꾹 눌러 젓기 · ← → 한쪽 노만(선회) · ↓ 역젓기 · Space 닻 · ' +
-      'T 궤적선 · 선체 클릭 = 그 지점 차감', 'ok');
+      'T 궤적선 · 선체 클릭 = 그 지점 차감 — 도착 판정은 주인공이 합니다.', 'ok');
     this.renderParams(body.getUserData().hull.params, this.design);
     this.refreshTuner(); // 예상 종단은 선체 저항에 달렸다 — 배가 바뀌면 다시 잰다
   }
@@ -699,6 +779,10 @@ class Harness {
 
     this.design = null;
     this.initialItemCount = spawned.reduce((s, b) => s + b.getUserData().hull.items.length, 0);
+    // 비교 주행은 형상 셋을 나란히 재는 계측 장치라 주인공도 도착 지점도 없다 — 카메라는
+    // 사람이 아니라 세 척 전부를 담는다(`fitTo`).
+    this.goal = null;
+    this.cleared = false;
     this.compare = true;
     this.mode = 'sail';
     this.capture.enabled = false;
@@ -766,7 +850,15 @@ class Harness {
     if (outcome.result.destroyed) {
       this.setStatus('선체 전손 — 남은 조각이 없습니다.', 'bad');
     } else if (outcome.result.split) {
-      this.setStatus(`절단! ${outcome.result.pieces.length}조각으로 분리 — 각각 독립 강체입니다.`, 'ok');
+      this.setStatus(`절단! ${outcome.result.pieces.length}조각으로 분리 — 각각 독립 강체입니다. ` +
+        '주인공이 탄 쪽이 당신의 배입니다.', 'ok');
+    }
+    // ★ 주인공 상실은 절단·전손보다 **더 구체적인 사실**이라 마지막에 덮어쓴다. 배가 두
+    //   동강 나도 사람이 살아 있으면 항해는 계속되고, 남아 있어도 사람이 없으면 끝난다 —
+    //   그 둘을 가르는 것이 §7.5 소속 폴리곤 판정 하나다.
+    if (outcome.result.crewLost) {
+      this.setStatus('주인공이 물에 빠졌습니다 — 발밑이 잘려 나갔습니다. ' +
+        '남은 조각이 도착 지점에 들어가도 클리어가 아닙니다.', 'bad');
     }
     this.metrics.note('강체/조각', `${this.bodies.size}개 · 탈락 아이템 ${this.droppedItemCount()}`);
     this.renderParamsFromBodies();
@@ -967,6 +1059,7 @@ class Harness {
         this.sparks.push({ x: p.x, y: p.y, at: this.simTime, radius: shot.radius });
       }
       if (this.sparks.length > SPARK_MAX) this.sparks.splice(0, this.sparks.length - SPARK_MAX);
+      this.checkGoal();
       this.updateCamera();
       // 패널은 계측 HUD 와 같은 이유로 초당 몇 번이면 충분하다 — 매 프레임 innerHTML 을
       // 새로 쓰면 비교 화면이 재려는 그 프레임 예산을 패널이 갉아먹는다.
@@ -982,12 +1075,34 @@ class Harness {
     requestAnimationFrame((t) => this.loop(t));
   }
 
-  /** 비교 모드는 세 척을 모두 담도록 줌만 조절하고, 단독 항해는 그 배를 추적한다. */
+  /**
+   * 도착 판정 (§8 클리어 조건).
+   *
+   * ★ 재는 것은 **주인공의 점 하나뿐**이다. 선체 외곽선과 골의 겹침으로 재면 뱃머리만 밀어
+   *   넣어도, 잘려 나간 파편이 표류해 들어가도 클리어가 된다 — 근거는 `game/goal.js` 머리말.
+   *   그래서 여기에는 폴리곤이 등장하지 않는다.
+   */
+  checkGoal() {
+    if (!this.goal || this.cleared) return;
+    const at = crewWorldPoint(findCrewBody(this.bodies));
+    if (!at || !goalReached(this.goal, at)) return;
+
+    this.cleared = true;
+    const alive = [...this.bodies].reduce((s, b) => s + b.getUserData().hull.params.area, 0);
+    this.metrics.note('도착', `${this.goal.label} · 남은 선체 ${alive.toFixed(1)} m²`);
+    this.setStatus(`도착 — 주인공이 ${this.goal.label} 지점에 들어섰습니다. ` +
+      `남은 선체 ${alive.toFixed(1)} m² · 조각 ${this.bodies.size}개.`, 'ok');
+  }
+
+  /** 비교 모드는 세 척을 모두 담도록 줌만 조절하고, 단독 항해는 **주인공**을 추적한다. */
   updateCamera() {
     if (this.bodies.size === 0) return;
     if (!this.compare) {
-      const primary = [...this.bodies][0];
-      if (primary) this.view.follow(primary.getPosition());
+      // ★ 카메라 중심은 배가 아니라 사람이다. 절단(§7.5)으로 배가 쪼개지면 화면이 주인공이
+      //   탄 조각을 따라가므로, "내가 어느 쪽에 타고 있는가"가 질문이 되기 전에 화면 그 자체가
+      //   답이 된다. 주인공을 잃은 뒤에는 남은 잔해라도 비춘다 (검은 화면은 정보가 아니다).
+      const primary = findCrewBody(this.bodies) ?? [...this.bodies][0];
+      if (primary) this.view.follow(crewWorldPoint(primary) ?? primary.getPosition());
       return;
     }
     const points = [];
@@ -1005,8 +1120,98 @@ class Harness {
     drawSeaGrid(ctx, view);
     this.drawFields(ctx, view);
 
-    if (this.mode === 'design') this.renderDesign(ctx, view);
-    else this.renderSail(ctx, view);
+    if (this.mode === 'design') {
+      this.renderDesign(ctx, view);
+      // 주인공은 **선체보다 위**에 그린다. 카메라 중심이자 도착 판정의 주체라 어떤 형상에도
+      // 가려지면 안 되고, 설계 화면에서는 그가 곧 "여기를 감싸라"는 지시문이기도 하다.
+      this.drawCrew(ctx, view, this.crewWorld(), this.design?.ok ? this.crewAboard() : null);
+    } else {
+      this.renderSail(ctx, view);
+    }
+  }
+
+  /**
+   * 주인공.
+   *
+   * @param {{x,y}} at 월드 좌표
+   * @param {boolean|null} aboard 갑판 위인가 (null = 아직 판정할 선체가 없다)
+   */
+  drawCrew(ctx, view, at, aboard = true) {
+    if (!at) return;
+    // 줌이 빠져도 사라지면 안 된다 — 화면 고정 하한을 둔다. 포탄과 달리 콜라이더가 아니라서
+    // 보이는 크기와 실제 크기가 갈라져도 게임플레이가 거짓말을 하지 않는다.
+    const r = Math.max(CREW.radius, view.px(5));
+    const color = aboard === false ? '#ff6b6b' : '#fff6d8';
+
+    ctx.save();
+    // 바깥 고리 — 배 밖이면 붉게 깜박이지 않고 그냥 붉다. 상태는 색 하나로 충분하다.
+    ctx.strokeStyle = color;
+    ctx.lineWidth = view.px(1.6);
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, r * 2.2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 십자 눈금 — 설계 화면에서 "여기가 화면 한가운데"를 못 박는다.
+    if (aboard === null || aboard === false) {
+      const t = r * 3.4;
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(at.x - t, at.y);
+      ctx.lineTo(at.x - r * 2.6, at.y);
+      ctx.moveTo(at.x + r * 2.6, at.y);
+      ctx.lineTo(at.x + t, at.y);
+      ctx.moveTo(at.x, at.y - t);
+      ctx.lineTo(at.x, at.y - r * 2.6);
+      ctx.moveTo(at.x, at.y + r * 2.6);
+      ctx.lineTo(at.x, at.y + t);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * 도착 지점. 반경이 선체 길이보다 작아 **배는 걸쳤는데 사람은 밖**인 상태가 실제로 생기고,
+   * 그 상태에서 클리어가 안 되는 것이 이 원의 존재 이유다 (`game/goal.js`).
+   */
+  drawGoal(ctx, view) {
+    if (!this.goal) return;
+    const g = this.goal;
+    const done = this.cleared;
+
+    ctx.save();
+    ctx.fillStyle = done ? 'rgba(140, 233, 154, 0.18)' : 'rgba(255, 211, 92, 0.10)';
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = done ? '#8ce99a' : '#ffd35c';
+    ctx.lineWidth = view.px(2.5);
+    ctx.setLineDash([view.px(8), view.px(6)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    const at = crewWorldPoint(findCrewBody(this.bodies));
+    const left = goalDistance(g, at);
+    const label = done ? `${g.label} — 클리어`
+      : Number.isFinite(left) ? `${g.label} · 주인공까지 ${left.toFixed(0)} m`
+        : `${g.label} · 주인공 없음`;
+    const screen = view.worldToScreen({ x: g.x, y: g.y + g.radius });
+    view.screenSpace((c) => {
+      c.font = "13px 'NeoDunggeunmo', monospace";
+      c.textAlign = 'center';
+      const w = c.measureText(label).width + 14;
+      c.fillStyle = 'rgba(8, 20, 32, 0.75)';
+      c.fillRect(screen.x - w / 2, screen.y - 26, w, 20);
+      c.fillStyle = done ? '#8ce99a' : '#ffd35c';
+      c.fillText(label, screen.x, screen.y - 11);
+    });
   }
 
   /**
@@ -1212,6 +1417,7 @@ class Harness {
     const input = { held: this.held };
     const labels = [];
 
+    this.drawGoal(ctx, view);
     this.drawObstacles(ctx, view);
 
     for (const body of this.bodies) {
@@ -1244,6 +1450,9 @@ class Harness {
       }
 
       this.drawDevices(ctx, view, hull, pos, angle);
+      // 주인공을 태운 조각에만 그가 있다. 절단 뒤 두 조각을 나란히 보면 이 점 하나가
+      // "어느 쪽이 내 배인가"의 유일한 답이다.
+      this.drawCrew(ctx, view, crewWorldPoint(body));
 
       const com = body.getWorldCenter();
       this.drawOverlays(ctx, view, { x: com.x, y: com.y }, angle, hull.params);
@@ -1490,9 +1699,31 @@ class Harness {
       <div class="p-row hl"><span>저항 전/후</span><b>${params.drag.x.toFixed(0)}</b></div>
       <div class="p-row hl"><span>저항 좌/우</span><b>${params.drag.y.toFixed(0)}</b></div>
       <div class="p-row hl"><span>이방성 비</span><b>${(params.drag.y / Math.max(params.drag.x, 1e-6)).toFixed(1)} : 1</b></div>
+      ${this.crewRow()}
       ${this.deviceRows()}
       ${this.attachedRows()}
       ${result ? diagRows(result) : ''}`;
+  }
+
+  /**
+   * 주인공이 갑판 어디에 서 있는가 (선체 로컬).
+   *
+   * 숫자보다 **§7.5 의 노출도**가 요점이다. 아이템은 팔길이가 클수록 잘 듣고 잘 떨어지지만,
+   * 주인공에게 걸린 것은 효율이 아니라 항해 그 자체다 — 무게중심에서 먼 곳에 태우는 배는
+   * 작은 피탄 한 발에 발밑을 잃는다. 그를 어디에 두는지는 형상이 정하므로 선택도 형상이다.
+   */
+  crewRow() {
+    // 항해 중에는 **주인공을 태운 조각**을 봐야 한다 — 절단 뒤 `bodies[0]` 은 그가 없는
+    // 쪽일 수 있고, 그 경우 이 행은 조용히 사라지는 것이 맞다 (그는 이미 물에 빠졌다).
+    const crew = this.mode === 'sail'
+      ? findCrewBody(this.bodies)?.getUserData().hull.crew
+      : this.crewLocal();
+    if (!crew) return '';
+    const aboard = this.mode === 'sail' || this.crewAboard();
+    return `<div class="p-sep">주인공 — 카메라 중심이자 도착 판정의 주체</div>` +
+      `<div class="p-row ${aboard ? 'hl' : 'bad'}"><span>갑판 위 자리</span>` +
+      `<b>${aboard ? `(${crew.x.toFixed(2)}, ${crew.y.toFixed(2)}) · G 에서 ` +
+        `${Math.hypot(crew.x, crew.y).toFixed(2)} m` : '배 밖 — 출항 불가'}</b></div>`;
   }
 
   /**

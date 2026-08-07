@@ -57,6 +57,14 @@ export function createHullBody(world, piece, placement) {
       // 부착물(§4.1) — D1 부터 여기에 기본 3종 장치가 들어온다. 파손 시 소속 폴리곤을
       // 따라가므로, 키를 얹은 선미가 잘려나가면 조향을 그대로 잃는다 (§5.2 원칙 3).
       items: piece.items ?? [],
+      /**
+       * ★ 주인공의 선체 로컬 좌표 (없으면 null — 비교 주행·벤치의 배들이 그렇다).
+       *
+       * 물리에는 **아무 영향이 없다.** 질량도 콜라이더도 아니고, 카메라 중심과 도착 판정의
+       * 주체일 뿐이다. 그런데 파손 시에는 아이템과 완전히 같은 §7.5 소속 폴리곤 판정을
+       * 타므로 (damage/carve.js), 절단된 배에서 "어느 쪽이 내 배인가"가 저절로 정해진다.
+       */
+      crew: piece.crew ?? null,
       /** 조종 상태(스트로크·타각·닻). devices.js 가 첫 호출에서 채운다. */
       control: null,
       anchorJoint: null,
@@ -112,6 +120,11 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       outline: translate(piece.outline, -m.cx, -m.cy),
       holes: (piece.holes ?? []).map((h) => translate(h, -m.cx, -m.cy)),
       items,
+      // ★ 주인공은 **자기가 서 있던 조각에만** 실린다. 어느 조각인지는 carve.js 가 이미
+      //   정해 두었으므로(`piece.crew`), 여기서는 아이템·화점과 **같은 변환**만 해 준다 —
+      //   로컬 원점이 그 조각의 새 무게중심으로 옮겨간다. oldHull 에서 그대로 물려받으면
+      //   두 조각 다 주인공을 태우게 되어 절단 판정이 무의미해진다.
+      crew: piece.crew ? { x: piece.crew.x - m.cx, y: piece.crew.y - m.cy } : null,
       tag: oldHull?.tag ?? null,
       // 불·젖음은 조각을 따라간다 (§6.2). 타는 배를 쪼개서 불을 끌 수는 없다.
       status: oldHull?.status ?? {},
