@@ -19,7 +19,7 @@ import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../sr
 import { attachItem, itemsExtraMass, canAttachAt } from '../src/items/attach.js';
 import { ITEM_CATALOG } from '../src/items/catalog.js';
 import { applyImpact } from '../src/damage/apply.js';
-import { burnRadius, carveRadiusFromImpact } from '../src/damage/impact.js';
+import { burnRadius, carveRadiusFromImpact, DAMAGE_TUNING } from '../src/damage/impact.js';
 import { installImpactListener, offCooldown, CONTACT_TUNING } from '../src/damage/contact.js';
 import { createObstacle } from '../src/physics/obstacle.js';
 import { createTurrets, TURRET_TUNING, MIN_PERIOD } from '../src/game/turrets.js';
@@ -2178,6 +2178,66 @@ check('★ 튕긴 탄이 조용히 사라지지 않는다 (안 그러면 파손 
 check('뚫은 탄은 튕김으로 보고되지 않는다 (나무는 같은 45°에서 뚫린다)',
   punched.glances.length === 0 && punched.carves === 1,
   `나무 튕김 0건 · 차감 ${punched.carves}회`);
+
+// ★ 나무는 **어느 각도에서도** 튕기지 않는다. 실효 에너지의 바닥이 `(1−deflection) × E_총`
+//   = 11.8 kJ 이라 임계 8 kJ 아래로 내려갈 수가 없다. 각도 몇 개를 찍어 보는 대신 바닥을
+//   직접 잰다 — 각도를 훑으면 판때기 기하에 따라 어느 면을 맞는지가 섞여 무엇을 보증하는지
+//   알 수 없게 된다 (실제로 그렇게 재다 한 번 잘못 읽었다).
+const woodFloor = carveRadiusFromImpact({
+  impulse: 0,                                    // 법선분 0 = 입사각 90°(스치기)의 극한
+  effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
+  strikeEnergy: 0.5 * TURRET_TUNING.mass * TURRET_TUNING.speed ** 2,
+});
+check('★ 나무는 어떤 입사각에서도 튕기지 않는다 (스치기 극한에서도 뚫린다)',
+  woodFloor >= DAMAGE_TUNING.minCarveRadius,
+  `입사 90° 극한 반경 ${woodFloor.toFixed(3)} m ≥ ${DAMAGE_TUNING.minCarveRadius}`);
+
+// ★ 쿨다운은 **지속 접촉**의 백스톱이지 발사 속도 제한이 아니다.
+//   포탄까지 막으면 연사가 조용히 먹혀 "탄이 가끔 안 박힌다"가 된다 — 방금 고친 이음매
+//   버그와 플레이어에게 구분되지 않는 증상이다. 쿨다운 창(0.2s)보다 촘촘히 때려 본다.
+function rapidFire() {
+  const world = createWorld();
+  const body = createHullBody(world, { outline: PLATE, holes: [], items: [] },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood', extraMass: 0 });
+  installProjectileContacts(world);
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  const fleet = new Set([body]);
+  const at = [];
+  const s = new FixedStepper(world, {});
+  const flight = 25 / TURRET_TUNING.speed;
+  // 쿨다운의 절반 간격으로 두 발. 도착 간격도 그대로 0.1s 다 (탄속이 같으므로).
+  const fireAt = [0, CONTACT_TUNING.cooldown * 0.5];
+  let fired = 0;
+  for (let i = 0; i < 120; i++) {
+    while (fired < fireAt.length && elapsed >= fireAt[fired]) {
+      spawnProjectile(world, {
+        x: -25, y: 0, angle: 0, speed: TURRET_TUNING.speed,
+        radius: TURRET_TUNING.projectileRadius, mass: TURRET_TUNING.mass,
+        material: 'iron', bornAt: elapsed, lifetime: 4,
+      });
+      fired++;
+    }
+    s.advance(FIXED_DT);
+    elapsed += FIXED_DT;
+    for (const im of queue.drain()) {
+      if (!fleet.has(im.body)) continue;
+      const out = applyImpact(world, im.body, im.at, im.radius);
+      at.push(+elapsed.toFixed(3));
+      if (!out) continue;
+      fleet.delete(im.body);
+      for (const nb of out.bodies) fleet.add(nb);
+    }
+    cullProjectiles(world, elapsed);
+  }
+  return { at, gap: at.length > 1 ? at[1] - at[0] : Infinity, flight };
+}
+const rapid = rapidFire();
+console.log(`  쿨다운 창(${CONTACT_TUNING.cooldown}s) 안에 두 발 — 차감 ${rapid.at.length}회 · ` +
+  `간격 ${rapid.gap.toFixed(3)}s`);
+check('★ 쿨다운이 연사를 먹지 않는다 (지속 접촉의 백스톱이지 발사 속도 제한이 아니다)',
+  rapid.at.length === 2 && rapid.gap < CONTACT_TUNING.cooldown,
+  `${rapid.at.length}발 전부 차감 · 간격 ${rapid.gap.toFixed(3)}s < ${CONTACT_TUNING.cooldown}s`);
 
 check('감쇠 노브의 방향이 뒤집히지 않는다 (나무 < 철)',
   MATERIALS.wood.deflection < MATERIALS.iron.deflection && MATERIALS.iron.deflection === 1,

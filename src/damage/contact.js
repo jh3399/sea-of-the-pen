@@ -188,7 +188,18 @@ export function installImpactListener(world, clock) {
     const shot = other.getUserData()?.projectile;
     if (shot && now - shot.bornAt < CONTACT_TUNING.armDelay) return;   // 아직 무장 전
 
-    if (!offCooldown(hull, now)) return;
+    // ★ 쿨다운은 **지속 접촉**의 백스톱이지 발사 속도 제한이 아니다. 발사체는 맞는 순간
+    //   `spent` 로 죽는 **일회성 사건**이라 여기 걸릴 이유가 없다.
+    //
+    //   실측(나무 둥근 배 · 포탑 4문 14초): 접촉 487건 중 **406건이 쿨다운에 막혀 조용히
+    //   사라졌다.** 121발을 쐈는데 차감은 51회뿐이었고, 막힌 접촉의 실효 에너지는 전부
+    //   11.8~20.0 kJ 로 나무 임계(8 kJ)를 넉넉히 넘고 있었다. 즉 **뚫려야 할 탄이 뚫리지
+    //   않았고**, 아무 메시지도 없어 플레이어에겐 "튕겼다"로 보였다.
+    //   (경사 장갑은 무죄다 — 나무의 실효 에너지는 어느 각도에서도 11.8 kJ 아래로 안 간다.)
+    //
+    //   빼도 안전하다: `pending` 이 강체당 하나만 남기고 `drain()` 은 프레임당 한 번이라,
+    //   한 강체가 한 프레임에 두 번 깎이는 일 자체가 구조적으로 불가능하다.
+    if (!shot && !offCooldown(hull, now)) return;
 
     let byOther = thisStep.get(body);
     if (!byOther) thisStep.set(body, byOther = new Map());
