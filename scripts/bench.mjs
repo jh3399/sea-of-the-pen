@@ -27,7 +27,9 @@ import {
   spawnProjectile, cullProjectiles, installProjectileContacts, PROJECTILE_TUNING,
 } from '../src/damage/projectile.js';
 import { fieldBehind } from '../src/rules/provenance.js';
-import { bounds } from '../src/geom/poly.js';
+import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
+import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
+import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
 import { createRuleEngine, loadRules, RULE_TICK } from '../src/rules/engine.js';
@@ -2320,6 +2322,138 @@ check('★ 포탑 발사가 렌더 프레임률에 종속되지 않는다 (히�
     && steady.x === doubled.x && steady.x === hitchy.x
     && steady.y === doubled.y && steady.y === hitchy.y,
   `${steady.fired}발 · 마지막 탄 좌표 비트 일치`);
+
+// ─────────────────────────────────────────────── D3 ④ 주인공 · 도착 판정
+//
+// D3 통과 질문 (b): "3맵 전부 클리어 가능한가." 그 판정의 **주체**를 여기서 못 박는다.
+//
+// 도착하는 것은 배가 아니라 주인공이다. 선체 폴리곤이 골에 겹치는지로 재면 두 가지가 새는데,
+// 둘 다 §7 이 배를 쪼갤 수 있게 만든 순간 실제로 일어난다:
+//  ① 뱃머리만 밀어 넣고 클리어 — 길쭉한 배가 §2.1 의 대가는 다 치르고 라인만 먼저 받는다.
+//  ② 잘려 나간 파편이 표류해 들어가면 클리어 — 주인공은 반대편 조각에서 가라앉는 중인데도.
+// 아래 네 케이스가 각각을 재고, 절단 시 주인공이 **자기가 서 있던 조각**을 타는지도 본다.
+console.log('\n\x1b[36m▌D3 ④ — 주인공 (도착 판정의 주체 · §7.5 소속 폴리곤)\x1b[0m\n');
+
+/** 선체 로컬 outline 을 월드로 옮긴 정점들 (골 겹침을 재기 위한 것). */
+const worldOutline = (body) => {
+  const hull = body.getUserData().hull;
+  const p = body.getPosition();
+  return translate(rotate(hull.outline, body.getAngle()), p.x, p.y);
+};
+
+// ① 뱃머리만 들어가도 클리어가 아니다 — 이 벤치의 핵심 케이스.
+const arrival = (() => {
+  const goal = createGoal({ x: 0, y: 0, radius: 5 });
+  const world = createWorld();
+  const outline = hulls.sloop.outline;
+  // 주인공은 무게중심에 세운다. 뱃머리는 여기서 +5 m 앞이라 배가 골을 먼저 만난다.
+  const body = createHullBody(world, { outline, holes: [], items: [], crew: { x: 0, y: 0 } },
+    { position: { x: 8, y: 0 }, angle: 0, material: 'wood' });
+
+  const overlapAt = (x) => {
+    body.setPosition(new Vec2(x, 0));
+    const verts = worldOutline(body).filter((v) => Math.hypot(v.x - goal.x, v.y - goal.y) <= goal.radius);
+    const at = crewWorldPoint(body);
+    return { verts: verts.length, dist: goalDistance(goal, at), reached: goalReached(goal, at) };
+  };
+  return { near: overlapAt(8), deep: overlapAt(4.5), length: hulls.sloop.diagnostics.area };
+})();
+console.log(`  골(r=5)에 뱃머리만 걸친 배 — 골 안 정점 ${arrival.near.verts}개 · ` +
+  `주인공 ${arrival.near.dist.toFixed(2)} m · 클리어 ${arrival.near.reached ? 'O' : 'X'}`);
+console.log(`  같은 배를 더 밀어 넣으면 — 골 안 정점 ${arrival.deep.verts}개 · ` +
+  `주인공 ${arrival.deep.dist.toFixed(2)} m · 클리어 ${arrival.deep.reached ? 'O' : 'X'}`);
+check('★ 뱃머리가 도착 지점에 들어가도 클리어가 아니다 (배가 아니라 주인공이 도착한다)',
+  arrival.near.verts > 0 && !arrival.near.reached,
+  `선체는 정점 ${arrival.near.verts}개가 골 안 · 주인공은 ${arrival.near.dist.toFixed(2)} m 밖`);
+check('주인공이 실제로 들어오면 클리어된다 (판정이 그냥 빡빡한 게 아니다)',
+  arrival.deep.reached, `주인공 ${arrival.deep.dist.toFixed(2)} m ≤ 반경 5 m`);
+
+// ② 절단 — 주인공은 자기가 서 있던 조각을 타고 간다 (§7.5 아이템과 같은 판정).
+const crewSplit = (() => {
+  const world = createWorld();
+  const outline = hulls.barbell.outline;
+  const b = bounds(outline);
+  // 왼쪽 로브 위에 세우고 목(원점)을 때린다.
+  const crew = { x: b.minX + b.width * 0.15, y: 0 };
+  const body = createHullBody(world, { outline, holes: [], items: [], crew },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const before = crewWorldPoint(body);
+  const out = applyImpact(world, body, { x: 0, y: 0 }, 0.9);
+  // ★ 주인공을 태우지 않은 조각을 **일부러 맨 앞에** 놓는다. `bodies[0]` 을 플레이어의
+  //   배로 삼는 구현이면 여기서 걸린다 (절단 뒤 카메라가 빈 잔해를 따라가는 버그).
+  const carrier = out.bodies.find((bd) => bd.getUserData().hull.crew);
+  const bodiesOut = out.bodies.filter((bd) => bd !== carrier).concat(carrier);
+  const rider = findCrewBody(bodiesOut);
+  const after = crewWorldPoint(rider);
+  return {
+    pieces: out.bodies.length,
+    carrying: out.bodies.filter((bd) => bd.getUserData().hull.crew).length,
+    lost: out.result.crewLost,
+    orderProof: bodiesOut[0] !== rider && rider === carrier,
+    drift: before && after ? Math.hypot(after.x - before.x, after.y - before.y) : Infinity,
+  };
+})();
+console.log(`  아령 목 타격 — 조각 ${crewSplit.pieces}개 중 주인공을 태운 조각 ` +
+  `${crewSplit.carrying}개 · 월드 좌표 이동 ${(crewSplit.drift * 1000).toFixed(4)} mm`);
+check('★ 절단되면 주인공은 자기가 서 있던 조각 하나에만 실린다 (§7.5 아이템과 같은 판정)',
+  crewSplit.pieces === 2 && crewSplit.carrying === 1 && !crewSplit.lost,
+  `조각 ${crewSplit.pieces} · 태운 조각 ${crewSplit.carrying} · 물에 빠짐 ${crewSplit.lost}`);
+check('그 조각의 무게중심이 새로 잡혀도 주인공의 월드 위치는 그대로다 (좌표 변환 회귀)',
+  crewSplit.drift < 1e-9, `이동 ${(crewSplit.drift * 1000).toFixed(6)} mm`);
+check('주인공 조회가 조각 순서에 의존하지 않는다 (bodies[0] 을 보면 여기서 걸린다)',
+  crewSplit.orderProof, '빈 조각을 맨 앞에 놓아도 태운 조각을 찾는다');
+
+// ③ 발밑이 잘리면 물에 빠진다 — 아이템의 "탈락"과 같은 판정, 다른 결과.
+const crewLost = (() => {
+  const world = createWorld();
+  const outline = hulls.barbell.outline;
+  const body = createHullBody(world, { outline, holes: [], items: [], crew: { x: 0, y: 0 } },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const out = applyImpact(world, body, { x: 0, y: 0 }, 0.9);
+  return {
+    lost: out.result.crewLost,
+    carrying: out.bodies.filter((bd) => bd.getUserData().hull.crew).length,
+    alive: out.bodies.length,
+  };
+})();
+console.log(`  주인공을 목 위에 세우고 같은 자리를 타격 — 남은 조각 ${crewLost.alive}개 · ` +
+  `태운 조각 ${crewLost.carrying}개`);
+check('★ 발밑이 잘려 나가면 주인공을 잃는다 (조각이 남아 있어도 항해는 끝난다)',
+  crewLost.lost && crewLost.carrying === 0 && crewLost.alive === 2,
+  `물에 빠짐 · 남은 조각 ${crewLost.alive}개는 주인공 없음`);
+
+// ④ 주인공 없는 파편이 골에 표류해 들어가도 클리어가 아니다.
+const driftClear = (() => {
+  const goal = createGoal({ x: 0, y: 0, radius: 5 });
+  const world = createWorld();
+  const outline = hulls.barbell.outline;
+  const b = bounds(outline);
+  const body = createHullBody(world, { outline, holes: [], items: [], crew: { x: b.minX + b.width * 0.15, y: 0 } },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const out = applyImpact(world, body, { x: 0, y: 0 }, 0.9);
+
+  const rider = findCrewBody(out.bodies);
+  const orphan = out.bodies.find((bd) => bd !== rider);
+  orphan.setPosition(new Vec2(goal.x, goal.y));   // 파편만 골 한복판으로 표류시킨다
+  rider.setPosition(new Vec2(60, 0));             // 주인공은 멀리 떨어뜨려 둔다
+  const at = crewWorldPoint(findCrewBody(out.bodies));
+  return {
+    orphanDist: Math.hypot(orphan.getPosition().x - goal.x, orphan.getPosition().y - goal.y),
+    crewDist: goalDistance(goal, at),
+    reached: goalReached(goal, at),
+  };
+})();
+console.log(`  잘려 나간 파편만 골 한복판(${driftClear.orphanDist.toFixed(2)} m)에 · ` +
+  `주인공은 ${driftClear.crewDist.toFixed(0)} m 밖 — 클리어 ${driftClear.reached ? 'O' : 'X'}`);
+check('★ 주인공 없는 파편이 도착 지점에 들어가도 클리어가 아니다 (§7 파손 = 실패의 전제)',
+  !driftClear.reached && driftClear.orphanDist < 1e-9,
+  `파편은 골 중심 · 주인공 ${driftClear.crewDist.toFixed(0)} m 밖`);
+
+// ⑤ 주인공이 없는 배(비교 주행·벤치)는 그대로 돈다 — 파손 경로에 회귀가 없어야 한다.
+check('주인공 없는 선체도 파손 경로를 그대로 탄다 (crew 는 물리에 아무 영향이 없다)',
+  splitResult.result.crewLost === false && splitResult.bodies.every(
+    (bd) => bd.getUserData().hull.crew === null),
+  `조각 ${splitResult.bodies.length}개 · crew null · crewLost false`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
