@@ -2107,6 +2107,49 @@ check('★ 탄이 자기 총구를 살아서 벗어난다 (오프셋이 모자�
   escape.spent === false && escape.flew > armGap,
   `20스텝에 ${escape.flew.toFixed(1)} m 비행 · 소진 안 됨`);
 
+// ★★ 프레임률 독립 — S3 에서 가장 값비싼 회귀.
+//
+//    핸드오프의 스텝 순서는 `turrets.step()` 을 스텝 **밖**에 뒀다. 그대로 하면 발사 주기가
+//    모니터 주사율에 종속된다 — D0 이 추력·저항에서 이미 밟은 함정과 같은 종류다.
+//    시계를 스텝 안(`onPreStep`)에 두고 `simTime = stepIndex × FIXED_DT` 로 굴려야 한다.
+//
+//    ⚠ 종료 조건을 `advance` **호출 횟수가 아니라 물리 스텝 수**(1200)로 고정한다. 그래야
+//      세 변형이 정확히 같은 연산 열을 같은 순서로 돌아 좌표를 허용 오차 없이 비교할 수 있다.
+//      오차를 두면 스텝 밖 시계 버그가 그 오차 안에 숨는다.
+function turretRun(feed) {
+  const world = createWorld();
+  installProjectileContacts(world);
+  const turrets = createTurrets([{ x: 0, y: 0, angle: 0, period: 0.4 }]);
+  let stepN = 0;
+  let last = null;
+  const s = new FixedStepper(world, {
+    onPreStep: () => {
+      stepN += 1;
+      for (const req of turrets.step(stepN * FIXED_DT)) last = spawnProjectile(world, req);
+    },
+  });
+  // 1200 **스텝**을 채울 때까지 먹인다. 호출 횟수는 변형마다 다르다 — 그게 요점이다.
+  for (let call = 0; stepN < 1200; call++) s.advance(feed(call));
+  return { fired: turrets.fired, x: last.getPosition().x, y: last.getPosition().y, stepN };
+}
+
+const steady = turretRun(() => FIXED_DT);
+const doubled = turretRun(() => 2 * FIXED_DT);
+// ★ 히치 섞기가 없으면 이 케이스는 판별력이 없다. `advance(0.5)` 는 world.js 가 0.25 로
+//   클램프하고 남은 시간을 **버리므로**(steps === MAX 이면 accumulator = 0), 한 호출에
+//   렌더 시간 0.5s 대 시뮬 시간 0.083s — 6배로 갈라진다.
+//   버그판(스텝 밖에서 렌더 elapsed 로 굴리는 판)을 일부러 만들어 재 봤다:
+//     균일 50발 vs 50발 · 2배속 50발 vs 50발 · **히치 50발 vs 258발**
+//   즉 앞의 두 변형만으로는 버그판이 그대로 통과한다. 판별력은 전부 히치에서 나온다.
+const hitchy = turretRun((call) => (call % 2 === 0 ? 0.5 : FIXED_DT));
+console.log(`  1200스텝을 세 가지로 구동 — 균일 ${steady.fired}발 · 2배속 ${doubled.fired}발 · ` +
+  `히치 ${hitchy.fired}발 (히치는 ${hitchy.stepN}스텝)`);
+check('★ 포탑 발사가 렌더 프레임률에 종속되지 않는다 (히치를 섞어도 스텝 수가 같으면 같다)',
+  steady.fired === doubled.fired && steady.fired === hitchy.fired
+    && steady.x === doubled.x && steady.x === hitchy.x
+    && steady.y === doubled.y && steady.y === hitchy.y,
+  `${steady.fired}발 · 마지막 탄 좌표 비트 일치`);
+
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
   'D2 "배치에서 조향이 창발하는가?"\x1b[0m\n');
