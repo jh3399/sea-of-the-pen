@@ -22,6 +22,7 @@ import { applyImpact } from '../src/damage/apply.js';
 import { burnRadius, carveRadiusFromImpact } from '../src/damage/impact.js';
 import { installImpactListener, offCooldown, CONTACT_TUNING } from '../src/damage/contact.js';
 import { createObstacle } from '../src/physics/obstacle.js';
+import { createTurrets, TURRET_TUNING, MIN_PERIOD } from '../src/game/turrets.js';
 import { fieldBehind } from '../src/rules/provenance.js';
 import { bounds } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
@@ -1731,6 +1732,74 @@ check('쿨다운 창 안이면 거절하고 밖이면 허용한다',
     && offCooldown(cdHull, 10 + CONTACT_TUNING.cooldown * 1.5)
     && offCooldown({}, 0),
   `${CONTACT_TUNING.cooldown}s 창 · 이력 없으면 즉시 허용`);
+
+// ─────────────────────────────────────────────── D3 ③ 포탄 · 포탑
+//
+// 3장에서 배가 **받는** 파손 셋 중 마지막. 피탄 → 파손은 위 ② 와 **완전히 같은 경로**라
+// (`contact.js` 가 `{hull, projectile}` 쌍을 이미 처리한다) 새 파손 코드가 0줄이다.
+// 여기서 재는 것은 그 전제들이다 — 탄이 제대로 나고, 직선으로 날고, 관통하지 않는가.
+console.log('\n\x1b[36m▌D3 ③ — 포탄 · 포탑\x1b[0m\n');
+
+// ── 먼저 순수 스케줄러부터. 물리 없이 도는 케이스라 벤치 시간에 영향이 없고,
+//    "발사 시각이 호출 이력과 무관하다"는 프레임률 독립의 **정의**를 직접 잰다.
+
+const turretThrows = [
+  ['미지 키', { x: 0, y: 0, angle: 0, script: 'boom' }],
+  ['angle 없음', { x: 0, y: 0 }],
+  ['angle 이 비유한수', { x: 0, y: 0, angle: NaN }],
+  [`period < ${MIN_PERIOD}s`, { x: 0, y: 0, angle: 0, period: 0.05 }],
+  ['period 0', { x: 0, y: 0, angle: 0, period: 0 }],
+  ['모르는 재질', { x: 0, y: 0, angle: 0, material: 'adamantium' }],
+];
+const turretRejected = turretThrows.filter(([, spec]) => {
+  try { createTurrets([spec]); return false; } catch { return true; }
+});
+check('포탑 스펙이 스키마 밖이면 로드 시점에 던진다 (조용히 안 쏘면 물리 버그로 착각한다)',
+  turretRejected.length === turretThrows.length,
+  `${turretRejected.length}/${turretThrows.length}종 거부`);
+
+// ★ 총구는 데이터가 아니라 **파생값**이어야 한다. 몸체 반경과 갈라지는 순간 탄이 자기 포탑에
+//   닿아 태어나자마자 소멸한다. 같은 스펙에서 나온 두 산출물이 같은 radius 를 쓰는지 본다.
+const muzzleT = createTurrets([{ x: 10, y: 0, angle: 0, radius: 2 }]).list[0];
+const muzzleReach = Math.hypot(muzzleT.muzzle.x - muzzleT.at.x, muzzleT.muzzle.y - muzzleT.at.y);
+check('총구는 포탑 몸체 밖이고, 몸체 스펙과 같은 반경에서 파생된다',
+  muzzleReach > muzzleT.bodySpec.radius && muzzleT.bodySpec.radius === 2
+    && muzzleReach === 2 + TURRET_TUNING.projectileRadius + TURRET_TUNING.muzzleMargin,
+  `몸체 r 2 → 총구 ${muzzleReach.toFixed(3)} m`);
+
+// ★★ 누산 드리프트 회귀 — 이 케이스가 프레임률 독립의 **기계 증거**다.
+//
+//    한쪽은 매 스텝 step() 을 부르고, 다른 쪽은 5스텝마다 한 번만 부른다(같은 now 값으로).
+//    내부에서 dt 를 누산하는 구현은 호출을 걸러 내는 순간 결과가 달라진다.
+//    값 비교를 `===` 로 해도 되는 이유는 양쪽 다 `phase + n × period` 를 **같은 정수 n** 에서
+//    계산하기 때문이다 — 누산이 없으니 비교할 부동소수점 경계 자체가 없다.
+const scheduleSpec = [{ x: 0, y: 0, angle: 0, period: 1.5 }, { x: 5, y: 0, angle: 90, period: 0.4, phase: 0.17 }];
+const everyStep = createTurrets(scheduleSpec);
+const sparse = createTurrets(scheduleSpec);
+// ⚠ 포탑별로 갈라서 비교한다. 합쳐 놓고 보면 **방출 순서**가 달라 실패한다 — 5스텝에 한 번
+//   부르면 그 사이에 밀린 두 문의 발사가 포탑 번호 순으로 한꺼번에 나오기 때문이다.
+//   그건 스케줄이 아니라 배출 타이밍의 차이라 이 케이스가 보증할 대상이 아니다.
+const firedDense = [[], []];
+const firedSparse = [[], []];
+for (let k = 1; k <= 1200; k++) {
+  const now = k * FIXED_DT;
+  for (const r of everyStep.step(now)) firedDense[r.turret].push(r.firedAt);
+  if (k % 5 === 0) for (const r of sparse.step(now)) firedSparse[r.turret].push(r.firedAt);
+}
+console.log(`  같은 20초를 매 스텝 호출 vs 5스텝마다 호출 — 포탑별 발사 ` +
+  `[${firedDense.map((a) => a.length)}] / [${firedSparse.map((a) => a.length)}]`);
+check('★ 포탑 발사 시각은 now 의 순수 함수다 (호출을 걸러 내도 같은 열이 나온다 = 프레임률 독립)',
+  firedDense.every((seq, t) => seq.length > 0 && seq.length === firedSparse[t].length
+    && seq.every((v, i) => v === firedSparse[t][i])),
+  `${firedDense.flat().length}발 전부 일치`);
+
+// 충전율은 렌더 전용이지만, 이게 없으면 조준 없는 포탑이 무작위 피해가 된다.
+const chargeT = createTurrets([{ x: 0, y: 0, angle: 0, period: 2 }]);
+check('충전율이 0 에서 1 로 자라고 발사 직후 되감긴다',
+  chargeT.charge(0, 0) === 0 && chargeT.charge(0, 1) === 0.5
+    && chargeT.charge(0, 1.999) > 0.99
+    && (chargeT.step(2.0), chargeT.charge(0, 2.0) === 0),
+  '0 → 0.5 → ~1 → 발사 → 0');
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
