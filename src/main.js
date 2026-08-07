@@ -5,7 +5,7 @@
 // 계측 HUD 옆에 **세 척 동시 주행**이 붙는다. 같은 입력을 세 척에 그대로 흘려보내고
 // 조작감 차이가 눈에 보이면 가설 A 가 선다.
 import './ui/harness.css';
-import { createWorld, FixedStepper, Vec2 } from './physics/world.js';
+import { createWorld, FixedStepper, FIXED_DT, Vec2 } from './physics/world.js';
 import { applyHydroToWorld } from './physics/hydro.js';
 import { applyFieldsToWorld } from './physics/fields.js';
 import { createFields } from './field/field.js';
@@ -27,6 +27,10 @@ import { CORPUS, CORPUS_LABELS } from './hull/corpus.js';
 import { applyImpact } from './damage/apply.js';
 import { hottestOutlinePoint, nearestOutlinePoint, mostExposedPoint } from './damage/hotspot.js';
 import { burnRadius } from './damage/impact.js';
+import { installImpactListener, CONTACT_TUNING } from './damage/contact.js';
+import { spawnProjectile, cullProjectiles, installProjectileContacts } from './damage/projectile.js';
+import { createObstacle } from './physics/obstacle.js';
+import { createTurrets, TURRET_TUNING, MIN_PERIOD } from './game/turrets.js';
 import { fieldBehind } from './rules/provenance.js';
 import { View, drawSeaGrid, tracePolygon, traceOpenPath, fillPolygonWithHoles } from './render/view.js';
 import { Metrics } from './ui/metrics.js';
@@ -118,8 +122,41 @@ class Harness {
     this.material = 'wood';
     this.setZone('calm');
 
+    /**
+     * ★ 시뮬레이션 시계. `performance.now()` 와 **섞으면 안 된다** — 이것은 실시간이 아니라
+     *   항해 누적 시간이고, 설계 모드에서는 `advance` 가 안 불려 저절로 멈춘다 (일시정지 0줄).
+     *
+     * ⚠ 누산(`+= FIXED_DT`)이 아니라 정수 곱이다. 크기 때문이 아니라 재현성 때문이다 —
+     *   같은 스텝 수를 돈 두 실행의 시각이 비트 일치해야 벤치가 허용 오차 없이 잴 수 있다.
+     *
+     * ⚠⚠ 이 시계가 0 에 고정되면 **배가 영구 무적이 된다.** `contact.js` 의 `drain()` 이
+     *     `lastCarveAt = 0` 을 찍고 `offCooldown` 이 `0 − 0 >= 0.2` → false 를 영원히 내서,
+     *     첫 충돌 이후 세션 내내 안 깎인다. 겉보기엔 "충돌 파손이 원래 안 되나 보다"로 읽힌다.
+     */
+    this.stepIndex = 0;
+    this.simTime = 0;
+    /** 포탄·장애물은 **선체 Set 과 따로** 산다 — `this.bodies` 순회는 전부 hull 을 전제한다. */
+    this.projectiles = new Set();
+    this.obstacles = new Set();
+    this.turrets = null;
+    // 리스너는 여기서 **딱 한 번**. `world.on` 은 push 라 출항할 때마다 걸면 리스너가 쌓이고,
+    // world 는 생성자에서 한 번 만들어져 세션 내내 산다.
+    this.impacts = installImpactListener(this.world, { now: () => this.simTime });
+    installProjectileContacts(this.world);
+
     this.stepper = new FixedStepper(this.world, {
       onPreStep: (dt) => {
+        this.stepIndex += 1;
+        this.simTime = this.stepIndex * FIXED_DT;
+        // ⓪ 포탑. 시계도 발사도 **스텝 안**이다 — `onPreStep` 은 `world.step()` 밖이라
+        //    강체를 만들어도 안전하고(`isLocked()` 는 스텝 본문에서만 참), 스텝 밖에서
+        //    렌더 elapsed 로 굴리면 발사 주기가 모니터 주사율에 종속된다.
+        if (this.turrets) {
+          for (const req of this.turrets.step(this.simTime)) {
+            const shot = spawnProjectile(this.world, req);
+            if (shot) this.projectiles.add(shot);
+          }
+        }
         this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
         applyFieldsToWorld(this.world, this.fields, dt);
@@ -259,6 +296,7 @@ class Harness {
     document.getElementById('btn-sail').onclick = () => this.enterSail();
     document.getElementById('btn-compare').onclick = () => this.enterCompare();
     document.getElementById('btn-stress').onclick = () => this.startStress();
+    document.getElementById('btn-turret').onclick = () => this.startTurretDrill();
     document.getElementById('btn-clear-worst').onclick = () => this.metrics.resetWorst();
   }
 
@@ -577,6 +615,10 @@ class Harness {
   }
 
   clearBodies() {
+    // ⚠ 이걸 빼면 유령 포탑이 남는다. world 는 생성자에서 한 번만 만들어지므로 다시 그리기 →
+    //   출항 을 하면 이전 시험의 포탑이 계속 쏘고, `enterCompare()` 도 여기를 지나므로
+    //   세 척 비교가 사격장이 된다.
+    this.clearProps();
     for (const body of this.bodies) this.world.destroyBody(body);
     this.bodies.clear();
     // 모드를 옮기는 순간이다. 누르고 있던 키를 남겨 두면 새 배가 태어나자마자 저절로 젓는다.
@@ -725,6 +767,92 @@ class Harness {
     this.renderParamsFromBodies();
   }
 
+  /**
+   * 충돌·피탄 큐를 소비한다. **암초인지 포탄인지 여기서 구분하지 않는다** — 큐 소비자가
+   * 출처를 모르는 것이 §2 와 §3 의 파손이 한 코드 경로로 합쳐진다는 설계의 요점이다.
+   */
+  consumeImpacts() {
+    for (const im of this.impacts.drain()) {
+      if (!this.bodies.has(im.body)) continue;      // 이미 파괴된 강체 (댕글링)
+      // 임무를 마친 탄은 다음 컬링에서 사라진다. `begin-contact` 가 이미 찍었지만,
+      // 큐를 통해 들어온 것도 여기서 한 번 더 못 박아 둔다.
+      if (im.projectile) im.projectile.getUserData().projectile.spent = true;
+
+      const kJ = (im.energy / 1000).toFixed(1);
+      this.metrics.note('피격', `${im.source} ${kJ} kJ`);
+      this.carveBody(im.body, im.at, im.radius);
+      this.setStatus(im.source === 'shot'
+        ? `피탄 — ${kJ} kJ 가 반경 ${im.radius.toFixed(2)} m 를 뜯었습니다.`
+        : `충돌 — ${kJ} kJ 가 반경 ${im.radius.toFixed(2)} m 를 뜯었습니다.`, 'bad');
+    }
+  }
+
+  /** 시험용 소품(암초·포탑·포탄) 정리. 선체와 수명이 다르므로 따로 둔다. */
+  clearProps() {
+    for (const body of this.projectiles) this.world.destroyBody(body);
+    for (const body of this.obstacles) this.world.destroyBody(body);
+    this.projectiles.clear();
+    this.obstacles.clear();
+    this.turrets = null;
+  }
+
+  /**
+   * 포탑·암초 시험장을 **현재 뱃머리 기준**으로 깔아 준다.
+   *
+   * 절대 좌표로 놓으면 안 된다 — 버튼을 누르는 시점에 배는 이미 원점을 떠나 있다.
+   * S4 의 `session.js` 가 이 배치를 맵 데이터에서 읽게 되면 이 메서드는 사라진다.
+   */
+  startTurretDrill() {
+    if (this.mode !== 'sail' || this.bodies.size === 0) {
+      this.setStatus('출항한 뒤에 눌러 주세요.', 'warn');
+      return;
+    }
+    this.clearProps();
+
+    const primary = [...this.bodies][0];
+    const p = primary.getWorldCenter();
+    const th = primary.getAngle();
+    const u = { x: Math.cos(th), y: Math.sin(th) };      // 뱃머리
+    const v = { x: -Math.sin(th), y: Math.cos(th) };     // 좌현
+    const at = (a, b) => ({ x: p.x + u.x * a + v.x * b, y: p.y + u.y * a + v.y * b });
+    const deg = (rad) => rad * 180 / Math.PI;
+
+    // ★ 이격은 무장 거리(armDelay × speed = 5.5 m)의 두 배 이상이어야 한다. 그 안쪽은 탄이
+    //   배를 맞고도 안 깎는 사각지대다.
+    const arm = CONTACT_TUNING.armDelay * TURRET_TUNING.speed;
+    const lane = Math.max(12, arm * 2);
+
+    // ★★ 주기를 배 속도에서 **유도한다.** 고정 주기로 두면 배가 사선 사이로 그냥 빠져나간다 —
+    //    실측: 3.34 m/s 로 1.5 s 주기면 탄 간격이 5.0 m 인데 둥근 배 길이는 4.6 m 라, 20발을
+    //    쏘는 동안 한 발도 안 맞았다. **탄 간격(속도 × 주기) < 선체 길이**가 사선이 실제로
+    //    장벽이 되기 위한 조건이고, S4 에서 3장 포탑 주기를 정할 때도 같은 부등식을 쓴다.
+    const speed = Math.max(primary.getLinearVelocity().length(), 1);
+    const hullLength = primary.getUserData().hull.params.length;
+    const period = Math.max(MIN_PERIOD, (hullLength * 0.5) / speed);
+
+    this.turrets = createTurrets([
+      // 좌현 포탑 — 항로를 가로지르는 빔이라 조준 0줄로 명중이 보장된다.
+      { ...at(18, lane), angle: deg(th - Math.PI / 2), period },
+      // 우현 포탑 — 아래 암초에 막힌다. 엄폐가 규칙이 아니라 기하에서 나오는 것을 보여 준다.
+      { ...at(30, -lane), angle: deg(th + Math.PI / 2), period },
+    ], this.simTime);
+    for (const t of this.turrets.list) this.placeObstacle(t.bodySpec);
+
+    this.placeObstacle({ shape: 'circle', ...at(30, -lane * 0.5), radius: 2.5, material: 'rock' });
+    this.placeObstacle({ shape: 'circle', ...at(46, 0), radius: 3, material: 'rock' });
+
+    // 지금 항해 줌(PPM × 0.7)은 화면 반폭이 ~17 m 라 18 m 앞 포탑이 화면 밖이다.
+    this.view.ppm = PPM * 0.4;
+    this.setStatus('좌현 포탑은 그대로 때리고, 우현 포탑은 암초에 막힙니다 — ' +
+      '엄폐가 코드가 아니라 기하에서 나옵니다. 정면 암초는 들이받아 보세요.', 'warn');
+  }
+
+  placeObstacle(spec) {
+    const body = createObstacle(this.world, spec);
+    if (body) this.obstacles.add(body);
+    return body;
+  }
+
   bodyNear(worldPoint) {
     let best = null;
     let bestDist = Infinity;
@@ -795,8 +923,14 @@ class Harness {
     if (this.mode === 'sail') {
       const { ms } = this.stepper.advance(elapsed);
       this.metrics.push('physics', ms);
-      this.consumeRuleEvents();
+      // ── 스텝 밖 ── 강체가 나고 죽는 유일한 자리 (포탄만 예외 — ⓪ 에서 태어난다).
+      this.consumeRuleEvents();     // ① 연소 → 차감 지점 → carveBody
+      this.consumeImpacts();        // ②③ 충돌·피탄 큐 → carveBody
+      // ⚠ `consumeImpacts` 보다 뒤여야 한다. `carveBody` 가 `this.bodies` 를 갈아치우므로
+      //    순서를 바꾸면 물리에서 온 충격이 멤버십 가드에 걸려 조용히 버려진다.
       this.stepStress();
+      // ⑤ 포탄 소멸은 큐 소비 **뒤**다 — Impact 가 포탄 강체 참조를 들고 있다.
+      for (const dead of cullProjectiles(this.world, this.simTime)) this.projectiles.delete(dead);
       this.updateCamera();
       // 패널은 계측 HUD 와 같은 이유로 초당 몇 번이면 충분하다 — 매 프레임 innerHTML 을
       // 새로 쓰면 비교 화면이 재려는 그 프레임 예산을 패널이 갉아먹는다.
@@ -949,11 +1083,77 @@ class Harness {
     });
   }
 
+  /** 암초·포탑 몸체. 선체와 **같은 관용구**(재질색 + 외곽선)를 쓴다. */
+  drawObstacles(ctx, view) {
+    for (const body of this.obstacles) {
+      const { spec, material } = body.getUserData().obstacle;
+      const pos = body.getPosition();
+      ctx.fillStyle = `${material.color}aa`;
+      ctx.beginPath();
+      if (spec.shape === 'circle') {
+        ctx.arc(pos.x, pos.y, spec.radius, 0, Math.PI * 2);
+      } else {
+        tracePolygon(ctx, translate(spec.points.map(([x, y]) => ({ x, y })), pos.x, pos.y));
+      }
+      ctx.fill();
+      ctx.lineWidth = view.px(2);
+      ctx.strokeStyle = '#7d848c';
+      ctx.stroke();
+    }
+    if (!this.turrets) return;
+
+    // ★ 포신 + 충전 표시. **가장 중요한 가독성 장치다** — 조준이 없는 대신 플레이어가 할 일은
+    //   "타이밍을 읽고 지나가기"뿐이라, 충전이 안 보이면 포탑은 퍼즐이 아니라 무작위 피해가
+    //   된다. 부스터 불꽃(`drawDevices`)과 같은 규약으로 충전율에 따라 길이·굵기·색이 자란다.
+    for (const [i, t] of this.turrets.list.entries()) {
+      const ch = this.turrets.charge(i, this.simTime);
+      const len = t.bodySpec.radius * (1.2 + ch * 0.9);
+      ctx.lineWidth = view.px(3 + ch * 4);
+      ctx.strokeStyle = ch > 0.92 ? '#ff9f7f' : `rgba(255, 159, 127, ${0.35 + ch * 0.4})`;
+      ctx.beginPath();
+      ctx.moveTo(t.at.x, t.at.y);
+      ctx.lineTo(t.at.x + t.dir.x * len, t.at.y + t.dir.y * len);
+      ctx.stroke();
+    }
+  }
+
+  /**
+   * 포탄.
+   *
+   * ⚠ `view.px()` 로 그리면 안 된다. 하니스의 다른 원 그리기는 전부 화면 고정 크기지만,
+   *   포탄만은 **콜라이더 크기가 곧 게임플레이 정보**다 — 보이는 크기와 실제 크기가 줌에
+   *   따라 갈라지면 아슬아슬한 회피가 거짓말이 된다. 월드 단위를 쓰되 최소 가시성만 보장한다.
+   */
+  drawProjectiles(ctx, view) {
+    for (const body of this.projectiles) {
+      const shot = body.getUserData().projectile;
+      const p = body.getPosition();
+      const v = body.getLinearVelocity();
+
+      ctx.strokeStyle = 'rgba(255, 211, 92, 0.55)';    // 진행 방향 잔상 = 속도감
+      ctx.lineWidth = view.px(2);
+      ctx.beginPath();
+      ctx.moveTo(p.x - v.x * 0.05, p.y - v.y * 0.05);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffd35c';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(shot.radius, view.px(2.5)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (this.turrets) {
+      this.metrics.note('포탄', `${this.projectiles.size}발 · 발사 ${this.turrets.fired}`);
+    }
+  }
+
   renderSail(ctx, view) {
     // 스트로크는 넘기지 않는다 — "지금 더 젓지 않으면 어디로 가는가"가 정직한 질문이다
     // (predict.js 머리말). 반면 트리거 홀드는 유지 가정이 정의되므로 그대로 넘긴다.
     const input = { held: this.held };
     const labels = [];
+
+    this.drawObstacles(ctx, view);
 
     for (const body of this.bodies) {
       const hull = body.getUserData().hull;
@@ -1009,6 +1209,8 @@ class Harness {
         });
       }
     }
+
+    this.drawProjectiles(ctx, view);
 
     if (labels.length) {
       view.screenSpace((c) => {
