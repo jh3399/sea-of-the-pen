@@ -1945,6 +1945,168 @@ check('포탄이 누수되지 않고 월드와 Set 이 어긋나지 않는다',
     && countProjectiles(leakWorld) === leakSet.size,
   `최대 ${leakPeak}발 ≤ ${PROJECTILE_TUNING.maxAlive} · 월드 = Set`);
 
+// ── 포탑 × 선체. `ram()` 과 **같은 소비 루프**를 쓴다 — 암초든 포탄이든 큐 소비자는 출처를
+//    모르는 것이 §2·§3 이 한 경로로 합쳐진다는 설계의 요점이라, 벤치도 그 사실을 재사용한다.
+
+/** 포탑 하나가 배를 쏜다. 총구–선체 표면 거리가 `gap` 이 되도록 포탑을 놓는다. */
+function bombard({
+  key = 'sloop', material = 'wood', gap = 15, ahead = 0,
+  shipV = null, seconds = 6, reef = false, period = TURRET_TUNING.period,
+} = {}) {
+  const { world, body } = spawn(key, { devices: true, material });
+  const p0 = body.getUserData().hull.params;
+  const area0 = p0.area;
+  // 총구 오프셋을 빼서 놓아야 `gap` 이 실제 **비행 거리**가 된다. 포탑 중심으로 재면
+  // 무장 지연 케이스가 재려는 값(= 비행 시간)이 오프셋만큼 어긋난다.
+  const reach = TURRET_TUNING.radius + TURRET_TUNING.projectileRadius + TURRET_TUNING.muzzleMargin;
+  const turretY = p0.beam / 2 + reach + gap;
+  const turrets = createTurrets([{ x: ahead, y: turretY, angle: -90, period }]);
+  createObstacle(world, turrets.list[0].bodySpec);
+  if (reef) {
+    createObstacle(world, {
+      shape: 'circle', x: ahead, y: p0.beam / 2 + gap * 0.5, radius: 2.5, material: 'rock',
+    });
+  }
+
+  installProjectileContacts(world);
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  const fleet = new Set([body]);
+  const hits = [];
+  let spent = 0;
+
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      for (const req of turrets.step(elapsed)) spawnProjectile(world, req);
+      applyHydroToWorld(world, dt);
+    },
+  });
+
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) {
+    if (shipV) for (const b of fleet) b.setLinearVelocity(new Vec2(shipV.x, shipV.y));
+    s.advance(FIXED_DT);
+    elapsed += FIXED_DT;
+    // ── 스텝 밖 ── 여기서만 강체가 나고 죽는다.
+    for (const im of queue.drain()) {
+      if (!fleet.has(im.body)) continue;                 // 이미 파괴된 강체 (댕글링)
+      // 맞은 자리가 선체 무게중심의 어느 쪽인가. **차감하기 전에** 재야 한다 —
+      // applyImpact 가 강체를 갈아치우면 그 중심이 사라진다.
+      const side = im.at.y - im.body.getWorldCenter().y;
+      const out = applyImpact(world, im.body, im.at, im.radius);
+      if (!out) continue;
+      hits.push({ radius: im.radius, energy: im.energy, source: im.source, side });
+      fleet.delete(im.body);
+      for (const nb of out.bodies) fleet.add(nb);
+    }
+    // 포탄 소멸은 큐 소비 **뒤**다 — Impact 가 포탄 강체 참조를 들고 있어 먼저 부수면 댕글링.
+    for (const dead of cullProjectiles(world, elapsed)) {
+      if (dead.getUserData().projectile.spent) spent++;
+    }
+  }
+
+  const alive = [...fleet];
+  const areaNow = alive.reduce((t, b) => t + b.getUserData().hull.params.area, 0);
+  return {
+    hits, spent, fired: turrets.fired, bodies: alive.length,
+    removed: 1 - areaNow / area0,
+    split: alive.length > 1,
+  };
+}
+
+const shelled = bombard();
+console.log(`  정지한 배에 6초 사격 — ${shelled.fired}발 중 ${shelled.hits.length}발 명중 · ` +
+  `면적 −${(shelled.removed * 100).toFixed(1)}% · 최대 반경 ` +
+  `${Math.max(0, ...shelled.hits.map((h) => h.radius)).toFixed(2)} m`);
+// 판정에 해석 반경(0.502)을 박지 않는다. 솔버가 실제로 내는 임펄스는 해석값과 다르고
+// (TOI 와 이산 아일랜드로 나뉠 수 있다) `pending` 은 합이 아니라 최대를 남기므로,
+// 절대값으로 박으면 planck 마이너 업그레이드에 조용히 깨진다. source 를 같이 보는 이유는
+// 태그가 틀리면 S5 디브리프 배지가 원인을 오분류하는데 면적만 보면 통과해 버리기 때문이다.
+check('★ 포탑 탄이 배를 깎는다 (피탄 → 파손은 암초 충돌과 완전히 같은 경로다 — 새 코드 0줄)',
+  shelled.removed > 0.01 && shelled.hits.length > 0
+    && shelled.hits.every((h) => h.source === 'shot'),
+  `${shelled.hits.length}발 명중 · −${(shelled.removed * 100).toFixed(1)}%`);
+
+// ★★ 이음매 회귀. 선체는 볼록 조각 여럿으로 분해돼 있어서 포탄이 조각 경계에 떨어지면 planck 이
+//    한 번의 충돌을 post-solve **두 번**으로 나눠 준다. 실측(수정 전): 깨끗한 명중은
+//    J=689(19.8 kJ) 하나였는데 이음매 명중은 6.6 kJ + 4.3 kJ 로 갈라져 **둘 다 나무 임계
+//    8 kJ 아래**라 아무 일도 안 일어났다 — 3발 중 2발이 그냥 통과했다.
+//    플레이어에겐 "포탄이 가끔 안 박힌다"로 보이고 그 '가끔'의 정체가 눈에 안 보이는 분해
+//    이음매라 학습이 불가능하다. contact.js 가 한 스텝의 같은 (선체, 상대) 쌍을 합치는 이유다.
+//
+//    판정을 **에너지**로 하는 이유: 명중 횟수만 보면 갈라진 임펄스가 우연히 둘 다 임계를
+//    넘는 배치에서 통과해 버린다. 포구 에너지의 70% 를 밑돌면 갈라진 것이다.
+const muzzleEnergy = 0.5 * TURRET_TUNING.mass * TURRET_TUNING.speed ** 2;
+console.log(`  명중 에너지 [${shelled.hits.map((h) => (h.energy / 1000).toFixed(1)).join(', ')}] kJ ` +
+  `(포구 ${(muzzleEnergy / 1000).toFixed(1)} kJ)`);
+check('★ 한 발의 충격이 볼록 분해 이음매에서 갈라지지 않는다 (갈라지면 임계를 못 넘어 무해해진다)',
+  shelled.hits.length === shelled.fired
+    && shelled.hits.every((h) => h.energy > muzzleEnergy * 0.7),
+  `${shelled.fired}발 전부 명중 · 최소 ${(Math.min(...shelled.hits.map((h) => h.energy)) / 1000).toFixed(1)} kJ`);
+
+const passing = bombard({ ahead: 25, shipV: { x: 4, y: 0 }, seconds: 12 });
+check('★ 지나가는 배는 포탑이 있는 쪽 옆구리를 깎인다 (부호를 반대로 쓰면 반대편이 깎인다)',
+  passing.hits.length > 0 && passing.hits.every((h) => h.side > 0),
+  `${passing.hits.length}발 전부 +Y(포탑 쪽) · 최대 ${Math.max(...passing.hits.map((h) => h.side)).toFixed(2)} m`);
+
+// ★ 무장 지연은 시간이 아니라 **거리 게이트**로 체감된다. 거리를 상수로 박으면 armDelay 나
+//   탄속을 돌릴 때 두 지점이 같은 쪽으로 넘어가 회귀가 조용히 의미를 잃는다.
+const armGap = CONTACT_TUNING.armDelay * TURRET_TUNING.speed;
+const pointBlank = bombard({ gap: armGap * 0.5 });
+const standoff = bombard({ gap: armGap * 3 });
+console.log(`  무장 거리 ${armGap.toFixed(1)} m — 근접(${(armGap * 0.5).toFixed(1)} m) 명중 ` +
+  `${pointBlank.hits.length}회·소진 ${pointBlank.spent}발 / 원거리(${(armGap * 3).toFixed(1)} m) 명중 ` +
+  `${standoff.hits.length}회·소진 ${standoff.spent}발`);
+// `hits === 0` 만 보면 "포탑이 안 쐈다"와 "무장 전이라 무해했다"가 구분되지 않는다.
+// 후자여야 가드를 검증한 것이므로 `spent ≥ 1` 절이 반드시 붙는다.
+check('★ 무장 지연 안쪽에서는 탄이 배를 못 깎는다 (맞기는 맞는다 — 근접은 사각지대다)',
+  pointBlank.hits.length === 0 && pointBlank.spent >= 1 && standoff.hits.length >= 1,
+  `근접 0회(소진 ${pointBlank.spent}발) vs 원거리 ${standoff.hits.length}회`);
+
+// ★ 엄폐도 A/B 로만 의미가 있다. 그리고 여기서도 `spent ≥ 1` 이 "안 맞았다"와 "안 쐈다"를 가른다.
+const covered = bombard({ reef: true });
+console.log(`  총구와 항로 사이에 암초 — 명중 ${covered.hits.length}회 · 암초에서 소진 ${covered.spent}발 ` +
+  `(엄폐 없을 때 ${shelled.hits.length}회)`);
+check('★ 암초 뒤에 숨으면 안 맞는다 — 엄폐가 규칙이 아니라 기하에서 나온다 (코드 0줄)',
+  covered.hits.length === 0 && covered.spent >= 1 && shelled.hits.length >= 1,
+  `엄폐 0회(소진 ${covered.spent}발) vs 노출 ${shelled.hits.length}회`);
+
+// ★ 같은 탄, 재질만 교체. **배율로 재는 이유**: shot 분기라 μ 가 두 실행에서 똑같이 포탄
+//   질량(12 kg)이다 — 선체 밀도가 3배 달라도. 그래서 솔버가 낸 미지의 실제 임펄스가 상쇄되고
+//   남는 것은 impactThreshold/toughness 차이뿐이다. 위 `source:'reef'` 케이스(reducedMass
+//   분기)와 짝을 이룬다 — 같은 결론이 두 코드 경로에서 따로 성립한다.
+const ironShelled = bombard({ material: 'iron' });
+console.log(`  같은 탄 — 나무 −${(shelled.removed * 100).toFixed(1)}% vs 철 ` +
+  `−${(ironShelled.removed * 100).toFixed(2)}% (철 최대 반경 ` +
+  `${Math.max(0, ...ironShelled.hits.map((h) => h.radius)).toFixed(2)} m)`);
+check('★ 철 선체는 포탄에 함몰만 한다 (§7.4 — 대포알에 함몰만, 관통 어려움)',
+  ironShelled.hits.length > 0 && ironShelled.removed > 0
+    && ironShelled.removed < shelled.removed / 4 && !ironShelled.split,
+  `나무 −${(shelled.removed * 100).toFixed(1)}% vs 철 −${(ironShelled.removed * 100).toFixed(2)}%`);
+
+// ★★ 핸드오프가 요구한 「포탑은 자기 탄에 안 맞는다」는 **동어반복이라 쓰지 않는다.**
+//    포탑 몸체는 createObstacle 산물이라 hull userData 가 없고 contact.js 가 무조건 먼저
+//    빠지므로, 그 시험은 **총구 오프셋이 0 이어도 통과한다.** 실제 위험은 정반대 방향이다:
+//    "어떤 접촉에서든 spent" 규칙은 무장 여부를 안 보므로, 오프셋이 모자라면 탄이 자기
+//    포탑을 스치며 그 자리에서 죽는다 — 포탑이 자기를 안 깎는 대신 **아무것도 안 쏜다.**
+const escape = (() => {
+  const world = createWorld();
+  installProjectileContacts(world);
+  const turrets = createTurrets([{ x: 0, y: 0, angle: 0 }]);
+  createObstacle(world, turrets.list[0].bodySpec);
+  let now = 0;
+  let shot = null;
+  const s = new FixedStepper(world, {
+    onPreStep: () => { for (const r of turrets.step(now)) shot = spawnProjectile(world, r); },
+  });
+  while (!shot) { now += FIXED_DT; s.advance(FIXED_DT); }
+  const bornX = shot.getPosition().x;
+  for (let i = 0; i < 20; i++) { now += FIXED_DT; s.advance(FIXED_DT); }
+  return { spent: shot.getUserData().projectile.spent, flew: shot.getPosition().x - bornX };
+})();
+check('★ 탄이 자기 총구를 살아서 벗어난다 (오프셋이 모자라면 포탑이 아무것도 못 쏜다)',
+  escape.spent === false && escape.flew > armGap,
+  `20스텝에 ${escape.flew.toFixed(1)} m 비행 · 소진 안 됨`);
+
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
   'D2 "배치에서 조향이 창발하는가?"\x1b[0m\n');

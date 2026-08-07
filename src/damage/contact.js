@@ -50,6 +50,24 @@ export function offCooldown(hull, now) {
 export function installImpactListener(world, clock) {
   /** @type {Map<any, Impact>} 이번 회차의 강체별 최대 충격 */
   const pending = new Map();
+  /**
+   * 이번 **물리 스텝**의 (맞은 강체 → 때린 강체 → 누적) 임펄스.
+   *
+   * ★ 한 번의 충격이 post-solve 를 **여러 번** 부를 수 있다. 선체는 볼록 분해된 fixture 여럿을
+   *   갖고 있어서, 포탄이 두 조각의 이음매에 떨어지면 임펄스가 갈라져 들어온다. 실측:
+   *   깨끗이 맞은 탄은 J=689(19.8 kJ) 한 번이었는데, 이음매에 떨어진 탄은 J=398(6.6 kJ)과
+   *   J=320(4.3 kJ) 둘로 갈라졌다 — **각각은 나무 임계(8 kJ) 아래라 반경이 0 이 되어 아무
+   *   일도 안 일어났다.** 물리적으로는 한 번의 충돌인데 문턱을 못 넘은 것이다.
+   *   플레이어에게는 "포탄이 가끔 그냥 안 박힌다"로 보이고, 그 '가끔'의 정체가 눈에 안 보이는
+   *   분해 이음매라 학습이 불가능하다.
+   *
+   *   그래서 **한 스텝 안의 같은 (선체, 상대) 쌍은 임펄스를 합친 뒤** 반경을 낸다.
+   *   합치는 단위가 스텝인 이유: 한 프레임은 물리 스텝을 최대 5번 돌리므로 프레임 단위로
+   *   합치면 서로 다른 충돌이 한 덩어리가 된다. 쌍 단위인 이유: 포탄 두 발이 같은 배를
+   *   같은 스텝에 맞히면 그건 두 번의 충격이지 한 번의 큰 충격이 아니다.
+   * @type {Map<any, Map<any, {impulse:number, point:{x,y}, peak:number, shot:object|null}>>}
+   */
+  const thisStep = new Map();
 
   // ★ 쿨다운 시각은 **강체가 아니라 hull 에** 산다.
   //
@@ -81,12 +99,49 @@ export function installImpactListener(world, clock) {
     const point = wm?.points?.[peakIndex] ?? wm?.points?.[0];
     if (!point) return;
 
-    consider(a, b, total, point, now);
-    consider(b, a, total, point, now);
+    consider(a, b, total, point, peak, now);
+    consider(b, a, total, point, peak, now);
   });
 
-  /** 한쪽 강체가 이 충격으로 깎이는지 판정해 큐에 넣는다. */
-  function consider(body, other, impulse, point, now) {
+  // 스텝이 끝나면 누적분을 하나의 충격으로 환산해 큐에 올린다. planck 이 `post-step` 을
+  // `m_locked` 를 푼 **뒤에** 발행하므로 여기는 이미 스텝 밖이지만, 강체를 건드리지는 않는다 —
+  // 소비(=차감)는 지금까지처럼 호출자가 `drain()` 으로 가져가서 한다.
+  world.on('post-step', () => {
+    const now = clock.now();
+    for (const [body, byOther] of thisStep) {
+      const hull = body.getUserData()?.hull;
+      if (!hull) continue;                               // 스텝 중에 파괴됐다
+      for (const [other, acc] of byOther) {
+        const mu = acc.shot
+          ? other.getMass()                              // 포탄은 배에 비해 가벼워 μ ≈ 포탄 질량
+          : reducedMass(body.getMass(), other.getMass());
+        const radius = carveRadiusFromImpact({
+          impulse: acc.impulse,
+          effectiveMass: mu,
+          material: hull.params.material,
+          hullArea: hull.params.area,
+        });
+        // 임계 아래는 **큐에 넣지도 않는다.** 넣으면 형상은 그대로인데 재구성 비용만 나간다.
+        if (radius < DAMAGE_TUNING.minCarveRadius) continue;
+
+        const prev = pending.get(body);
+        if (prev && prev.radius >= radius) continue;
+        pending.set(body, {
+          body,
+          at: { x: acc.point.x, y: acc.point.y },
+          radius,
+          energy: (acc.impulse * acc.impulse) / (2 * mu),
+          source: acc.shot ? 'shot' : (other.getUserData()?.obstacle ? 'reef' : 'hull'),
+          other,
+          projectile: acc.shot ? other : null,
+        });
+      }
+    }
+    thisStep.clear();
+  });
+
+  /** 한쪽 강체가 이 충격으로 깎이는지 판정해 **이번 스텝 누적**에 더한다. */
+  function consider(body, other, impulse, point, peak, now) {
     const hull = body.getUserData()?.hull;
     if (!hull) return;                                   // 암초·포탄은 안 깎인다
 
@@ -95,29 +150,21 @@ export function installImpactListener(world, clock) {
 
     if (!offCooldown(hull, now)) return;
 
-    const mu = shot
-      ? other.getMass()                                  // 포탄은 배에 비해 가벼워 μ ≈ 포탄 질량
-      : reducedMass(body.getMass(), other.getMass());
-    const radius = carveRadiusFromImpact({
-      impulse,
-      effectiveMass: mu,
-      material: hull.params.material,
-      hullArea: hull.params.area,
-    });
-    // 임계 아래는 **큐에 넣지도 않는다.** 넣으면 형상은 그대로인데 재구성 비용만 나간다.
-    if (radius < DAMAGE_TUNING.minCarveRadius) return;
+    let byOther = thisStep.get(body);
+    if (!byOther) thisStep.set(body, byOther = new Map());
 
-    const prev = pending.get(body);
-    if (prev && prev.radius >= radius) return;
-    pending.set(body, {
-      body,
-      at: { x: point.x, y: point.y },
-      radius,
-      energy: (impulse * impulse) / (2 * mu),
-      source: shot ? 'shot' : (other.getUserData()?.obstacle ? 'reef' : 'hull'),
-      other,
-      projectile: shot ? other : null,
-    });
+    const acc = byOther.get(other);
+    if (!acc) {
+      byOther.set(other, { impulse, point: { x: point.x, y: point.y }, peak, shot });
+      return;
+    }
+    acc.impulse += impulse;
+    // 차감 지점은 **가장 세게 맞은 접촉점**이다 — 갈라진 임펄스의 평균을 내면 이음매 위,
+    // 즉 두 조각 사이의 빈 곳을 깎게 된다.
+    if (peak > acc.peak) {
+      acc.peak = peak;
+      acc.point = { x: point.x, y: point.y };
+    }
   }
 
   return {
