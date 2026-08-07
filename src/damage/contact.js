@@ -22,8 +22,10 @@ export const CONTACT_TUNING = {
 };
 
 /**
- * @typedef {{body, at:{x,y}, radius:number, energy:number,
+ * @typedef {{body, at:{x,y}, radius:number, energy:number, incidence:number|null,
  *            source:'reef'|'shot'|'hull', other, projectile}} Impact
+ *   energy 는 재질이 흘려보내지 않고 **실제로 일한** 에너지 (J) — 법선분이 아니다.
+ *   incidence 는 입사각 (rad). `E_총` 을 아는 발사체에서만 채워진다.
  */
 
 /**
@@ -135,6 +137,12 @@ export function installImpactListener(world, clock) {
         // 발사체만 자기 총 에너지를 알고 다닌다 → 재질별 입사각 감쇠가 걸린다.
         // 암초·선체끼리는 `E_총` 을 모르므로 법선분 그대로 (= deflection 1 과 같다).
         const strikeEnergy = acc.shot ? acc.shot.strikeEnergy : null;
+        // ★ 표시용 에너지는 **실효분**이어야 한다. 법선분을 그대로 내보내면 빗맞은 탄에서
+        //   "0.6 kJ 가 반경 0.32 m 를 뜯었습니다" 같은 말이 나온다 — 실제로 일한 것은
+        //   경사 감쇠를 되돌린 12.0 kJ 다. 재질이 흘려보내지 않은 만큼이 곧 일한 몫이다.
+        const e = resolveImpactEnergy({
+          impulse: acc.impulse, effectiveMass: mu, material, strikeEnergy,
+        });
         const radius = carveRadiusFromImpact({
           impulse: acc.impulse,
           effectiveMass: mu,
@@ -147,9 +155,6 @@ export function installImpactListener(world, clock) {
           // 다만 조용히 버리지는 않는다 — 탄이 튕겼다는 것은 플레이어가 알아야 할 사건이다.
           if (acc.shot && !acc.shot.glanced && glances.length < MAX_GLANCES) {
             acc.shot.glanced = true;
-            const e = resolveImpactEnergy({
-              impulse: acc.impulse, effectiveMass: mu, material, strikeEnergy,
-            });
             glances.push({
               body,
               at: { x: acc.point.x, y: acc.point.y },
@@ -170,7 +175,8 @@ export function installImpactListener(world, clock) {
           body,
           at: { x: acc.point.x, y: acc.point.y },
           radius,
-          energy: (acc.impulse * acc.impulse) / (2 * mu),
+          energy: e.effective,
+          incidence: e.incidence,
           source: acc.shot ? 'shot' : (other.getUserData()?.obstacle ? 'reef' : 'hull'),
           other,
           projectile: acc.shot ? other : null,

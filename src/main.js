@@ -793,11 +793,17 @@ class Harness {
       if (im.projectile) im.projectile.getUserData().projectile.spent = true;
 
       const kJ = (im.energy / 1000).toFixed(1);
+      // 비스듬히 맞고도 뚫린 경우에만 각도를 말한다 — 정타에 각도를 붙이면 잡음이 된다.
+      // 이 한 줄이 "빗맞아도 뚫리는 나무"와 "빗맞으면 튕기는 철"을 같은 문장 형식으로 잇는다.
+      const deg = im.incidence != null && im.incidence > 0.44
+        ? `입사 ${(im.incidence * 180 / Math.PI).toFixed(0)}°로 빗맞고도 ` : '';
       this.metrics.note('피격', `${im.source} ${kJ} kJ`);
-      this.carveBody(im.body, im.at, im.radius);
+      // ⚠ 일반 메시지를 **먼저** 쓴다. `carveBody` 가 절단·전손처럼 더 구체적인 사실을
+      //   알면 그것이 덮어써야 한다 — 순서를 뒤집으면 배가 두 동강 났는데 "피탄"만 뜬다.
       this.setStatus(im.source === 'shot'
-        ? `피탄 — ${kJ} kJ 가 반경 ${im.radius.toFixed(2)} m 를 뜯었습니다.`
+        ? `피탄 — ${deg}${kJ} kJ 가 반경 ${im.radius.toFixed(2)} m 를 뜯었습니다.`
         : `충돌 — ${kJ} kJ 가 반경 ${im.radius.toFixed(2)} m 를 뜯었습니다.`, 'bad');
+      this.carveBody(im.body, im.at, im.radius);
     }
   }
 
