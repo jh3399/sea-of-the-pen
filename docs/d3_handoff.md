@@ -1,0 +1,222 @@
+# D3 인수인계 — S3부터 이어서
+
+> 작성 2026-08-07 · 브랜치 `docs/shipwright-dev-plan` · `npm run bench` **104/104 통과** · 빌드 정상
+> 원래 계획: `C:\Users\Admin\.claude\plans\d3-synchronous-boot.md`
+> ⚠ **그 계획서의 전제 네 개가 실측으로 뒤집혔다.** 아래 §3 을 먼저 읽고 계획서를 볼 것.
+
+---
+
+## 0. 새 세션에서 맨 먼저 할 일
+
+```bash
+npm run bench     # 104/104 여야 한다. 아니면 여기서 멈추고 원인부터
+npm run dev       # http://localhost:5210/sea-of-the-pen/
+```
+
+읽을 순서: `CLAUDE.md` → 이 문서 → `docs/dev_plan.md` D3 절 → 계획서(§3 정정 반영해서).
+
+브랜치 이름이 `docs/shipwright-dev-plan` 인데 실제로는 D3 기능 작업이 올라가 있다. master 가
+아니므로 그대로 커밋해도 되지만, 새로 파고 싶으면 지금이 적기다.
+
+---
+
+## 1. 끝난 것 (S0~S2)
+
+| 커밋 | 내용 |
+|---|---|
+| `c0e53b6` | 벤치 판정선 먼저 + `damage/hotspot.js` |
+| `cbdf42d` | 연소 파괴를 열원 쪽으로 배선 · `carveBody` 분리 · `rules/provenance.js` |
+| `fe61126` | 충돌 파손 (`damage/contact.js` · 재질 내구 · `physics/obstacle.js`) |
+| `95b32f9` | 불이 번지게 · 연소 반경을 출항 면적 기준으로 (육안 관찰 두 건의 수정) |
+
+### 신규 모듈
+
+| 파일 | 역할 |
+|---|---|
+| `src/damage/hotspot.js` | 차감 **지점**. `hottestOutlinePoint`(구배) · `nearestOutlinePoint`(번짐) · `mostExposedPoint`(첫 발화) |
+| `src/damage/impact.js` | 차감 **크기**. `DAMAGE_TUNING` · `burnRadius` · `carveRadiusFromImpact` · `reducedMass` |
+| `src/damage/contact.js` | post-solve 큐. `installImpactListener` · `offCooldown` · `CONTACT_TUNING` |
+| `src/physics/obstacle.js` | `createObstacle` — 암초 정적 강체 |
+| `src/rules/provenance.js` | `fieldBehind(rules, ruleId)` — 규칙 → 필드 역추적 |
+
+### 기존 파일 변경
+- `src/hull/params.js` — `MATERIALS` 에 `impactThreshold`·`toughness`·`maxCarveRadius` + `rock` 재질
+- `src/physics/body.js` — hull 에 `lastCarveAt`·`launchArea`·`burnAt` 추가, **전부 조각에 승계**
+- `src/main.js` — `burnSpot()` 신규, `carve` → `carve`(클릭 전용) + `carveBody`(지목형) 분리
+- `src/ui/harness.css` — 노 튜닝 패널이 상태줄과 겹쳐서 `top: 58px → 132px`
+
+### ⚠ 아직 하니스에 안 붙은 것
+`installImpactListener` · `createObstacle` · `carveRadiusFromImpact` 는 **`main.js` 에서 0회 참조**다.
+모듈과 벤치까지만 있다. 암초가 맵 데이터에서 오기 때문에 **S4 의 `session.js` 와 함께 배선된다.**
+지금 브라우저에서 배를 암초에 박을 방법은 없다 (암초가 없다).
+
+---
+
+## 2. 남은 것
+
+### S3 — 포탄 · 포탑 (~1.5h)
+
+플레이어 대포는 **범위 밖**이다. 사용자 결정: 3장에서 배가 *받는* 파손은 암초·포탑·연소 셋이고,
+플레이어 대포는 폴백 1순위로 내렸다 (예측 비트 일치 회귀가 D3 에서 가장 비싸다).
+`ITEM_CATALOG.cannon` 스키마는 그대로 두고 `ATTACHABLE` 에도 넣지 않는다.
+
+```js
+// src/damage/projectile.js (신규)
+export function spawnProjectile(world, { x, y, angle, speed, radius, mass, material, bornAt })
+export function cullProjectiles(world, now, bounds)   // 스텝 밖에서 호출 (강체를 부순다)
+
+// src/game/turrets.js (신규, ~40줄)
+export function createTurrets(specs)  // → { step(dt, now) → Array<spawnRequest> }
+```
+
+- userData 는 `{projectile:{bornAt, material, mass}}`. **`hull` 이 없어야** hydro·fields·규칙이 자동으로 건너뛴다.
+- 피탄 → 파손은 **§2 충돌과 완전히 같은 경로다.** `contact.js` 가 `{hull, projectile}` 쌍을 이미
+  처리한다 (`source:'shot'`, `μ = 포탄 질량`, `armDelay` 무장 지연). 새 파손 코드가 필요 없다.
+- 자기 편 안 맞기: **owner 강체 참조를 쓰면 안 된다** — `respawnPieces` 가 강체를 바꿔치기해
+  첫 파손에 참조가 죽는다. 총구 오프셋(선체 밖에서 스폰) + `CONTACT_TUNING.armDelay`(0.1s) 두 겹.
+- 시작값: 질량 12 kg · 속도 55 m/s → E ≈ 18.2 kJ → 나무 r 0.50 m, 철 r 0.13 m(함몰).
+
+벤치: 포탑 탄이 지나가는 배를 깎는다 · 포탑은 자기 탄에 안 맞는다.
+
+### S4 — 맵 3장 + `session.js` (~2h) ★ 가장 큰 덩어리
+
+```js
+// src/maps/maps.json  — 배열 한 파일. 파일을 쪼개면 import 경로가 곧 "코드 안의 맵 이름"이
+//                        되어 통과 질문 (c) 의 기계 판정이 약해진다.
+// src/maps/load.js    — loadMaps(json). loadRules 와 같은 정신으로 스키마 밖이면 throw.
+// src/game/objective.js — evaluate(snapshot, map, run) · withinDesignLimits(...)
+// src/game/session.js   — createSession(map, rules). **DOM 0줄, 렌더 0줄.**
+```
+
+**`session.js` 를 DOM 없이 만드는 것이 타협 불가다.** 통과 질문 (b)"3맵 전부 클리어 가능한가"를
+벤치로 판정하려면 목표 판정·파손 파이프라인·포탑이 헤드리스로 돌아야 하고, `Harness` 안에
+있으면 main.js 의 것과 bench 의 것이 두 벌이 되어 서로 어긋난다.
+
+`step()` 한 번의 순서 — **이게 D3 의 새 규약이다**:
+```
+stepper.advance(dt)              // onPreStep: 장치 → hydro → fields → rules (기존 그대로)
+  ── 스텝 밖 ──
+① engine.drain()  → burnSpot 으로 차감 지점 변환 → carveBody
+② impactQueue.drain() → 강체별 최대 하나 · **이미 죽은 강체 스킵** (session.bodies 멤버십)
+③ 차감 소비                       ← 여기서만 강체가 나고 죽는다
+④ turrets.step() → spawnProjectile
+⑤ cullProjectiles()
+⑥ trace.sample()
+⑦ objective.evaluate()
+```
+
+`main.js` 의 `burnSpot()`(현재 Harness 메서드)을 여기로 옮긴다 — 지금은 하니스에만 있어
+벤치가 못 돈다.
+
+**스키마**(계획서 §4.2 참조). `goal` 은 **선택 필드**로 둘 것 — 없으면 `evaluate` 가 항상
+`sailing` 을 내게 하면 "3장을 샌드박스로 격하"라는 폴백이 **JSON 한 줄 삭제**가 된다.
+승리 판정은 `goalHullFraction = 0.35` (§7.3.4 다단 분리를 허용하되 파편 꼼수는 막는다).
+
+**`src/field/zones.json` 은 손대지 말 것.** 맵이 아니라 회귀 픽스처다 — 목표·경계가 없어야
+"같은 존·같은 규칙·같은 코드에서 한 변수만 다르다"는 D2 가설 C 판정(`bench.mjs`)이 성립한다.
+
+**3맵 수치는 계획서 §4.3 에 있다.** 단 §3② 를 반영해 2장 역풍 판정을 다시 볼 것.
+
+⚠ **`voyage()`(bench.mjs) 를 고치지 말 것.** `destroyed` 에서 주행을 중단하는데 D2 가설 C
+케이스들이 그 동작에 의존한다. `createSession` 을 쓰는 새 헬퍼를 옆에 만든다.
+
+### S5 — 정찰/설계 제약/디브리프 (~2h)
+`this.mode`: `'design'|'sail'` → `'brief'|'design'|'sail'|'debrief'`.
+`src/game/verdict.js` 의 `deriveBadges` — 배지 코드는 전부 시뮬레이션에서 도출(맵 문자열 0개).
+`listing` 배지(`sideAnchors().center` 의 출항 대비 증가분)가 **통과 질문 (a) 를 직접 답한다.**
+규칙 라벨은 `table.json` 의 destroy 규칙에 `"label"` 을 데이터로 추가한다 —
+`loadRules` 는 최상위 미지 키를 검사하지 않으므로 **로더 수정 0줄**이다.
+
+### S6 — 항적 고스트 (~1h)
+`src/game/trace.js`. **입력 재현·시드 고정 불필요** (dev_plan 이 리플레이를 잘랐다).
+10 Hz × 180 s ≈ 60 KB. `drawTrajectory()`(main.js)의 선 그리기를 재사용.
+
+### 아직 안 쓴 벤치 (계획서 §5)
+구조 검사 5종이 통째로 남았다 — **통과 질문 (c) 의 유일한 기계 증거**라 S4 와 같이 넣을 것:
+1. `loadMaps` 통과 · 스키마 밖이면 throw
+2. ★ **어떤 소스 파일도 맵 id 를 이름으로 참조하지 않는다** (`src/**` + `bench.mjs` 재귀 검색,
+   `maps.json` 제외 0건). 벤치 자신도 `maps[0]` 인덱스로만 접근
+3. 맵 JSON 에 `script|code|on|fn|expr|=>` 부재 + 모든 리프가 원시형
+4. **선체에 HP 개념이 없다** — `\bhp\b|health|hitPoints` 0건
+5. 의도 해법은 **bench 안에** 산다. `maps.json` 에 `solution` 을 넣으면 그게 곧 맵별 코드다
+
+---
+
+## 3. ★ 계획서에서 실측으로 뒤집힌 전제
+
+계획서를 그대로 믿으면 안 되는 곳들이다.
+
+**① 쿨다운은 지속 접촉의 가드가 아니다.**
+계획서는 `CONTACT_TUNING.cooldown` 을 세 함정 중 하나로 꼽았지만, A/B 로 재니 쿨다운 0.2s 와
+0 의 결과가 **한 치도 같았다**(20회 차감, −77.4%). 실제로 막는 것은 재질의 `impactThreshold` 와
+`DAMAGE_TUNING.minCarveRadius` 둘이다 — 벽에 기댄 스텝당 에너지는 **2.9 J** 로 나무 임계
+(8 kJ)에 못 미치고, 넘겨도 반경 0.007 m 가 최소 반경(0.12)에서 걸린다.
+쿨다운은 밸런싱 중 임계를 낮췄을 때의 **백스톱**이다. 그렇게 주석에 적어 뒀다.
+
+**② 역풍 돛 페널티는 38% 가 아니라 62% 다.**
+`CLAUDE.md` 와 `docs/dev_plan.md:120` 의 "38%", `src/field/forces.js:12` 주석의 "41%" 는
+**전부 낡은 기록**이다(`pressureCoeff` 를 6.5 로 올린 뒤 갱신 안 됨). 실측:
+```
+역풍에서 노 젓기 20초 — 돛 없이 x 87.3 m · 돛 달고 x 33.0 m (거리 62% 손해)
+```
+→ 2장에서 `SAIL_TUNING.pressureCoeff` 를 올릴 이유가 사라졌다. 사용자가 고른 레버는
+**존 풍속**(계획서 §4.3 의 −16 m/s)이고, 목표는 "% 를 키우기"가 아니라 **부호를 뒤집기**다
+(돛 단 배가 순 후퇴). 판정도 %가 아니라 부호로 — 노 튜닝 슬라이더에 안 흔들린다.
+
+**③ 파손이 안 읽힌 진짜 이유는 "대칭"이 아니라 "외곽선에 안 닿는다"였다.**
+무게중심을 깎으면 clipper 결과가 **구멍**이 되어 `outline` 이 그대로 남는다. `length`·`beam` 이
+`projectedExtent(outline)` 에서 나오므로 저항 타원이 안 바뀐다. 지점이 외곽선 위여야 한다.
+
+**④ 3장 파손 소스에서 "플레이어 대포"는 틀린 이름이었다.**
+대포는 배가 *받는* 파손 소스가 아니다(반동 추진이거나, 부술 대상이 필요한데 암초는 안 깎인다).
+사용자 재확인 결과 **암초 + 포탑**으로 확정.
+
+---
+
+## 4. 함정 목록 (전부 실제로 밟았거나 밟을 뻔한 것)
+
+1. **`respawnPieces` 는 강체를 파괴하고 새로 만든다.** 강체를 키로 쓰는 상태(WeakMap·Map·참조)는
+   전부 차감 순간에 리셋된다. 쿨다운이 이걸로 죽어 있었다. 강체에 붙는 상태는 **hull 에 얹고
+   `respawnPieces` 에서 승계**할 것 (`status`·`lastCarveAt`·`launchArea`·`burnAt` 이 그 목록).
+   `burnAt` 은 아이템과 **같은 재중심화 변환**을 받아야 한다.
+2. **큐 소비 시 이미 파괴된 강체를 스킵**해야 한다. 한 프레임에 물리 스텝이 최대 5번 돌아
+   (`world.js MAX_STEPS_PER_FRAME`) 큐에 여러 건이 쌓이고, ③에서 강체가 바뀌면 뒤따르는
+   항목이 댕글링이 된다.
+3. **post-solve 는 접촉이 지속되는 한 매 스텝 불린다.** 그리고 콜백 안에서 강체를 만들거나
+   부술 수 없다 (planck 이 명시적으로 금지).
+4. **`disc` 필드는 `radius × (1−falloff)` 안쪽이 평평하다.** 화염 지대(r=30, falloff 0.1)는
+   **27 m 안이 균일**이라 구배 로직이 닿는 곳이 얇은 고리뿐이다. 3장 맵을 만들 때 `falloff` 를
+   키우면 "열원 쪽이 먼저 탄다"가 더 자주 보인다 — **S4 에서 정할 것.**
+5. **"가장 먼 점"을 반복 차감하면 폴리곤이 원이 된다.** 실측으로 차감 지점이
+   `26°→358°→50°→339°→317°` 처럼 반대편을 오갔다(둥근 배 8분면 7/8). 번짐으로 4/8 로 내렸다.
+6. **부동소수점 경계로 벤치를 쓰지 말 것.** `10 + 0.2 − 10 = 0.19999999999999929`.
+7. **회귀는 무손상 대비로 잰다.** 완전히 대칭인 코퍼스도 RDP 미세 비대칭(노 y 합 0.83 cm)으로
+   20초에 18° 돈다. 0 과 비교하면 무엇을 보증하는지 알 수 없다.
+8. **A/B 없이 가드를 검증했다고 하지 말 것.** 한쪽만 재면 물리가 정한 수를 가드의 공으로 읽는다.
+9. **`predict.js` 비트 일치** — 플레이어 대포를 되살린다면 반동은 임펄스가 아니라 **sin² 봉투**
+   여야 하고 `cloneControl` 이 대포 시계와 `wasHeld` 를 깊은 복사해야 한다. 예측은 힘만 적분한다.
+
+---
+
+## 5. 사람 판정 대기 (벤치는 전제까지만 보증한다)
+
+**아직 아무도 브라우저에서 확인하지 않았다.** 자동화 브라우저는 `visibilityState: hidden` 이라
+rAF 가 0 프레임이므로 사람이 창을 띄워야 한다.
+
+1. **거동 인지 (통과 질문 a)** — `npm run dev` → 코퍼스 `둥근 배` → 존 `화염 지대` → 출항 →
+   ↑ 꾹. 한쪽이 먹혀 들어가며 배가 저절로 편향해야 하고, 약 64초(16사이클)에 전손한다.
+   상태줄이 `좌현이 타서 무너졌습니다` 처럼 부위를 말한다.
+   - 안 읽히면 → `DAMAGE_TUNING.burnRadiusOfHull` 0.30 → 0.42
+   - 너무 과하면(벤치 실측 좌현 차감 시 20초에 −770°) → 반대로 내린다
+2. 노 튜닝 패널 위치 (`harness.css:155` `top: 132px`) 가 적당한지
+
+---
+
+## 6. 문서 정정 TODO (D3 마무리에)
+
+- `CLAUDE.md` D2 줄의 **"71/71 통과"** → 실제로는 D2 직후 이미 85건이었고 지금 **104건**이다
+  (D2 이후 노 튜닝 커밋들이 케이스를 더했다)
+- `CLAUDE.md` 와 `docs/dev_plan.md:120` 의 **역풍 페널티 38%** → **62%**
+- `src/field/forces.js:12` 주석의 **"6.5 이면 41%"** → 62%
+- `index.html` 의 `<title>`·`<h1>` 이 아직 **"D2 창발 조향 + 규칙 엔진"**
+- `CLAUDE.md` 진행 상태에 D3 체크 + "D3 에서 확인된 사실" 절 (§3·§4 를 옮겨 적을 것)
