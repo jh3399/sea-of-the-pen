@@ -772,6 +772,20 @@ class Harness {
    * 출처를 모르는 것이 §2 와 §3 의 파손이 한 코드 경로로 합쳐진다는 설계의 요점이다.
    */
   consumeImpacts() {
+    // ★ 튕긴 탄을 **먼저** 알린다. 같은 프레임에 실제 차감도 있었다면 아래 루프가 상태줄을
+    //   덮어쓰는 것이 맞다 — 뚫린 사실이 튕긴 사실보다 급하다.
+    for (const g of this.impacts.drainGlances()) {
+      const kJ = (g.energy / 1000).toFixed(1);
+      const deg = g.incidence != null ? `${(g.incidence * 180 / Math.PI).toFixed(0)}°` : null;
+      const how = deg ? `입사 ${deg}로 빗맞아 ` : '';
+      this.metrics.note('튕김', `${deg ? `입사 ${deg} · ` : ''}${kJ} kJ`);
+      this.setStatus(g.reason === 'deflected'
+        ? `튕겨 나감 — ${how}${g.material.name}에 ${kJ} kJ 만 실렸습니다 ` +
+          `(임계 ${(g.material.impactThreshold / 1000).toFixed(1)} kJ).`
+        : `긁힘 — ${how}${kJ} kJ 가 실렸지만 자국이 ${g.radius.toFixed(2)} m 라 ` +
+          `${g.material.name}엔 흠집도 안 났습니다.`, 'warn');
+    }
+
     for (const im of this.impacts.drain()) {
       if (!this.bodies.has(im.body)) continue;      // 이미 파괴된 강체 (댕글링)
       // 임무를 마친 탄은 다음 컬링에서 사라진다. `begin-contact` 가 이미 찍었지만,

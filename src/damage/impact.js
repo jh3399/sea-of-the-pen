@@ -29,6 +29,34 @@ export function burnRadius(hullArea) {
 }
 
 /**
+ * 이 충격이 재질에 실제로 싣는 에너지와, 얼마나 비스듬히 맞았는가.
+ *
+ * 반경 계산과 "튕겨 나감" 표시가 **같은 식**을 봐야 한다 — 따로 두면 상태줄이 말하는 수치와
+ * 실제 차감이 어긋나고, 그건 플레이어가 배울 수 없는 종류의 거짓말이 된다.
+ *
+ * @returns {{normal:number, effective:number, incidence:number|null}}
+ *   normal    솔버가 실제로 실은 법선분 (J)
+ *   effective 재질의 `deflection` 을 반영해 실제로 재질을 때린 에너지 (J)
+ *   incidence 입사각 (rad). `strikeEnergy` 를 모르면 null — `cos²θ = E_법선 / E_총` 에서 뽑는다.
+ *             ⚠ 각도기가 아니라 **표시용**이다. 솔버의 법선분이 해석값보다 10%쯤 크게 나와
+ *               (측정 20.0 vs 18.1 kJ) 기하학적 45°가 42°로 읽힌다. 몇 도를 다투는 판정에
+ *               쓰지 말 것 — 벤치가 각도를 재야 하면 판때기를 돌려 기하로 통제한다.
+ */
+export function resolveImpactEnergy({ impulse, effectiveMass, material, strikeEnergy = null }) {
+  const normal = (impulse * impulse) / (2 * Math.max(effectiveMass, 1e-9));
+  if (strikeEnergy == null || !(strikeEnergy > 0)) {
+    return { normal, effective: normal, incidence: null };
+  }
+  // 솔버가 낸 법선분이 총 에너지를 넘길 수 있어(측정: 20.0 vs 18.1 kJ) 음수로 새지 않게 막는다.
+  const glanced = Math.max(0, strikeEnergy - normal);
+  return {
+    normal,
+    effective: normal + (1 - (material.deflection ?? 1)) * glanced,
+    incidence: Math.acos(Math.sqrt(Math.min(1, normal / strikeEnergy))),
+  };
+}
+
+/**
  * 충돌·피탄의 차감 반경 (§7.2 "충격 지점·강도·재질 내구도에 따라").
  *
  * ★ 임펄스가 아니라 **에너지**로 잰다. `E = J²/2μ`.
@@ -62,11 +90,8 @@ export function carveRadiusFromImpact({
   impulse, effectiveMass, material, hullArea, strikeEnergy = null,
 }) {
   if (!material || !(effectiveMass > 0)) return 0;
-  const normalEnergy = (impulse * impulse) / (2 * effectiveMass);
-  // 솔버가 낸 법선분이 총 에너지를 넘길 수 있어(측정: 20.0 vs 18.1 kJ) 음수로 새지 않게 막는다.
-  const glanced = strikeEnergy != null ? Math.max(0, strikeEnergy - normalEnergy) : 0;
-  const energy = normalEnergy + (1 - (material.deflection ?? 1)) * glanced;
-  const over = energy - material.impactThreshold;
+  const { effective } = resolveImpactEnergy({ impulse, effectiveMass, material, strikeEnergy });
+  const over = effective - material.impactThreshold;
   if (!(over > 0)) return 0;
 
   return Math.min(

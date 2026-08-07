@@ -2137,6 +2137,48 @@ check('★ 철은 빗맞으면 미끄러진다 — 경사 장갑 (비스듬히 �
   plate.ironHead.radius > 0 && plate.ironTilt.radius === 0,
   `정타 ${plate.ironHead.radius.toFixed(3)} m → 45° 무해`);
 
+// ★ 튕긴 사실이 **보고돼야** 한다. 조용히 사라지면 플레이어에게 그 화면은 "이음매에서
+//   갈라져 무해해지던 버그"와 구분되지 않는다 — 둘 다 "맞았는데 아무 일도 안 남"이다.
+//   경사 장갑이 배울 수 있는 규칙이 되려면 튕겼다는 사실 자체가 관측 가능해야 한다.
+function glancesOf(material, thetaDeg) {
+  const world = createWorld();
+  createHullBody(world, { outline: PLATE, holes: [], items: [] },
+    { position: { x: 0, y: 0 }, angle: thetaDeg * Math.PI / 180, material, extraMass: 0 });
+  installProjectileContacts(world);
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  spawnProjectile(world, {
+    x: -25, y: 0, angle: 0, speed: TURRET_TUNING.speed,
+    radius: TURRET_TUNING.projectileRadius, mass: TURRET_TUNING.mass,
+    material: 'iron', bornAt: 0, lifetime: 4,
+  });
+  const s = new FixedStepper(world, {});
+  const out = [];
+  let carves = 0;
+  for (let i = 0; i < 120; i++) {
+    s.advance(FIXED_DT); elapsed += FIXED_DT;
+    carves += queue.drain().length;
+    out.push(...queue.drainGlances());
+  }
+  return { glances: out, carves };
+}
+
+const ricochet = glancesOf('iron', 45);
+const punched = glancesOf('wood', 45);
+const g0 = ricochet.glances[0];
+console.log(`  철 45° — 튕김 보고 ${ricochet.glances.length}건` +
+  `${g0 ? ` (입사 ${(g0.incidence * 180 / Math.PI).toFixed(0)}° · ${(g0.energy / 1000).toFixed(1)} kJ · ${g0.reason})` : ''}` +
+  ` · 나무 45° — 튕김 ${punched.glances.length}건 / 차감 ${punched.carves}회`);
+check('★ 튕긴 탄이 조용히 사라지지 않는다 (안 그러면 파손 버그와 구분되지 않는다)',
+  ricochet.glances.length === 1 && ricochet.carves === 0
+    && g0.reason === 'deflected' && g0.incidence > 0.5 && g0.material.key === 'iron',
+  `1건 · 입사 ${(g0.incidence * 180 / Math.PI).toFixed(0)}° · ${(g0.energy / 1000).toFixed(1)} kJ`);
+
+// 짝. 뚫린 탄까지 튕김으로 보고하면 상태줄이 거짓말을 한다.
+check('뚫은 탄은 튕김으로 보고되지 않는다 (나무는 같은 45°에서 뚫린다)',
+  punched.glances.length === 0 && punched.carves === 1,
+  `나무 튕김 0건 · 차감 ${punched.carves}회`);
+
 check('감쇠 노브의 방향이 뒤집히지 않는다 (나무 < 철)',
   MATERIALS.wood.deflection < MATERIALS.iron.deflection && MATERIALS.iron.deflection === 1,
   `나무 ${MATERIALS.wood.deflection} < 철 ${MATERIALS.iron.deflection}`);

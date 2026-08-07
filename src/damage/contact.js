@@ -4,7 +4,9 @@
 //   ("You cannot create/destroy world entities inside these callbacks").
 //   소비는 `stepper.advance()` 가 끝난 뒤 스텝 밖에서 한다 — 규칙 엔진의 `drain()` 과
 //   똑같은 규약이고, 파라미터 재계산을 이벤트 시점에만 하는 §7.5 와도 같은 자리다.
-import { carveRadiusFromImpact, reducedMass, DAMAGE_TUNING } from './impact.js';
+import {
+  carveRadiusFromImpact, resolveImpactEnergy, reducedMass, DAMAGE_TUNING,
+} from './impact.js';
 
 export const CONTACT_TUNING = {
   /**
@@ -68,6 +70,20 @@ export function installImpactListener(world, clock) {
    * @type {Map<any, Map<any, {impulse:number, point:{x,y}, peak:number, shot:object|null}>>}
    */
   const thisStep = new Map();
+  /**
+   * 맞았는데 아무 일도 안 일어난 **발사체**들. (`{body, at, energy, incidence, material, reason}`)
+   *
+   * ★ 빗맞아 튕긴 탄은 지금까지 조용히 사라졌다. 그런데 플레이어에게 그 화면은 방금 고친
+   *   "이음매에서 갈라져 무해해지던" 버그와 **구분되지 않는다** — 둘 다 "맞았는데 아무 일도
+   *   안 남"이다. 경사 장갑이 배울 수 있는 규칙이 되려면 튕겼다는 사실 자체가 보여야 한다.
+   *
+   * ⚠ **발사체만** 담는다. post-solve 는 접촉이 지속되는 한 매 스텝 불리므로 암초에 기댄
+   *   배까지 담으면 초당 60건이 쏟아진다. 탄은 맞는 순간 `spent` 로 죽는 일회성 사건이라
+   *   그 문제가 없고, 한 탄이 두 스텝에 걸쳐 접촉해도 `glanced` 래치가 한 번만 통과시킨다.
+   */
+  const glances = [];
+  /** 아무도 안 비울 때를 대비한 상한 (하니스는 매 프레임 비운다). */
+  const MAX_GLANCES = 16;
 
   // ★ 쿨다운 시각은 **강체가 아니라 hull 에** 산다.
   //
@@ -115,17 +131,38 @@ export function installImpactListener(world, clock) {
         const mu = acc.shot
           ? other.getMass()                              // 포탄은 배에 비해 가벼워 μ ≈ 포탄 질량
           : reducedMass(body.getMass(), other.getMass());
+        const material = hull.params.material;
+        // 발사체만 자기 총 에너지를 알고 다닌다 → 재질별 입사각 감쇠가 걸린다.
+        // 암초·선체끼리는 `E_총` 을 모르므로 법선분 그대로 (= deflection 1 과 같다).
+        const strikeEnergy = acc.shot ? acc.shot.strikeEnergy : null;
         const radius = carveRadiusFromImpact({
           impulse: acc.impulse,
           effectiveMass: mu,
-          material: hull.params.material,
+          material,
           hullArea: hull.params.area,
-          // 발사체만 자기 총 에너지를 알고 다닌다 → 재질별 입사각 감쇠가 걸린다.
-          // 암초·선체끼리는 `E_총` 을 모르므로 법선분 그대로 (= deflection 1 과 같다).
-          strikeEnergy: acc.shot ? acc.shot.strikeEnergy : null,
+          strikeEnergy,
         });
         // 임계 아래는 **큐에 넣지도 않는다.** 넣으면 형상은 그대로인데 재구성 비용만 나간다.
-        if (radius < DAMAGE_TUNING.minCarveRadius) continue;
+        if (radius < DAMAGE_TUNING.minCarveRadius) {
+          // 다만 조용히 버리지는 않는다 — 탄이 튕겼다는 것은 플레이어가 알아야 할 사건이다.
+          if (acc.shot && !acc.shot.glanced && glances.length < MAX_GLANCES) {
+            acc.shot.glanced = true;
+            const e = resolveImpactEnergy({
+              impulse: acc.impulse, effectiveMass: mu, material, strikeEnergy,
+            });
+            glances.push({
+              body,
+              at: { x: acc.point.x, y: acc.point.y },
+              energy: e.effective,
+              incidence: e.incidence,
+              material,
+              radius,
+              // 임계를 못 넘었나(튕김), 넘었지만 자국이 너무 작은가(긁힘).
+              reason: e.effective < material.impactThreshold ? 'deflected' : 'scratch',
+            });
+          }
+          continue;
+        }
 
         const prev = pending.get(body);
         if (prev && prev.radius >= radius) continue;
@@ -172,6 +209,12 @@ export function installImpactListener(world, clock) {
 
   return {
     size: () => pending.size,
+    /** 맞았지만 아무 자국도 안 남긴 탄들. 소비자가 안 부르면 상한에서 조용히 멈춘다. */
+    drainGlances() {
+      const out = glances.slice();
+      glances.length = 0;
+      return out;
+    },
     drain() {
       const out = [...pending.values()];
       pending.clear();
