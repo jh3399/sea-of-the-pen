@@ -38,6 +38,9 @@ import { rotate, translate, bounds } from './geom/poly.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
 const IMPACT_RADIUS = 0.8;
+/** 포탄이 무언가에 맞은 자국이 보이는 시간 (s) 과 동시 상한. */
+const SPARK_LIFE = 0.35;
+const SPARK_MAX = 24;
 
 /** 세 척 비교의 출연진. 같은 입력을 받고 형상만 다르다. */
 const COMPARE_CAST = [
@@ -139,6 +142,8 @@ class Harness {
     this.projectiles = new Set();
     this.obstacles = new Set();
     this.turrets = null;
+    /** 포탄이 맞고 죽은 자리 — 사라짐에 원인이 보이게 하는 유일한 장치다. */
+    this.sparks = [];
     // 리스너는 여기서 **딱 한 번**. `world.on` 은 push 라 출항할 때마다 걸면 리스너가 쌓이고,
     // world 는 생성자에서 한 번 만들어져 세션 내내 산다.
     this.impacts = installImpactListener(this.world, { now: () => this.simTime });
@@ -813,6 +818,7 @@ class Harness {
     for (const body of this.obstacles) this.world.destroyBody(body);
     this.projectiles.clear();
     this.obstacles.clear();
+    this.sparks.length = 0;
     this.turrets = null;
   }
 
@@ -950,7 +956,17 @@ class Harness {
       //    순서를 바꾸면 물리에서 온 충격이 멤버십 가드에 걸려 조용히 버려진다.
       this.stepStress();
       // ⑤ 포탄 소멸은 큐 소비 **뒤**다 — Impact 가 포탄 강체 참조를 들고 있다.
-      for (const dead of cullProjectiles(this.world, this.simTime)) this.projectiles.delete(dead);
+      for (const dead of cullProjectiles(this.world, this.simTime)) {
+        this.projectiles.delete(dead);
+        // ★ 무언가에 맞아 죽은 탄은 **자국을 남긴다.** 그냥 사라지면 "선체를 맞혔는데 아무
+        //   일도 안 일어났다"와 "암초에 막혔다"와 "수명이 다했다"가 화면에서 전부 같아 보인다.
+        //   상태줄로 알리면 암초 흡수만 30초에 47건이라 도배가 되므로, 글자가 아니라 자국으로 낸다.
+        const shot = dead.getUserData().projectile;
+        if (!shot.spent) continue;                    // 수명·경계로 죽은 것은 그냥 날아간 것이다
+        const p = dead.getPosition();
+        this.sparks.push({ x: p.x, y: p.y, at: this.simTime, radius: shot.radius });
+      }
+      if (this.sparks.length > SPARK_MAX) this.sparks.splice(0, this.sparks.length - SPARK_MAX);
       this.updateCamera();
       // 패널은 계측 HUD 와 같은 이유로 초당 몇 번이면 충분하다 — 매 프레임 innerHTML 을
       // 새로 쓰면 비교 화면이 재려는 그 프레임 예산을 패널이 갉아먹는다.
@@ -1162,6 +1178,29 @@ class Harness {
       ctx.arc(p.x, p.y, Math.max(shot.radius, view.px(2.5)), 0, Math.PI * 2);
       ctx.fill();
     }
+    // 맞고 죽은 자리. 팽창하며 사라지는 고리 하나 — 글자 없이 "여기서 멈췄다"만 말한다.
+    //
+    // ⚠ 고리를 포탄 반경(0.15 m)에서 출발시키면 안 된다. 줌 16 px/m 에서 2.4 px 라
+    //   **가장 밝을 때 가장 안 보인다.** 처음부터 선체 폭에 견줄 크기로 띄우고 커지며 사라진다.
+    for (const s of this.sparks) {
+      const age = (this.simTime - s.at) / SPARK_LIFE;
+      if (age < 0 || age > 1) continue;
+      const fade = 1 - age;
+      ctx.strokeStyle = '#ffd35c';
+      ctx.globalAlpha = fade;
+      ctx.lineWidth = view.px(1 + 3 * fade);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 0.45 + age * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+      // 터진 순간의 심지 — 첫 몇 프레임만 하얗게 남아 "여기다"를 찍어 준다.
+      ctx.globalAlpha = fade * fade;
+      ctx.fillStyle = '#fff6d8';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, Math.max(s.radius * 1.6, view.px(2)), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
     if (this.turrets) {
       this.metrics.note('포탄', `${this.projectiles.size}발 · 발사 ${this.turrets.fired}`);
     }
