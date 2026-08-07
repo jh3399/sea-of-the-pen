@@ -13,7 +13,9 @@ import { Settings, Box } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
 import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
-import { applyDevices, DEVICE_TUNING, oarFalloff, strokeGate } from '../src/physics/devices.js';
+import {
+  applyDevices, DEVICE_TUNING, oarFalloff, strokeGate, STROKE_KEYMAP,
+} from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
 import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
 import { attachItem, itemsExtraMass, canAttachAt } from '../src/items/attach.js';
@@ -519,6 +521,56 @@ check('좌현 노와 우현 노는 서로 반대로 돈다 (카누와 같다 —
 check('대칭 선체는 양쪽을 저으면 토크가 상쇄돼 직진한다',
   bothEven.turned < portOnly.turned * 0.05,
   `양쪽 ${bothEven.turned.toFixed(3)}° < 한쪽 ${portOnly.turned.toFixed(1)}° × 0.05`);
+
+// ── ★ 방향키 = 제자리 선회, ↑ 를 얹으면 넓은 선회. 규칙 하나(상쇄)에서 둘 다 나온다 ──
+//
+// ← 는 우현 앞젓기 + 좌현 역젓기다. 두 노의 토크가 **같은 부호로 더해지고** 전진 추력은
+// 서로 깎아, 카누처럼 제자리에 가까운 선회가 된다. 반경이 주는 대가로 속도를 판다.
+// ↑ 를 함께 누르면 좌현에 +1 과 −1 이 겹쳐 **상쇄되어 그 노가 물 밖으로 나가고**, 남은
+// 우현 앞젓기가 곧 예전의 "한쪽만 젓기" = 넓은 선회다. 새 힘도 새 조향 코드도 없다.
+//
+// ⚠ 이 케이스들은 반드시 **STROKE_KEYMAP 을 거쳐** 만들어야 한다. 손으로 쓴
+//   [{port,−1},{starboard,+1}] 배열을 넣으면 키맵도 상쇄 규칙도 통째로 빠져도 통과해 버린다.
+/** 눌린 키 조합을 최대 케이던스로 홀드하는 입력 함수 (게임과 같은 경로로 병합된다). */
+const holdKeys = (...keys) => {
+  const strokes = keys.flatMap((k) => STROKE_KEYMAP[k]);
+  const every = Math.max(1, Math.round(STROKE_SPAN / FIXED_DT));
+  return (step) => (step % every === 0 ? { strokes } : EMPTY_INPUT);
+};
+
+const pivotLeft = drive('sloop', holdKeys('ArrowLeft'), { seconds: 8 });
+const pivotRight = drive('sloop', holdKeys('ArrowRight'), { seconds: 8 });
+const wideLeft = drive('sloop', holdKeys('ArrowUp', 'ArrowLeft'), { seconds: 8 });
+// 같은 조합을 반대 순서로 누른 배 — 상쇄는 교환법칙이 성립하므로 비트 단위로 같아야 한다.
+const wideSwapped = drive('sloop', holdKeys('ArrowLeft', 'ArrowUp'), { seconds: 8 });
+// 두 방향키를 동시에 — 양쪽 노 모두 상쇄돼 아무 노도 물에 들어가지 않는다.
+const bothSteer = drive('sloop', holdKeys('ArrowLeft', 'ArrowRight'), { seconds: 8 });
+const coast8 = drive('sloop', EMPTY_INPUT, { seconds: 8 });
+const radiusOf = (r) => r.speed / Math.max(Math.abs(r.w), 1e-9);
+console.log(`  8초 — 제자리(←) ${pivotLeft.yaw.toFixed(1)}° R ${radiusOf(pivotLeft).toFixed(1)} m ` +
+  `${pivotLeft.speed.toFixed(2)} m/s · 넓게(↑+←) ${wideLeft.yaw.toFixed(1)}° ` +
+  `R ${radiusOf(wideLeft).toFixed(1)} m ${wideLeft.speed.toFixed(2)} m/s`);
+check('★ 방향키만 누르면 제자리 선회다 (반대쪽 역젓기 — 조향 코드 0줄)',
+  radiusOf(pivotLeft) < radiusOf(wideLeft) * 0.5 && pivotLeft.turned > wideLeft.turned,
+  `R ${radiusOf(pivotLeft).toFixed(1)} m < 넓은 선회 ${radiusOf(wideLeft).toFixed(1)} m × 0.5 · ` +
+  `선회 ${pivotLeft.turned.toFixed(1)}° > ${wideLeft.turned.toFixed(1)}°`);
+check('★ 그 대가로 느려진다 (원칙 2 — 빨리 돌려면 속도를 판다)',
+  pivotLeft.speed < wideLeft.speed * 0.6,
+  `제자리 ${pivotLeft.speed.toFixed(2)} m/s < 넓은 선회 ${wideLeft.speed.toFixed(2)} m/s × 0.6`);
+check('★ ↑ 를 함께 누르면 역젓기가 상쇄돼 넓은 선회가 된다 (우현만 젓기와 비트 일치)',
+  Math.abs(wideLeft.yaw - starOnly.yaw) < 1e-9 && Math.abs(wideLeft.speed - starOnly.speed) < 1e-9,
+  `↑+← ${wideLeft.yaw.toFixed(4)}° = 우현만 ${starOnly.yaw.toFixed(4)}°`);
+check('← 와 → 는 정확히 반대로 돈다 (부호도 τ = −y·F 에서 나온다)',
+  Math.sign(pivotLeft.yaw) === -Math.sign(pivotRight.yaw)
+    && Math.abs(pivotLeft.turned - pivotRight.turned) < pivotLeft.turned * 0.1,
+  `← ${pivotLeft.yaw.toFixed(1)}° vs → ${pivotRight.yaw.toFixed(1)}°`);
+check('★ 키를 누른 순서가 거동을 바꾸지 않는다 (상쇄는 교환법칙이 성립한다)',
+  Math.abs(wideSwapped.yaw - wideLeft.yaw) < 1e-9
+    && Math.abs(wideSwapped.speed - wideLeft.speed) < 1e-9,
+  `←→↑ 순서 ${wideSwapped.yaw.toFixed(4)}° = ↑→← 순서 ${wideLeft.yaw.toFixed(4)}°`);
+check('← 와 → 를 동시에 누르면 두 노 모두 물 밖이다 (무입력과 비트 일치)',
+  Math.abs(bothSteer.yaw - coast8.yaw) < 1e-9 && Math.abs(bothSteer.speed - coast8.speed) < 1e-9,
+  `←+→ ${bothSteer.speed.toFixed(4)} m/s = 무입력 ${coast8.speed.toFixed(4)} m/s`);
 
 // ── 넓은 배가 잘 돈다 — 팔길이가 반폭이므로 (형상 → 조향 특성) ──────────────────
 const oarX = (key) => defaultDevices(hulls[key].outline).find((d) => d.type === 'oar').x;
