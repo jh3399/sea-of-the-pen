@@ -9,7 +9,7 @@ import { strokeToHull } from '../src/hull/polygon.js';
 import { computeHullParams, HYDRO_TUNING, MATERIALS } from '../src/hull/params.js';
 import { decomposeHull } from '../src/hull/decompose.js';
 import { CORPUS, CORPUS_LABELS } from '../src/hull/corpus.js';
-import { Settings } from 'planck';
+import { Settings, Box } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
 import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
@@ -23,6 +23,9 @@ import { burnRadius, carveRadiusFromImpact } from '../src/damage/impact.js';
 import { installImpactListener, offCooldown, CONTACT_TUNING } from '../src/damage/contact.js';
 import { createObstacle } from '../src/physics/obstacle.js';
 import { createTurrets, TURRET_TUNING, MIN_PERIOD } from '../src/game/turrets.js';
+import {
+  spawnProjectile, cullProjectiles, installProjectileContacts, PROJECTILE_TUNING,
+} from '../src/damage/projectile.js';
 import { fieldBehind } from '../src/rules/provenance.js';
 import { bounds } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
@@ -1800,6 +1803,147 @@ check('충전율이 0 에서 1 로 자라고 발사 직후 되감긴다',
     && chargeT.charge(0, 1.999) > 0.99
     && (chargeT.step(2.0), chargeT.charge(0, 2.0) === 0),
   '0 → 0.5 → ~1 → 발사 → 0');
+
+// ── 이제 탄 자체의 성질. 셋 다 "그럴 것이다"가 아니라 실제로 그런지를 잰다.
+
+/** 월드에 살아 있는 포탄 수. Set 이 아니라 **월드**를 세는 것이 요점이다 (누수 케이스 참조). */
+function countProjectiles(world) {
+  let n = 0;
+  for (let b = world.getBodyList(); b; b = b.getNext()) if (b.getUserData()?.projectile) n++;
+  return n;
+}
+
+/** 포탄 하나를 빈 월드에 쏘고 스텝을 돈다. 표적 없이 탄만 본다. */
+function soloShot(overrides = {}, steps = 6, { fields = null } = {}) {
+  const world = createWorld();
+  const req = {
+    x: 0, y: 0, angle: 0, speed: TURRET_TUNING.speed, radius: TURRET_TUNING.projectileRadius,
+    mass: TURRET_TUNING.mass, material: 'iron', bornAt: 0, lifetime: TURRET_TUNING.lifetime,
+    ...overrides,
+  };
+  installProjectileContacts(world);
+  const shot = spawnProjectile(world, req);
+  const engine = fields ? createRuleEngine(RULES, fields) : null;
+  const s = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyHydroToWorld(world, dt);
+      if (fields) applyFieldsToWorld(world, fields, dt);
+      engine?.tick(world, dt);
+    },
+  });
+  const track = [];
+  for (let i = 0; i < steps; i++) {
+    s.advance(FIXED_DT);
+    const p = shot.getPosition();
+    const v = shot.getLinearVelocity();
+    track.push({ x: p.x, y: p.y, vx: v.x, vy: v.y });
+  }
+  return { world, shot, track };
+}
+
+// ★ 관통 회귀는 **A/B 로만** 의미가 있다. 한쪽만 재면 물리가 정한 수를 가드의 공으로 읽는다.
+//   벽 위치를 상수로 박지 않고 `speed × FIXED_DT × 1.5` 로 유도하는 이유도 같다 — 탄속을
+//   올리는 순간 시험 벽이 샘플 지점 위로 올라가 회귀가 조용히 의미를 잃는다.
+//
+// ⚠ 표적은 반드시 **동적**이어야 이 A/B 가 성립한다. planck 은 `isBullet() || !isDynamic()` 일
+//   때 TOI 를 돌리므로 정적 암초는 bullet 없이도 CCD 가 공짜로 걸린다 (실제로 정적 벽으로
+//   재 보니 A/B 가 한 치도 같았다). 그런데 이 게임에서 포탄이 맞히는 것은 **선체 — 동적 강체**다.
+//   특히 §7.3.4 다단 분리가 만든 얇은 파편이 정확히 이 위험에 노출된다.
+const stepLen = TURRET_TUNING.speed * FIXED_DT;
+const wallX = stepLen * 1.5;   // 샘플 x = 0, 0.92, 1.83 … 의 정확히 한가운데
+const pierce = ['ccd', 'noccd'].map((mode) => {
+  const world = createWorld();
+  installProjectileContacts(world);
+  const target = world.createBody({ type: 'dynamic', position: new Vec2(wallX, 0) });
+  target.createFixture({ shape: new Box(0.05, 5), density: 500, friction: 0.4, restitution: 0 });
+  const shot = spawnProjectile(world, {
+    x: 0, y: 0, angle: 0, speed: TURRET_TUNING.speed, radius: TURRET_TUNING.projectileRadius,
+    mass: TURRET_TUNING.mass, material: 'iron', bornAt: 0, lifetime: 9,
+  });
+  if (mode === 'noccd') shot.setBullet(false);
+  const s = new FixedStepper(world, {});
+  for (let i = 0; i < 6; i++) s.advance(FIXED_DT);
+  return shot.getPosition().x;
+});
+console.log(`  두께 0.1 m 동적 표적(x=${wallX.toFixed(3)}) 에 ${TURRET_TUNING.speed} m/s 사격 — ` +
+  `CCD 켜면 x ${pierce[0].toFixed(2)} · 끄면 x ${pierce[1].toFixed(2)} (스텝당 ${stepLen.toFixed(3)} m)`);
+check('★ 포탄이 얇은 벽을 관통하지 않는다 (CCD A/B — 끄면 실제로 뚫린다)',
+  pierce[0] < wallX && pierce[1] > wallX,
+  `켬 ${pierce[0].toFixed(2)} < ${wallX.toFixed(2)} < 끔 ${pierce[1].toFixed(2)}`);
+check('탄속이 planck 의 스텝당 이동 상한 아래다 (넘으면 클램프돼 탄도가 거짓말이 된다)',
+  stepLen < Settings.maxTranslation,
+  `${stepLen.toFixed(3)} m < ${Settings.maxTranslation} m`);
+
+// ★ 직선 탄도 — hull userData 가 없다는 사실 하나가 hydro·fields·규칙 세 가드를 동시에
+//   통과시키는지를 end-to-end 로 증명한다. 허용 오차가 아니라 **정확히 0** 으로 재는 이유:
+//   중력 0 · 힘 0 · damping 0 이면 v += 0 과 v *= 1/(1+0) 이라 부동소수점이 값을 못 바꾼다.
+//   즉 힘이 단 한 번이라도 들어가면 즉시 y ≠ 0 이 된다. 오차를 두면 아주 작은 진짜 항력이
+//   그 안에 숨고, 항력이 조금이라도 있으면 55 m/s 전제와 E = J²/2μ 가 통째로 어긋난다.
+const crossFields = createFields(ZONES.zones.crosswind.fields);
+const ballistic = soloShot({}, 300, { fields: crossFields });
+const driftFree = ballistic.track.every((t) => t.y === 0 && t.vy === 0);
+const speedKept = ballistic.track.at(-1).vx === TURRET_TUNING.speed;
+const furnace = soloShot({}, 300, { fields: createFields(ZONES.zones.furnace.fields) });
+console.log(`  측풍 존에서 300스텝 — 횡변위 ${ballistic.track.at(-1).y} m · 속도 ` +
+  `${ballistic.track.at(-1).vx} m/s (초기 ${TURRET_TUNING.speed})`);
+check('★ 포탄은 항력·바람·규칙을 하나도 안 받는다 (hull 이 없어서 — 분기 코드 0줄)',
+  driftFree && speedKept && furnace.shot.getUserData().projectile.spent === false,
+  '측풍 300스텝 y 정확히 0 · 속도 불변 · 화염 존 생존');
+
+check('포탄 질량이 스펙과 정확히 일치한다 (contact.js 가 이 값을 μ 로 직접 읽는다)',
+  Math.abs(soloShot().shot.getMass() - TURRET_TUNING.mass) < 1e-9,
+  `${soloShot().shot.getMass().toFixed(6)} kg`);
+
+// 수명은 **스텝 인덱스 창**으로 잰다. 경계 시각을 부동소수점으로 비교하면 미끄러진다
+// (10 + 0.2 − 10 = 0.19999999999999929 — 위 쿨다운 케이스와 같은 교훈).
+const lifeWorld = createWorld();
+installProjectileContacts(lifeWorld);
+spawnProjectile(lifeWorld, {
+  x: 0, y: 0, angle: 0, speed: TURRET_TUNING.speed, radius: TURRET_TUNING.projectileRadius,
+  mass: TURRET_TUNING.mass, material: 'iron', bornAt: 0, lifetime: 2,
+});
+const lifeStepper = new FixedStepper(lifeWorld, {});
+let aliveAt100 = 0;
+let aliveAt140 = 0;
+for (let k = 1; k <= 140; k++) {
+  lifeStepper.advance(FIXED_DT);
+  cullProjectiles(lifeWorld, k * FIXED_DT);
+  if (k === 100) aliveAt100 = countProjectiles(lifeWorld);
+  if (k === 140) aliveAt140 = countProjectiles(lifeWorld);
+}
+check('수명이 다한 포탄이 사라진다 (수명 2s — 100스텝 생존 · 140스텝 소멸)',
+  aliveAt100 === 1 && aliveAt140 === 0,
+  `100스텝 ${aliveAt100}발 → 140스텝 ${aliveAt140}발`);
+
+// ★ 누수는 **월드를 직접 순회해** 센다. 잡으려는 버그가 정확히 "Set 과 월드가 어긋난다"라서,
+//   Set 만 세면 그 버그가 자기 자신을 통과시킨다. 동시에 cullProjectiles 의 반환 계약
+//   (하니스가 이걸로 Set 을 동기화한다)이 실제로 지켜지는지도 여기서 걸린다.
+const leakWorld = createWorld();
+installProjectileContacts(leakWorld);
+const leakTurrets = createTurrets([{ x: 0, y: 0, angle: 0 }, { x: 0, y: 40, angle: -90, period: 0.5 }]);
+const leakSet = new Set();
+let leakPeak = 0;
+let leakSim = 0;
+const leakStepper = new FixedStepper(leakWorld, {
+  onPreStep: () => {
+    for (const req of leakTurrets.step(leakSim)) {
+      const b = spawnProjectile(leakWorld, req);
+      if (b) leakSet.add(b);
+    }
+  },
+});
+for (let k = 1; k <= 3600; k++) {
+  leakSim = k * FIXED_DT;
+  leakStepper.advance(FIXED_DT);
+  for (const b of cullProjectiles(leakWorld, leakSim)) leakSet.delete(b);
+  leakPeak = Math.max(leakPeak, countProjectiles(leakWorld));
+}
+console.log(`  포탑 2문 · 60초 (${leakTurrets.fired}발 발사) — 동시 생존 최대 ${leakPeak}발 · ` +
+  `종료 시 월드 ${countProjectiles(leakWorld)} / Set ${leakSet.size}`);
+check('포탄이 누수되지 않고 월드와 Set 이 어긋나지 않는다',
+  leakTurrets.fired > 100 && leakPeak <= PROJECTILE_TUNING.maxAlive
+    && countProjectiles(leakWorld) === leakSet.size,
+  `최대 ${leakPeak}발 ≤ ${PROJECTILE_TUNING.maxAlive} · 월드 = Set`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
