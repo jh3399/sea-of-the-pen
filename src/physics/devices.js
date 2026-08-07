@@ -80,12 +80,35 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
  *
  * Y-up · +X = 뱃머리이므로 좌현(port)은 y > 0, 우현(starboard)은 y < 0 이다. 노 하나가 내는
  * 토크는 τ = −y·F 이므로 **우현 노를 저으면 좌선회**한다 — 카누와 같다. 그래서 ← 가 우현 노다.
+ *
+ * ★ 방향키는 **한쪽 앞젓기 + 반대쪽 역젓기**, 즉 제자리 선회다. 두 노의 토크가 같은 부호로
+ *   더해지고(≈1.45배) 전진 추력은 서로 깎여(0.55배) 선회 반경이 크게 준다 — 대신 **속도를
+ *   판다.** 원칙 2 가 요구하는 대가가 `dir` 부호 하나에서 나오고 조향 코드는 여전히 0줄이다.
+ *   고속에서도 듣는다: 앞젓기는 falloff 로 죽지만 역젓기는 `along < 0` 이라 감쇠가 없어
+ *   순수 토크 + 제동만 남는다.
+ *
+ * ★ 그러면 "돌면서 나아가기"는 어디로 갔는가 — **상쇄 규칙**에서 저절로 나온다.
+ *   같은 노에 반대 방향 요청이 겹치면 그 노는 물에 넣지 않는다 (노잡이가 한 노를 동시에
+ *   두 방향으로 저을 수는 없다). 그래서 ↑ 를 함께 누르면 역젓기가 지워진다:
+ *
+ *     ←      좌현 −1 · 우현 +1                    제자리 선회
+ *     ↑ + ←  좌현 +1 vs −1 → 0 · 우현 +1          우현만 = 넓은 선회 (속도 유지)
+ *     ↓ + ←  좌현 −1 · 우현 −1 vs +1 → 0          좌현 역젓기 = 후진하며 선회
+ *     ← + →  양쪽 다 0                            두 노 모두 물 밖 (아무 일도 없다)
+ *
+ *   순항 중에는 이미 ↑ 를 누르고 있으므로 방향키를 더하면 저절로 넓은 선회가 되고, 서서
+ *   누르면 제자리로 돈다. 플레이어가 외울 조합이 없다 — **달리면서 꺾으면 넓게, 서서 꺾으면
+ *   제자리**가 규칙 하나에서 나온다.
+ *
+ * ⚠ 상쇄는 교환법칙이 성립하므로 **키를 누른 순서가 거동을 바꿀 수 없다.** 이전의
+ *   "나중 요청이 이긴다"에서는 ↓ 를 먼저 누르면 제자리 선회, ← 를 먼저 누르면 그냥 후진이
+ *   나왔다 (같은 조합, 다른 거동). 규칙으로 막는 대신 표현 불가능하게 만든 것이다.
  */
 export const STROKE_KEYMAP = {
   ArrowUp: [{ side: 'port', dir: 1 }, { side: 'starboard', dir: 1 }],
   ArrowDown: [{ side: 'port', dir: -1 }, { side: 'starboard', dir: -1 }],
-  ArrowLeft: [{ side: 'starboard', dir: 1 }],
-  ArrowRight: [{ side: 'port', dir: 1 }],
+  ArrowLeft: [{ side: 'starboard', dir: 1 }, { side: 'port', dir: -1 }],
+  ArrowRight: [{ side: 'port', dir: 1 }, { side: 'starboard', dir: -1 }],
 };
 
 
@@ -396,9 +419,17 @@ export function applyDevices(body, input, dt) {
   // ① 스트로크 요청 소비. 이번 스텝의 요청을 **한 사이클로 합쳐** 넘긴다 — ↑ 와 ← 를 같이
   //    누르고 있어도 사이클은 하나이고, 그래서 두 노가 어긋날 방법이 없다.
   //    요청 배열은 세 척이 공유하지만 수락/거절은 배마다 따로 판단한다.
+  //
+  //    ★ 같은 노에 **반대 방향**이 겹치면 그 노는 물에 넣지 않는다(0). 한 노를 동시에 두
+  //      방향으로 저을 수는 없기 때문이고, 이 상쇄에서 넓은 선회가 나온다 (STROKE_KEYMAP).
+  //      0 은 흡수원소라 결과가 "전부 같은 방향이면 그 방향, 아니면 0"으로 확정된다 —
+  //      **요청 순서에 무관**하다.
   let sides = null;
-  for (const req of input.strokes ?? NO_STROKES) {
-    (sides ??= {})[req.side] = req.dir;
+  if (input.strokes?.length) {
+    for (const req of input.strokes) {
+      const cur = (sides ??= {})[req.side];
+      sides[req.side] = cur === undefined || cur === req.dir ? req.dir : 0;
+    }
   }
   if (sides) startStroke(control.stroke, sides);
   control.held = input.held ?? NO_HELD;
