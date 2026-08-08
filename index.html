@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>조선소 — Shipwright</title>
+</head>
+<body>
+  <!-- 애니메이션 픽셀 배경 (메뉴·컷신 공용). 씬 전환은 scene/pixelbg.js -->
+  <canvas id="bg" class="pixel" aria-hidden="true"></canvas>
+
+  <div id="app">
+    <section id="screen-title" class="screen active">
+      <div class="title-wrap">
+        <p class="game-subtitle">~ SHIPWRIGHT ~</p>
+        <h1 class="game-title">조선소</h1>
+        <p class="game-desc">그린 대로 뜨고, 그린 대로 가라앉는다.</p>
+      </div>
+
+      <div class="title-menu">
+        <button id="btn-start" class="btn-primary btn-start" type="button">▶ 시작하기</button>
+        <button id="btn-replay" class="btn-tool" type="button" hidden>▷ 이야기 다시 보기</button>
+        <button id="btn-sound" class="btn-tool" type="button">♪ 소리 켜짐</button>
+      </div>
+
+      <p class="title-credit">NAN 2026 · 조선소</p>
+      <a class="harness-link" href="harness.html">개발용 하니스</a>
+    </section>
+  </div>
+
+  <!-- 대화 오버레이 — 어느 화면 위에서든 뜬다 (스타듀밸리식 하단 대화창).
+       id 다섯은 story/dialogue.js 가 그대로 찾는다. 바꾸면 거기도 같이 바꿀 것. -->
+  <div id="dialogue-layer" hidden>
+    <div id="dlg-visual" class="dlg-visual"></div>
+    <div class="dlg-box">
+      <div id="dlg-portrait" class="dlg-portrait" hidden></div>
+      <div class="dlg-body">
+        <div id="dlg-name" class="dlg-name">???</div>
+        <div id="dlg-text" class="dlg-text"></div>
+        <div class="dlg-hint">▼ Space / 클릭</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 대화창 바깥에 둔다 — 안에 두면 이 클릭이 대사 진행까지 같이 먹는다 -->
+  <button id="btn-skip" class="skip-btn" type="button" hidden>건너뛰기 (Esc)</button>
+
+  <script type="module" src="/src/menu/screen.js"></script>
+</body>
+</html>
