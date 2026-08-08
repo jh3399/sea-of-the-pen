@@ -26,6 +26,20 @@ export const HULL_DEFAULTS = {
 };
 
 /**
+ * 캔버스 픽셀 한 점(Y-down) → 물리 단위 미터(Y-up). `strokeToHull` 이 스트로크 전체에 쓰는
+ * 변환과 같은 식이다 — 캔버스↔물리 변환은 이 파일 한 곳에서만 한다는 규약을 지키려면, 스트로크
+ * 바깥의 단일 점(예: 화면 중앙에 고정된 주인공)도 이 함수로 바꿔야 한다.
+ */
+export function pxToMetric(pt, ppm = HULL_DEFAULTS.pixelsPerMeter) {
+  return { x: pt.x / ppm, y: -pt.y / ppm };
+}
+
+/** `pxToMetric` 의 역변환 — 미터(Y-up) 한 점을 다시 캔버스 픽셀(Y-down)로. */
+export function metricToPx(pt, ppm = HULL_DEFAULTS.pixelsPerMeter) {
+  return { x: pt.x * ppm, y: -pt.y * ppm };
+}
+
+/**
  * 캔버스 스트로크(px, Y-down) → 선체 폴리곤(m, Y-up).
  *
  * 반환하는 outline 은 **선체 로컬 좌표**다: 무게중심이 원점, 주축(장축)이 +X = 뱃머리 방향.
@@ -43,7 +57,7 @@ export function strokeToHull(rawPoints, options = {}) {
   // 1. 중복점 제거 후 물리 유닛으로. 캔버스는 Y-down, 물리 세계는 Y-up 이라 여기서 뒤집는다.
   const ppm = opt.pixelsPerMeter;
   const deduped = dedupe(rawPoints, 0.75); // px 단위 임계
-  const metric = deduped.map((p) => ({ x: p.x / ppm, y: -p.y / ppm }));
+  const metric = deduped.map((p) => pxToMetric(p, ppm));
   diag.dedupedPoints = metric.length;
 
   if (metric.length < 3) {
@@ -152,6 +166,16 @@ export function toHullLocal(placement, worldPoint) {
   const c = Math.cos(-placement.angle);
   const s = Math.sin(-placement.angle);
   return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
+
+/** `toHullLocal` 의 역변환 — 선체 로컬 좌표를 다시 월드(미터, Y-up)로. */
+export function toHullWorld(placement, localPoint) {
+  const c = Math.cos(placement.angle);
+  const s = Math.sin(placement.angle);
+  return {
+    x: placement.origin.x + localPoint.x * c - localPoint.y * s,
+    y: placement.origin.y + localPoint.x * s + localPoint.y * c,
+  };
 }
 
 function fail(reason, message, diag, t0) {

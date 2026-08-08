@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>조선소 — 배 그리기</title>
+</head>
+<body>
+  <div class="book">
+    <div class="book-frame">
+      <div class="spiral" aria-hidden="true"></div>
+      <div class="page" id="page">
+        <canvas id="ink"></canvas>
+
+        <div class="blueprint">
+          <button id="blueprint-toggle" class="blueprint-toggle" type="button">
+            <span class="caret">▼</span> 도면 보기
+          </button>
+          <div id="blueprint-panel" class="blueprint-panel hidden"></div>
+        </div>
+
+        <button id="btn-clear" class="clear-btn" type="button" title="다시 그리기">↺ 다시 그리기</button>
+        <div id="status" class="page-status">선체를 그려 주인공을 감싸세요.</div>
+      </div>
+    </div>
+
+    <aside class="side">
+      <div class="panel-card">
+        <div class="panel-card-title">아이템</div>
+        <div id="item-list" class="item-list"></div>
+      </div>
+      <div class="panel-card">
+        <div class="panel-card-title">재질</div>
+        <div id="material-list" class="material-list"></div>
+      </div>
+      <button id="btn-finish" class="finish-btn" type="button" disabled>완성하기</button>
+    </aside>
+  </div>
+
+  <script type="module" src="/src/draw/screen.js"></script>
+</body>
+</html>
