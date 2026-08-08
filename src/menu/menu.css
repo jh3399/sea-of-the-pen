@@ -110,20 +110,32 @@ body::after {
 .title-wrap { text-align: center; display: flex; flex-direction: column; gap: 14px; align-items: center; }
 
 .game-title {
-  font-size: clamp(40px, 9vw, 84px);
-  line-height: 1.15;
-  color: var(--accent);
-  letter-spacing: 6px;
-  text-shadow: 4px 4px 0 var(--ink), 8px 8px 0 rgba(0, 0, 0, .35);
+  line-height: 0;                        /* img 아래 baseline 여백을 없앤다 */
   animation: title-bob 3s ease-in-out infinite;
 }
 @keyframes title-bob { 50% { transform: translateY(-6px); } }
 
-.game-subtitle {
-  color: #7fd0ff;
-  letter-spacing: 6px;
-  font-size: clamp(12px, 2vw, 16px);
-  text-shadow: 2px 2px 0 var(--ink);
+/* 로고는 134×88 도트 원본이다. 확대는 반드시 니어리스트로 — 브라우저 기본 보간을
+   타면 배경(절차적으로 또렷하게 찍힌다) 옆에서 혼자 흐려져 바로 티가 난다.
+
+   폭을 vw 가 아니라 **vh 로도 묶는 이유**: pixelbg.js 는 짧은 쪽을 항상 200 도트로
+   잡으므로(MIN_SIDE) 배경의 도트 크기가 화면 **높이**에 비례한다. 로고를 vw 로만
+   묶으면 세로가 긴 화면에서 배경 도트만 커져 두 그림의 눈금이 어긋난다.
+   vw 는 좁은 화면에서 넘치지 않게 막는 쪽으로만 쓴다. */
+.game-logo {
+  display: block;
+  width: clamp(200px, min(46vw, 56vh), 560px);
+  height: auto;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, .45));
+}
+
+/* 한글 제목 — 로고가 무게를 다 지고 있으므로 여기서는 받쳐주기만 한다 */
+.game-title-ko {
+  color: var(--accent);
+  letter-spacing: 8px;
+  font-size: clamp(18px, 3vw, 28px);
+  text-shadow: 3px 3px 0 var(--ink);
 }
 
 .game-desc { text-align: center; line-height: 1.8; text-shadow: 2px 2px 0 rgba(0, 0, 0, .6); }

@@ -2,4 +2,6 @@ node_modules/
 dist/
 *.png
 !assets/**/*.png
+# scripts/logo-cut.mjs --preview 의 확인용 시트 (에셋이 아니라 눈으로 볼 중간물)
+assets/**/*.preview.png
 .DS_Store
