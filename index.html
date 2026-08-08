@@ -2,120 +2,34 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>그리는 자의 바다 — Sea of the Pen</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>조선소 — Shipwright</title>
 </head>
 <body>
-  <canvas id="bg-canvas" class="pixel"></canvas>
-  <div id="app">
-    <!-- 상단 HUD: 설정 톱니는 항상, 나머지(진행도·지도·가방)는 게임 중에만 (.play-only) -->
-    <header id="hud">
-      <div class="hud-left">
-        <span id="hud-stage" class="hud-chip play-only" hidden></span>
-      </div>
-      <div class="hud-right">
-        <span id="hud-pieces" class="hud-chip gold play-only" title="모은 도안 조각">📜 0/7</span>
-        <button id="btn-map" class="hud-btn play-only" title="지도">🗺️</button>
-        <button id="btn-inv" class="hud-btn play-only" title="가방">🎒</button>
-        <button id="btn-settings" class="hud-btn" title="설정">⚙️</button>
-      </div>
-    </header>
+  <!-- 애니메이션 픽셀 배경 (메뉴·컷신 공용). 씬 전환은 scene/pixelbg.js -->
+  <canvas id="bg" class="pixel" aria-hidden="true"></canvas>
 
-    <!-- 타이틀 화면 -->
+  <div id="app">
     <section id="screen-title" class="screen active">
       <div class="title-wrap">
-        <p class="game-subtitle">~ SEA OF THE PEN ~</p>
-        <h1 class="game-title">그리는 자의<br/>바다</h1>
-        <p class="game-desc">진심을 담아 그린 그림은 실체가 된다.</p>
+        <p class="game-subtitle">~ SHIPWRIGHT ~</p>
+        <h1 class="game-title">조선소</h1>
+        <p class="game-desc">그린 대로 뜨고, 그린 대로 가라앉는다.</p>
       </div>
+
       <div class="title-menu">
-        <button id="btn-start" class="btn-primary btn-start">▶ 시작하기</button>
-        <button id="btn-continue" class="btn-primary" hidden>▶ 이어하기</button>
-      </div>
-      <p class="title-credit">NAN 2026 · TEAM RIVER</p>
-    </section>
-
-    <!-- 컷씬 화면 (배경 + 대화 오버레이만) -->
-    <section id="screen-scene" class="screen"></section>
-
-    <!-- 배 그리기 화면 -->
-    <section id="screen-ship" class="screen">
-      <div class="draw-area ship-draw">
-        <div class="draw-header">
-          <span id="ship-prompt">🚢 너의 배를 그려라!</span>
-        </div>
-        <canvas id="ship-canvas"></canvas>
-        <div id="ship-log" class="battle-log">돛과 선체, 키를 갖추면 더 튼튼한 배가 된다.</div>
-        <div class="draw-tools">
-          <button id="btn-guide" class="btn-tool">📐 도안</button>
-          <button id="btn-ship-clear" class="btn-tool">지우기</button>
-          <button id="btn-ship-submit" class="btn-primary">출항!</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- 항해 화면 -->
-    <section id="screen-sail" class="screen screen-canvas">
-      <canvas id="sail-canvas" class="pixel"></canvas>
-      <div id="sail-objective" class="float-chip top"></div>
-      <button id="sail-prompt" class="prompt-chip" hidden></button>
-      <div class="key-hint">방향키/WASD 항해 · Space 상륙</div>
-    </section>
-
-    <!-- 섬 탐험 화면 -->
-    <section id="screen-island" class="screen screen-canvas">
-      <canvas id="island-canvas" class="pixel"></canvas>
-      <div id="island-name" class="float-chip top"></div>
-      <button id="island-prompt" class="prompt-chip" hidden></button>
-      <div class="key-hint">←→/AD 이동 · Space 말 걸기</div>
-    </section>
-
-    <!-- 전투 화면 -->
-    <section id="screen-battle" class="screen">
-      <div class="battle-stage">
-        <div class="boss-area">
-          <div class="boss-hp-wrap">
-            <span id="boss-name" class="boss-name">???</span>
-            <div class="hp-bar"><div id="boss-hp" class="hp-fill"></div></div>
-          </div>
-          <div id="boss-sprite" class="boss-sprite"></div>
-          <div id="damage-float" class="damage-float"></div>
-        </div>
-        <div class="ship-row">
-          <img id="battle-ship" class="battle-ship" alt="나의 배" />
-          <div class="ship-hp-wrap">
-            <span class="boss-name">나의 배</span>
-            <div class="hp-bar ship"><div id="ship-hp" class="hp-fill ship"></div></div>
-          </div>
-        </div>
-        <div id="battle-log" class="battle-log"></div>
+        <button id="btn-start" class="btn-primary btn-start" type="button">▶ 시작하기</button>
+        <button id="btn-replay" class="btn-tool" type="button" hidden>▷ 이야기 다시 보기</button>
+        <button id="btn-sound" class="btn-tool" type="button">♪ 소리 켜짐</button>
       </div>
 
-      <div class="draw-area">
-        <div class="draw-header">
-          <span id="draw-prompt">✏️ 그려라!</span>
-          <span id="draw-timer" class="draw-timer">20</span>
-        </div>
-        <canvas id="draw-canvas"></canvas>
-        <div class="draw-tools">
-          <button id="btn-clear" class="btn-tool">지우기</button>
-          <button id="btn-submit" class="btn-primary">이걸로 공격!</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- 승리(조각 획득) 화면 -->
-    <section id="screen-victory" class="screen">
-      <h1 id="victory-title">🏆 승리!</h1>
-      <p id="victory-desc" class="game-desc"></p>
-      <div id="victory-piece" class="blueprint-piece"></div>
-      <p id="victory-sub" class="game-desc small"></p>
-      <button id="btn-victory-next" class="btn-primary">⛵ 항해를 계속한다</button>
+      <p class="title-credit">NAN 2026 · 조선소</p>
+      <a class="harness-link" href="harness.html">개발용 하니스</a>
     </section>
   </div>
 
-  <!-- 대화 오버레이 — 어느 화면 위에서든 뜬다 (스타듀밸리식 하단 대화창) -->
+  <!-- 대화 오버레이 — 어느 화면 위에서든 뜬다 (스타듀밸리식 하단 대화창).
+       id 다섯은 story/dialogue.js 가 그대로 찾는다. 바꾸면 거기도 같이 바꿀 것. -->
   <div id="dialogue-layer" hidden>
     <div id="dlg-visual" class="dlg-visual"></div>
     <div class="dlg-box">
@@ -128,18 +42,9 @@
     </div>
   </div>
 
-  <!-- 모달(설정/지도/가방) -->
-  <div id="modal-root" hidden>
-    <div id="modal-backdrop" class="modal-backdrop"></div>
-    <div class="modal-panel">
-      <div class="modal-head">
-        <span id="modal-title">설정</span>
-        <button id="modal-close" class="btn-tool small">✕</button>
-      </div>
-      <div id="modal-body" class="modal-body"></div>
-    </div>
-  </div>
+  <!-- 대화창 바깥에 둔다 — 안에 두면 이 클릭이 대사 진행까지 같이 먹는다 -->
+  <button id="btn-skip" class="skip-btn" type="button" hidden>건너뛰기 (Esc)</button>
 
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="/src/menu/screen.js"></script>
 </body>
 </html>

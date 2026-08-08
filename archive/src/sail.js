@@ -6,7 +6,7 @@
 //
 // 디버그: window.__sail.pos → 현재 좌표, window.__sail.dock('gar') → 상륙 강제 (통합 테스트용)
 
-import { hash, fill, blob, seaBands, waves, glitter, gulls, palm, vignette } from './bgkit.js';
+import { hash, fill, blob, seaBands, waves, glitter, gulls, palm, vignette } from '../../src/scene/bgkit.js';
 
 const R = Math.round;
 

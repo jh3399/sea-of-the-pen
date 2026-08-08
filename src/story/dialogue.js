@@ -1,19 +1,25 @@
 // 대사 엔진 — 화면 위에 뜨는 오버레이(#dialogue-layer). 어느 화면에서든 쓸 수 있다.
+//
+// archive/src/dialogue.js 에서 파생했다. 바뀐 것 셋:
+//   ① 폐기된 "펜 맞대기"(penscene.js) 분기를 들어냈다 — 구 기획 전용 개념이다.
+//   ② 초상화 배율을 line.spriteScale 로 열었다 (아카이브는 4 하드코딩).
+//   ③ skipDialogue() — 컷신 통째로 건너뛰기. 진행 중인 run 을 정리하고 resolve 시킨다.
+//
 // runDialogue(lines) — 한 줄씩 타자기 효과, 클릭/Space/Enter로 진행. 끝나면 resolve.
-// line: { speaker, sprite?, visual?, image?, imageCls?, bg?, pen?, text }
-// - sprite  → 대화창 왼쪽 초상화 (스타듀밸리식)
-// - image/visual → 화면 중앙 큰 비주얼 (컷씬용: 그린 배 등)
-// - bg → 그 줄에서 배경 씬 크로스페이드 (bgscenes.js 키)
-// - pen → 화면 중앙에 펜 맞대기 컷 (penscene.js). 이 줄에서만 뜨고 다음 줄에 사라진다
+// line: { speaker, sprite?, spriteScale?, visual?, image?, imageCls?, bg?, text }
+// - sprite → 대화창 왼쪽 초상화 (스타듀밸리식). 없으면 이름표만 나온다
+// - image/visual → 화면 중앙 큰 비주얼 (컷씬용)
+// - bg → 그 줄에서 배경 씬 크로스페이드 (scene/bgscenes.js 키)
 
-import { spriteCanvas } from './sprites.js';
-import { penTouchCanvas } from './penscene.js';
-import { setScene } from './pixelbg.js';
+import { spriteCanvas } from '../scene/sprites.js';
+import { setScene } from '../scene/pixelbg.js';
 
 const TYPE_SPEED_MS = 22;
+const PORTRAIT_SCALE = 4;
 
 let els = null;
-let blipFn = null;   // 타자기 효과음 (main.js가 audio.sfx를 꽂아준다)
+let blipFn = null; // 타자기 효과음 (호출부가 audio.sfx 를 꽂아준다)
+let activeSkip = null; // 진행 중인 runDialogue 를 끝내는 함수. 없으면 null
 
 export function setDialogueBlip(fn) {
   blipFn = fn;
@@ -36,23 +42,17 @@ export function runDialogue(lines) {
     let idx = -1;
     let typingId = null;
     let fullText = '';
-    let penCanvas = null;
-
-    // 펜 컷은 requestAnimationFrame으로 계속 도니까 반드시 멈춰준다
-    const stopPen = () => {
-      if (penCanvas) penCanvas.stop();
-      penCanvas = null;
-    };
 
     const showLine = (line) => {
       if (line.bg) setScene(line.bg);
       els.name.textContent = line.speaker || '';
       els.name.style.visibility = line.speaker ? 'visible' : 'hidden';
 
-      // 초상화 (대화창 안)
+      // 초상화 (대화창 안). 스프라이트를 안 준 화자는 이름표만 나온다 —
+      // 인트로의 동생이 그렇다. 얼굴이 없는 것이 연출이다.
       els.portrait.innerHTML = '';
       if (line.sprite) {
-        const c = spriteCanvas(line.sprite, 4);
+        const c = spriteCanvas(line.sprite, line.spriteScale ?? PORTRAIT_SCALE);
         if (c) els.portrait.appendChild(c);
         els.portrait.hidden = !c;
       } else {
@@ -60,13 +60,8 @@ export function runDialogue(lines) {
       }
 
       // 중앙 비주얼 (컷씬용 이미지/이모지)
-      stopPen();
       els.visual.innerHTML = '';
-      if (line.pen) {
-        // 펜 맞대기 — 말하는 쪽이 네일이면 400년 만에 펜을 쥐는 그 컷이다
-        penCanvas = penTouchCanvas(line.sprite === 'nail' ? 'nail' : 'seren');
-        els.visual.appendChild(penCanvas);
-      } else if (line.image) {
+      if (line.image) {
         const img = document.createElement('img');
         img.src = line.image;
         img.className = `story-img pixel ${line.imageCls || ''}`;
@@ -96,8 +91,7 @@ export function runDialogue(lines) {
       }
       idx += 1;
       if (idx >= lines.length) {
-        cleanup();
-        resolve();
+        finish();
         return;
       }
       showLine(lines[idx]);
@@ -113,17 +107,35 @@ export function runDialogue(lines) {
 
     const cleanup = () => {
       clearInterval(typingId);
-      stopPen();
       els.layer.removeEventListener('click', onClick);
       window.removeEventListener('keydown', onKey);
       els.layer.hidden = true;
+      activeSkip = null;
     };
 
+    const finish = () => {
+      cleanup();
+      resolve();
+    };
+
+    activeSkip = finish;
     els.layer.addEventListener('click', onClick);
     window.addEventListener('keydown', onKey);
     els.layer.hidden = false;
     advance(); // 첫 줄 표시
   });
+}
+
+/**
+ * 진행 중인 대사를 즉시 끝낸다 (건너뛰기). 남은 줄은 재생하지 않고 그대로 resolve 하므로,
+ * 호출부의 `await runDialogue(...)` 다음 줄이 바로 이어진다 — 비트를 여러 개 이어 붙였다면
+ * 각 비트마다 한 번씩 불러야 전부 건너뛴다.
+ * @returns {boolean} 실제로 끝낸 게 있으면 true
+ */
+export function skipDialogue() {
+  if (!activeSkip) return false;
+  activeSkip();
+  return true;
 }
 
 export function isDialogueOpen() {

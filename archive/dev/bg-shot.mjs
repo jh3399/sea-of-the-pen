@@ -85,7 +85,7 @@ const SEC = si >= 0 ? Number(args[si + 1]) : 1.7;
 // si가 -1이면 si+1은 0 — 첫 인자를 삼켜버린다. 플래그가 있을 때만 그 값을 건너뛴다
 const keys = args.filter((a, i) => !a.startsWith('--') && !(si >= 0 && i === si + 1));
 
-const { SCENES } = await import('../src/bgscenes.js');
+const { SCENES } = await import('../../src/scene/bgscenes.js');
 const targets = (keys.length ? keys : ['village_pale', 'crystal_forest', 'fog_pale']).filter((k) => {
   if (SCENES[k]) return true;
   console.error(`  ! 없는 씬: ${k}`);
