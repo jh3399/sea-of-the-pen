@@ -1,5 +1,5 @@
 /* 배 그리기 화면 — 스케치북 룩. harness.css 의 폰트·기본 톤을 이어받되 종이/나무 전용
-   토큰을 더한다. index.html(엔지니어링 하니스)과는 완전히 분리된 화면이다. */
+   토큰을 더한다. harness.html(엔지니어링 하니스)과는 완전히 분리된 화면이다. */
 
 @font-face {
   font-family: 'NeoDunggeunmo';
@@ -105,6 +105,7 @@ html, body {
 .blueprint-toggle,
 .clear-btn,
 .finish-btn,
+.menu-btn,
 .tmpl-btn,
 .item-row,
 .material-row {
@@ -274,6 +275,19 @@ html, body {
 .finish-btn:hover:not(:disabled) { filter: brightness(1.06); }
 .finish-btn:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.3); }
 .finish-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+
+/* 메뉴 복귀 — 완성하기와 헷갈리면 안 되므로 종이색 톤으로 눌러 둔다 */
+.menu-btn {
+  align-self: flex-start;
+  font-size: 17px;
+  padding: 7px 14px;
+  background: #fbf3de;
+  border: 2px solid var(--wood-dark);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.menu-btn:hover { background: #fff8e8; }
+.menu-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 rgba(0, 0, 0, 0.3); }
 
 @media (max-width: 760px) {
   .side { width: 260px; }

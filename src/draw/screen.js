@@ -1,4 +1,4 @@
-// 배 그리기 화면 — index.html(엔지니어링 하니스)과 분리된 플레이어용 진입점.
+// 배 그리기 화면 — harness.html(엔지니어링 하니스)과 분리된 플레이어용 진입점.
 // 카메라 팬/줌이 없는 고정 화면이라 render/view.js 의 월드 카메라는 쓰지 않는다. 캔버스는
 // 잉크(스트로크·선체 채움·아이템 마커·주인공·도면 오버레이)만 그리고, 종이·나무 프레임·
 // 스프링 제본·패널 카드는 draw.css 가 담당한다.
@@ -31,6 +31,7 @@ class DrawScreen {
     this.blueprintPanel = document.getElementById('blueprint-panel');
     this.clearBtn = document.getElementById('btn-clear');
     this.finishBtn = document.getElementById('btn-finish');
+    this.menuBtn = document.getElementById('btn-menu');
 
     this.material = 'wood';
     this.template = null;
@@ -223,6 +224,8 @@ class DrawScreen {
     });
     this.clearBtn.addEventListener('click', () => this.resetAll());
     this.finishBtn.addEventListener('click', () => this.finish());
+    // 상대경로 — base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 (finish() 와 같은 방식).
+    this.menuBtn.addEventListener('click', () => { location.href = 'index.html'; });
     this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
   }
 
