@@ -8,8 +8,8 @@
 // - 애니메이션 난수는 전부 hash(i, seed) — 프레임마다 튀면 안 된다.
 // - resolve 전에 이벤트 리스너·rAF·디버그 훅을 전부 정리한다.
 
-import { SCENES, DEFAULT_SCENE } from './bgscenes.js';
-import { hash, fill, blob, palm } from './bgkit.js';
+import { SCENES, DEFAULT_SCENE } from '../../src/scene/bgscenes.js';
+import { hash, fill, blob, palm } from '../../src/scene/bgkit.js';
 
 const R = Math.round;
 const MIN_SIDE = 200;      // 논리 해상도: 짧은 쪽 픽셀 수

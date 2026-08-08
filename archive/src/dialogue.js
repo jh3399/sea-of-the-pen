@@ -6,9 +6,9 @@
 // - bg → 그 줄에서 배경 씬 크로스페이드 (bgscenes.js 키)
 // - pen → 화면 중앙에 펜 맞대기 컷 (penscene.js). 이 줄에서만 뜨고 다음 줄에 사라진다
 
-import { spriteCanvas } from './sprites.js';
+import { spriteCanvas } from '../../src/scene/sprites.js';
 import { penTouchCanvas } from './penscene.js';
-import { setScene } from './pixelbg.js';
+import { setScene } from '../../src/scene/pixelbg.js';
 
 const TYPE_SPEED_MS = 22;
 

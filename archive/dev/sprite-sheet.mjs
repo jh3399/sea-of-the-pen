@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SPRITES } from '../src/sprites.js';
+import { SPRITES } from '../../src/scene/sprites.js';
 import { encodePng, hex, makeSheet } from './png.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
