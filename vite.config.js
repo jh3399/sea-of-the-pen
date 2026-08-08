@@ -11,11 +11,12 @@ export default defineConfig({
     target: 'es2020',
     emptyOutDir: true,
     rollupOptions: {
-      // 두 진입점: index.html(엔지니어링 하니스) · draw.html(배 그리기 화면).
+      // 세 진입점: index.html(엔지니어링 하니스) · draw.html(배 그리기 화면) · sail.html(항해 화면).
       // archive/ 의 레거시 프로토타입은 여기 없으므로 여전히 빌드 대상이 아니다.
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         draw: fileURLToPath(new URL('./draw.html', import.meta.url)),
+        sail: fileURLToPath(new URL('./sail.html', import.meta.url)),
       },
     },
   },

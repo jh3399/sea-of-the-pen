@@ -41,6 +41,7 @@ class DrawScreen {
     this.finishedDesign = null;
     this.liveRawPoints = null;
     this.aboard = false;
+    this.crewLocal = null;
     this.center = { x: 0, y: 0 };
 
     this.capture = new StrokeCapture(this.canvas, {
@@ -114,11 +115,13 @@ class DrawScreen {
   updateAboard() {
     if (!this.design?.ok) {
       this.aboard = false;
+      this.crewLocal = null;
       return;
     }
     const metric = pxToMetric(this.center);
     const local = toHullLocal(this.design, metric);
     this.aboard = canAttachAt(this.design.outline, [], local);
+    this.crewLocal = local; // sail.html 로 넘길 주인공 로컬 좌표 — finish() 가 그대로 쓴다
   }
 
   // 선체 로컬(m) → 캔버스 px. 확정 선체 외곽선·아이템 마커를 그릴 때 쓴다.
@@ -234,6 +237,7 @@ class DrawScreen {
     this.capture.clear();
     this.capture.enabled = true;
     this.aboard = false;
+    this.crewLocal = null;
     this.setStatus('선체를 그려 주인공을 감싸세요.');
     this.buildItemList();
     this.buildBlueprintPanel();
@@ -246,17 +250,20 @@ class DrawScreen {
     this.finished = true;
     this.capture.enabled = false;
     this.placing = null;
-    // 다음 화면(항해)이 이어받을 지점 — 이번 작업 범위는 확정까지만.
     this.finishedDesign = {
       outline: this.design.outline,
       origin: this.design.origin,
       angle: this.design.angle,
       material: this.material,
       items: this.hull.items,
+      crew: this.crewLocal,
     };
     this.buildItemList();
-    this.setStatus('설계 완성!', 'ok');
+    this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
+    // 항해 화면(sail.html)이 이어받는다 — 같은 폴더의 상대 경로라 dev/build 양쪽에서 그대로 동작.
+    sessionStorage.setItem('shipwright:handoff', JSON.stringify(this.finishedDesign));
+    location.href = 'sail.html';
   }
 
   syncFinishButton() {
