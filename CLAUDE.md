@@ -42,8 +42,11 @@ npm run build    # dist/ — Pages 배포 산출물
 ## 구조
 
 ```
-index.html            하니스 진입점 (설계 ↔ 항해 ↔ 세 척 비교 ↔ 파손)
-vite.config.js        base: '/sea-of-the-pen/'
+index.html            ▶ 배포 루트 = 메인 메뉴 + 인트로 컷신 (심사위원이 받는 첫 화면)
+draw.html             배 그리기 (스케치북) — 완성하면 sail.html 로
+sail.html             항해 (픽셀 그래픽)
+harness.html          엔지니어링 하니스 (설계 ↔ 항해 ↔ 세 척 비교 ↔ 파손)
+vite.config.js        base: '/sea-of-the-pen/' · 위 넷이 rollup input
 src/
   geom/     poly.js(면적·모멘트·주축·핀치 분리) · clip.js(clipper2 어댑터)
   hull/     strokes.js(포인터 캡처) · polygon.js★① · params.js(3대 파라미터)
@@ -60,15 +63,25 @@ src/
             predict.js(예측 궤적선)
   damage/   carve.js★②(불리언 차감·절단 판정) · apply.js(충격→재구성)
   render/   view.js(카메라: 추적+줌+fitTo, 회전 금지)
+  draw/     screen.js(그리기 화면) · icons.js(픽셀 아이콘·주인공) · templates.js · draw.css
+  sail/     screen.js(항해 화면) · render.js(절차적 픽셀 렌더) · map.js · sail.css
+  menu/     screen.js(메뉴·컷신 오케스트레이션 — 대사 0줄) · menu.css
+  story/    dialogue.js(대사 오버레이 엔진) · script.js(대사 전문 ← docs/SCRIPT.md 와 1:1)
+  scene/    pixelbg.js(씬 크로스페이드) · bgscenes.js(배경 19종) · bgkit.js(레이어 프리미티브)
+            sprites.js(24×32 흉상 6종)          ← 구 프로토타입에서 이관한 에셋
+  audio/    audio.js(진입점) · tracks.js(BGM 7곡) · sfx.js(11종) · synth.js
+                                                  ← 구 프로토타입에서 이관한 에셋
   ui/       metrics.js(계측 HUD, F3) · harness.css
   main.js   하니스 오케스트레이션
-scripts/bench.mjs     D0~D2 통과 판정 벤치 (CI 에서도 실행)
+scripts/bench.mjs     D0~D3 통과 판정 벤치 (CI 에서도 실행)
 archive/              구 Sea of the Pen 프로토타입 (참고용, 빌드 제외)
-                      index.html · CLAUDE.md(구 기획 지침) · src/(스토리·항해·섬·오디오·
-                      도트 스프라이트·씬 배경·로컬 판정) · dev/(도트/배경 확인 페이지·PNG 추출)
+                      index.html · CLAUDE.md(구 기획 지침) · src/(스토리·항해·섬·
+                      로컬 판정·펜 맞대기 컷) · dev/(도트/배경 확인 페이지·PNG 추출)
                       루트 style.css 를 `../style.css` 로 참조한다 — 그래서 그대로 돌아간다
+                      ⚠ 도트·배경·오디오는 여기 없다. src/scene · src/audio 로 이관했고
+                        아카이브가 거꾸로 `../../src/...` 를 import 한다 (그래서 아직 돈다)
 docs/                 shipwright_design_doc.md(설계) · dev_plan.md(5일 계획표)
-                      STORY.md · SCRIPT.md (구 기획 — **현재 무효**)
+                      STORY.md · SCRIPT.md (**v6 — 조선소 기획**. 대사는 src/story/script.js 와 1:1)
 ```
 
 ★ = D0 기술 스파이크에서 검증 완료한 3대 리스크 모듈.
@@ -87,6 +100,10 @@ docs/                 shipwright_design_doc.md(설계) · dev_plan.md(5일 계�
 - 캔버스는 Y-down, 물리 세계는 **Y-up** — 변환은 `hull/polygon.js` 한 곳에서만 한다.
 - 파손 파라미터 재계산은 **이벤트 시점에만**. 매 프레임 도는 것은 hydro 저항 적분뿐.
 - 맵에 예외 코드를 넣고 싶어지면 원칙 1 위반이다. 규칙표를 고쳐라.
+- 대사 수정은 `src/story/script.js` 한 곳에서. `docs/SCRIPT.md` 와 **1:1** 로 맞춘다 (씬 ID 포함).
+- 화면 간 이동은 **상대경로**(`location.href = 'draw.html'`). `base` 가 `/sea-of-the-pen/` 이라
+  절대경로는 로컬에서만 되고 배포에서 404 난다.
+- 배경 난수는 `scene/bgkit.js` 의 `hash(i, seed)` 로. `Math.random()` 은 매 프레임 튄다.
 
 ## 진행 상태
 
@@ -104,8 +121,13 @@ docs/                 shipwright_design_doc.md(설계) · dev_plan.md(5일 계�
          노 튜닝 슬라이더(왼쪽)로 젓는 속도·힘·한계 속도를 돌려 가며 판정한다.
       ② **슬라럼 실통과**: 부착 모드로 좌우 부스터(A·S)를 달고 번갈아 눌러 본다.
          벤치는 지그재그가 성립함까지만(전환 7회, 진폭 4.6°, 누적 1.9°) 보증한다.
-- [ ] **▶ D3 (8/8): 파손 지오메트리 + 3맵 + 게임 루프**
-- [ ] D4 (8/9, **12:00 콘텐츠 프리즈**): 폴리시 + 배포 + 영상 + PDF 3종
+- [ ] **▶ D3 (8/8): 파손 지오메트리 + 3맵 + 게임 루프** — `npm run bench` 144/144 통과.
+      그리기·항해 화면 분리(`draw.html` → `sail.html`) / 주인공(`game/crew.js`)과 도착 판정 /
+      절단 시 소속 조각 판정.
+      **계획 밖 추가**: 메인 메뉴 + 인트로 컷신 5비트(`index.html`), 하니스는 `harness.html` 로.
+      구 프로토타입의 배경·도트·칩튠·대사 엔진을 `src/scene`·`src/audio` 로 이관해 재사용했다.
+      ⚠ 남은 것: 맵 JSON 3장 · 실패 분석 화면(항적 고스트 + 침몰 사유 배지).
+- [ ] D4 (8/9, **12:00 콘텐츠 프리즈**): 폴리시 + 배포 + 영상 + PDF 3종 (타이틀은 8/8 에 선반영)
 - [ ] D5 (8/10 오전): 예비, 버그 수정만
 
 각 날의 통과 질문과 실패 시 폴백은 `docs/dev_plan.md` 에 있다. 통과 못 하면 다음 날로 못 간다.
