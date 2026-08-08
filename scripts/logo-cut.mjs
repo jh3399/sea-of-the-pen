@@ -25,7 +25,9 @@ const flag = (name, def) => {
 
 const srcPath = argv[0];
 if (!srcPath || srcPath.startsWith('--')) {
-  console.error('용법: node scripts/logo-cut.mjs <원본.png> --out <경로.png> [--grid 160 | --scale 4] [--cut 48] [--cols 1] [--rows 1] [--quad 1] [--preview] [--zoom 4]');
+  console.error('용법: node scripts/logo-cut.mjs <원본.png> --out <경로.png> [--grid 160 | --scale 4] [--cut 48]');
+  console.error('      대상 지정: --crop x,y,w,h  또는  --cols 2 --rows 2 --quad 1  (기본: 전체)');
+  console.error('      그 외: --holes(글자 안쪽 구멍까지 비움) --preview --zoom 4');
   process.exit(1);
 }
 
@@ -37,10 +39,22 @@ const outPath = flag('out', 'logo.png');
 const preview = argv.includes('--preview'); // 밝은/어두운 배경 위에 얹은 확인용 시트도 같이 낸다
 
 const sheet = decodePng(fs.readFileSync(srcPath));
-const qw = Math.floor(sheet.w / cols);
-const qh = Math.floor(sheet.h / rows);
-const qx = ((quad - 1) % cols) * qw;
-const qy = Math.floor((quad - 1) / cols) * qh;
+// --crop x,y,w,h 가 있으면 그 영역이 곧 대상이다 (사분면 분할보다 우선).
+// 로고 안의 한 요소만 떼어 파비콘으로 쓸 때 필요하다.
+const cropArg = flag('crop', null);
+let qw, qh, qx, qy;
+if (cropArg) {
+  [qx, qy, qw, qh] = cropArg.split(',').map(Number);
+} else {
+  qw = Math.floor(sheet.w / cols);
+  qh = Math.floor(sheet.h / rows);
+  qx = ((quad - 1) % cols) * qw;
+  qy = Math.floor((quad - 1) / cols) * qh;
+}
+if (qx < 0 || qy < 0 || qx + qw > sheet.w || qy + qh > sheet.h) {
+  console.error(`잘라낼 영역이 원본(${sheet.w}×${sheet.h}) 밖이다: ${qx},${qy},${qw},${qh}`);
+  process.exit(1);
+}
 
 // ① 사분면 잘라내기
 const crop = Buffer.alloc(qw * qh * 4);
@@ -122,14 +136,31 @@ for (let y = 0; y < th; y++) {
   small.copy(out, y * tw * 4, ((y + y0) * dw + x0) * 4, ((y + y0) * dw + x0 + tw) * 4);
 }
 
+// --pad N: N×N 정사각 한가운데에 놓는다. 파비콘은 정사각이어야 브라우저가
+// 제멋대로 늘이지 않는다. 남는 자리는 투명이다.
+let fw = tw, fh = th, final = out;
+const pad = Number(flag('pad', 0));
+if (pad) {
+  if (tw > pad || th > pad) {
+    console.error(`--pad ${pad} 이 내용(${tw}×${th})보다 작다`);
+    process.exit(1);
+  }
+  fw = fh = pad;
+  final = Buffer.alloc(pad * pad * 4);
+  const ox = ((pad - tw) / 2) | 0, oy = ((pad - th) / 2) | 0;
+  for (let y = 0; y < th; y++) {
+    out.copy(final, ((y + oy) * pad + ox) * 4, y * tw * 4, (y + 1) * tw * 4);
+  }
+}
+
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, encodePng(tw, th, out));
-console.log(`${qw}×${qh} → 격자 ${dw}×${dh} (도트 ${scale.toFixed(2)}px) → 여백 제거 ${tw}×${th}  ·  배경 제거 ${(cleared / (qw * qh) * 100).toFixed(1)}%  → ${outPath}`);
+fs.writeFileSync(outPath, encodePng(fw, fh, final));
+console.log(`${qw}×${qh} → 격자 ${dw}×${dh} (도트 ${scale.toFixed(2)}px) → 여백 제거 ${tw}×${th}${pad ? ` → 정사각 ${fw}×${fh}` : ''}  ·  배경 제거 ${(cleared / (qw * qh) * 100).toFixed(1)}%  → ${outPath}`);
 
 // 확인용: 밝은 배경·어두운 배경·체커 위에 나란히 얹는다. 헤일로와 먹힌 외곽선이 여기서 보인다.
 if (preview) {
-  const pad = 8, band = tw + pad * 2;
-  const pw = band * 3, ph = th + pad * 2;
+  const margin = 8, band = fw + margin * 2;
+  const pw = band * 3, ph = fh + margin * 2;
   const prev = Buffer.alloc(pw * ph * 4);
   const bands = [[10, 16, 38], [224, 224, 230], null];
   for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
@@ -138,11 +169,11 @@ if (preview) {
     const i = (y * pw + x) * 4;
     prev[i] = bg[0]; prev[i + 1] = bg[1]; prev[i + 2] = bg[2]; prev[i + 3] = 255;
   }
-  for (let b = 0; b < 3; b++) for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
-    const s = (y * tw + x) * 4;
-    if (!out[s + 3]) continue;
-    const i = ((y + pad) * pw + b * band + pad + x) * 4;
-    prev[i] = out[s]; prev[i + 1] = out[s + 1]; prev[i + 2] = out[s + 2]; prev[i + 3] = 255;
+  for (let b = 0; b < 3; b++) for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) {
+    const s = (y * fw + x) * 4;
+    if (!final[s + 3]) continue;
+    const i = ((y + margin) * pw + b * band + margin + x) * 4;
+    prev[i] = final[s]; prev[i + 1] = final[s + 1]; prev[i + 2] = final[s + 2]; prev[i + 3] = 255;
   }
   // 니어리스트로 확대해 낸다 — 등배로는 사람 눈이 도트 하나를 판정하지 못한다
   const z = Number(flag('zoom', 3));
