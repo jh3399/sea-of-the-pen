@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "조선소 (Shipwright) — 그린 선체가 곧 물리량이 되는 2D 탑뷰 물리 퍼즐 항해 게임",
+  "description": "그리는 자의 바다 (Sea of the Pen) — 그린 선체가 곧 물리량이 되는 2D 탑뷰 물리 퍼즐 항해 게임",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
