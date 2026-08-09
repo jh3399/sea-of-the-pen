@@ -66,8 +66,14 @@ const LABEL_PAD = 7;
 const LABEL_HALF_H = 11;
 const LABEL_GAP = 8;
 
-/** 결정론적 의사난수 (0..1) — 좌표를 시드로 쓰므로 프레임마다 깜빡이지 않는다. */
-function hash2(x, y) {
+/**
+ * 결정론적 의사난수 (0..1) — 좌표를 시드로 쓰므로 프레임마다 깜빡이지 않는다.
+ *
+ * export 인 이유: `sail/bossart.js` 가 **같은 해시**를 써야 보스 표면 무늬가 이 파일이 그리는
+ * 물·바위와 같은 규약(자리는 월드 좌표에 고정, 시간은 알파에만)을 따른다. `scene/bgkit.js` 의
+ * `hash(i, salt)` 는 인덱스 기반이라 월드에 고정되지 않으므로 쓰면 안 된다.
+ */
+export function hash2(x, y) {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
   return s - Math.floor(s);
 }
@@ -118,9 +124,15 @@ function visibleWorldRect(view) {
  *   깜빡여 "바다"가 아니라 "화면이 점멸한다"로 보인다 (타이틀 등불 둘과 같은 이유).
  *
  * @param {number} sec 경과 시간(초). 물리 시각(`simTime`)을 넣으면 일시정지도 따라 멈춘다.
+ * @param {{flow?:{x,y}, flowAt?:(x:number,y:number)=>{x,y}}} options
+ *   `flow` 는 화면 전체가 한 방향으로 흐를 때의 상수 벡터다 (3장 용암류처럼).
+ *   `flowAt` 은 **칸마다** 흐름을 묻는다 — 자리마다 방향이 다른 필드(보스의 방사 흡입)를
+ *   그리려면 이쪽이어야 한다. 카메라 중심 한 점만 재서 상수로 쓰면 화면 전체가 같은 쪽으로
+ *   미끄러져, **물이 어디로 가는지 화면이 거짓말을 한다** — 흐름 자체가 기믹인 맵에서는
+ *   치명적이다. 둘 다 없으면 잔잔한 바다(위아래 찰랑임)로 그린다.
  */
 export function drawWater(ctx, view, sec = 0, {
-  gloom = 0, surface = null, flow = { x: 0, y: 0 },
+  gloom = 0, surface = null, flow = { x: 0, y: 0 }, flowAt = null,
 } = {}) {
   const pad = WATER_CELL * 2;
   const { x0, x1, y0, y1 } = visibleWorldRect(view);
@@ -128,10 +140,11 @@ export function drawWater(ctx, view, sec = 0, {
   const base = surface?.base ?? WATER_BASE;
   const deep = surface?.deep ?? WATER_DEEP;
   const glint = surface?.glint ?? '#ffffff';
-  const flowMag = Math.hypot(flow.x, flow.y);
-  const flowing = flowMag > 1e-6;
-  const driftX = flowing ? ((flow.x * sec * 0.35) % WATER_CELL) : 0;
-  const driftY = flowing ? ((flow.y * sec * 0.35) % WATER_CELL) : 0;
+  // 상수 흐름은 루프 밖에서 한 번만 접는다 — 기존 세 바다의 출력이 비트 단위로 그대로여야 한다.
+  const constMag = Math.hypot(flow.x, flow.y);
+  const constFlowing = !flowAt && constMag > 1e-6;
+  const cDriftX = constFlowing ? ((flow.x * sec * 0.35) % WATER_CELL) : 0;
+  const cDriftY = constFlowing ? ((flow.y * sec * 0.35) % WATER_CELL) : 0;
 
   ctx.fillStyle = dim > 0 ? shade(base, -0.42 * dim) : base;
   ctx.fillRect(x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2);
@@ -141,6 +154,18 @@ export function drawWater(ctx, view, sec = 0, {
   for (let y = gy0; y <= y1 + pad; y += WATER_CELL) {
     for (let x = gx0; x <= x1 + pad; x += WATER_CELL) {
       const h = hash2(x, y);
+      // 칸별 흐름은 **칸의 월드 좌표**로 묻는다. 흐르는 칸은 그 방향으로 미끄러지고,
+      // 흐름이 0 인 칸은 잔잔한 바다와 똑같이 찰랑인다 — 흡입 원 바깥이 저절로 고요해진다.
+      let cell = flow;
+      let flowing = constFlowing;
+      let driftX = cDriftX;
+      let driftY = cDriftY;
+      if (flowAt) {
+        cell = flowAt(x, y);
+        flowing = Math.hypot(cell.x, cell.y) > 1e-6;
+        driftX = flowing ? ((cell.x * sec * 0.35) % WATER_CELL) : 0;
+        driftY = flowing ? ((cell.y * sec * 0.35) % WATER_CELL) : 0;
+      }
       const xx = x + driftX;
       const yy0 = y + driftY;
       if (h < 0.1) {
@@ -171,7 +196,7 @@ export function drawWater(ctx, view, sec = 0, {
       }
 
       ctx.fillStyle = rgba(glint, 0.08 + 0.26 * blink);
-      if (flowing && Math.abs(flow.y) > Math.abs(flow.x)) {
+      if (flowing && Math.abs(cell.y) > Math.abs(cell.x)) {
         ctx.fillRect(xx, yy, WATER_CELL * 0.22, WATER_CELL * 0.55);
       } else {
         ctx.fillRect(xx, yy, WATER_CELL * 0.55, WATER_CELL * 0.22);
