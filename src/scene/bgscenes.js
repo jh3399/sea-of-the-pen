@@ -775,6 +775,34 @@ function sickroom(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.2, 8);
 }
 
+// ---------------- living_room — S-02 진단 (루의 집 거실) ----------------
+// 화면에 뜨는 것은 assets/scene/living-room.png 다 (bgphotos.js). 이 함수는 그림이
+// 못 뜰 때의 받침이자, 모든 씬 키가 SCENES 에 있어야 한다는 규약을 지키는 자리다.
+//
+// ★ S-01(미오의 방)에서 여기로 나오는 것이 그냥 장소 이동이 아니다 — 의사가 나쁜 소식을
+//   말하려고 형제를 병실 밖으로 데리고 나온 것이고, 미오가 못 듣는 데서 말한다는 뜻이다.
+function living_room(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#d8c49c');                       // 벽
+  fill(ctx, 0, R(h * 0.72), w, h - R(h * 0.72), '#8a5c33'); // 마룻바닥
+  for (let x = 0; x < w; x += 9) fill(ctx, x, R(h * 0.72), 1, h, '#744b28');
+  // 창 + 바깥 하늘
+  const wx = R(w * 0.62), wy = R(h * 0.08), ww = R(w * 0.26), wh = R(h * 0.34);
+  fill(ctx, wx - 3, wy - 3, ww + 6, wh + 6, '#8a6a44');
+  fill(ctx, wx, wy, ww, wh, '#8fc4e8');
+  fill(ctx, wx, wy + R(wh * 0.62), ww, R(wh * 0.38), '#6ba24e');
+  // 소파
+  const sx = R(w * 0.17), sy = R(h * 0.4), sw = R(w * 0.5), sh = R(h * 0.3);
+  fill(ctx, sx, sy, sw, sh, '#b4402f');
+  fill(ctx, sx, sy, sw, R(sh * 0.16), '#c9503c');
+  fill(ctx, sx, sy + sh - R(sh * 0.18), sw, R(sh * 0.18), '#8f3125');
+  // 소파에 앉은 루 — 이 해상도에서는 덩어리로만 읽힌다
+  const cx = R(sx + sw * 0.5);
+  blob(ctx, cx, sy + R(sh * 0.18), 9, 8, '#eccfa2');       // 머리
+  fill(ctx, cx - 8, sy + R(sh * 0.3), 16, R(sh * 0.42), '#3c518a');  // 몸
+  fill(ctx, cx - 8, sy + R(sh * 0.3), 16, 3, '#e5505a');   // 목도리
+  vignette(ctx, w, h, 0.16, 8);
+}
+
 // ---------------- bulgasari_name — S-02 不可殺伊 (이름 풀이) ----------------
 // 이름 자체가 이 괴물의 성격이라 화면이 이름만 보여준다.
 //
@@ -974,6 +1002,7 @@ export const SCENES = {
   workshop,
   sickroom,
   mio_drawing,
+  living_room,
   bulgasari_name,
   world_end,
   golden_isle,

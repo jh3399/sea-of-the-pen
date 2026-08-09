@@ -13,8 +13,10 @@
 
 import sickroom from '../../assets/scene/sickroom.png';
 import mioDrawing from '../../assets/scene/mio-drawing.png';
+import livingRoom from '../../assets/scene/living-room.png';
 
 export const BG_PHOTOS = {
   sickroom,
   mio_drawing: mioDrawing,
+  living_room: livingRoom,
 };
