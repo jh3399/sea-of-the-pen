@@ -30,21 +30,40 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '(괜찮다는 말은 사흘째고, 목소리는 어제보다 작다.)' },
   ],
 
-  // ── [S-02] 하나뿐인 약 ───────────────────────────────────────
-  // 포포가 바다 셋을 읊는 동안 배경이 셋을 지나간다. 이 게임이 어디로 가는지를
-  // 30초 안에 다 보여주는 자리다 — 심사위원이 컷신을 끝까지 볼지 여기서 갈린다.
+  // ── [S-02] 썰물병과 불가사리 ─────────────────────────────────
+  // 이 게임의 전제가 통째로 여기 있다. 병에 이름이 붙고, 목적이 생기고, 갈 곳 셋이
+  // 정해진다. 배경이 여섯 번 바뀌는 이유도 그것이다 — 말로만 지나가면 지명 나열이지만
+  // 그림으로 지나가면 예고편이다. 심사위원이 컷신을 끝까지 볼지 여기서 갈린다.
+  //
+  // 배경은 S-01 의 sickroom 을 그대로 이어받는다. 포포는 미오를 보러 온 것이고,
+  // 진단을 그 방에서 듣는 편이 밖에서 듣는 것보다 무겁다.
   THE_ONLY_CURE: [
-    { speaker: '포포', sprite: 'examiner', text: '루냐. 약재는 다 떨어졌다. 이 열은 여기 것으로 안 내려.' },
-    { speaker: '포포', sprite: 'examiner', text: '불섬의 온천가에 나는 풀이 있다. 그거면 낫는다. 나도 젊을 적엔 봤지.' },
-    { speaker: '루', sprite: 'ru', text: '어디로 가면 됩니까.' },
-    { speaker: '포포', sprite: 'examiner', text: '바다를 셋 건넌다.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'sea_day', text: '첫째는 순풍 해협. 바람이 등을 민다. 거긴 쉽다.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 같은 바람이 정면으로 온다.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 약은 거기 있다.' },
-    // ⚠ "사흘"이라는 시한이 여기서 처음 나온다. 이 두 줄이 없으면 S-03·S-05 의 루가
-    //    아무도 말한 적 없는 기한을 혼자 알고 있는 꼴이 된다 (실제로 그랬다).
-    { speaker: '루', sprite: 'ru', text: '얼마나 걸립니까.' },
-    { speaker: '포포', sprite: 'examiner', text: '순풍을 만나도 사흘이다. 그 안에 못 돌아오면 소용없고.' },
+    { speaker: '포포', sprite: 'examiner', text: '루냐. 앉아라. 서서 들을 얘기가 아니다.' },
+    { speaker: '포포', sprite: 'examiner', text: '약재는 진작에 떨어졌다. 있었어도 소용없었을 게야.' },
+    { speaker: '루', sprite: 'ru', text: '무슨 병입니까.' },
+    { speaker: '포포', sprite: 'examiner', text: '썰물병이라고 한다. 물 빠지듯 마르는 병인데, 이 바다 것으로는 안 낫는다.' },
+    { speaker: '루', sprite: 'ru', text: '낫는 방법이 있긴 합니까.' },
+    { speaker: '포포', sprite: 'examiner', text: '…있다고들 하지. 믿을지 말지는 네가 정해라.' },
+
+    // 전설. 이름 풀이(불가살이 = 죽일 수 없는 것)가 이 괴물의 성격을 한 줄에 담는다.
+    { speaker: '포포', sprite: 'examiner', bg: 'fog_black', text: '바다 밑에 불가사리라는 게 산다더구나.' },
+    { speaker: '포포', sprite: 'examiner', text: '불가살이. 죽일 수 없는 것이라는 뜻이야.' },
+    { speaker: '포포', sprite: 'examiner', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
+    { speaker: '포포', sprite: 'examiner', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 한다.' },
+    { speaker: '포포', sprite: 'examiner', text: '그거 한 모금이면 어떤 병도 낫는다더라.' },
+    { speaker: '루', sprite: 'ru', text: '그 괴물이 어디 있는지 아시나요.' },
+
+    // 바다 셋 = 실제 3맵. 각 줄이 그 맵에서 플레이어를 죽이는 것을 하나씩 말한다.
+    { speaker: '포포', sprite: 'examiner', text: '바다를 셋 건너야 한다.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'sea_day', text: '첫째는 순풍 해협. 바람은 등을 밀어주는데 물속이 온통 바위야.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 바람은 정면으로 오고, 해적이 붙는다.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 물 대신 용암이 흐르는 데다.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'world_end', text: '그 셋을 다 건너면 삼킨 바다가 나온다. 불가사리는 거기 있다더구나.' },
+
+    // 루는 기한을 묻지 않는다. 다 듣고 한 마디 하는 것이 그의 말수에 맞고,
+    // 포포의 핀잔이 곧바로 경고로 이어지는 것이 시한보다 무섭다.
+    { speaker: '루', sprite: 'ru', text: '알겠습니다.' },
+    { speaker: '포포', sprite: 'examiner', text: '알긴 뭘 알아.' },
     { speaker: '포포', sprite: 'examiner', bg: 'shipyard_grave', text: '가겠다고 나선 사람은 여럿 있었다.' },
     { speaker: '포포', sprite: 'examiner', text: '돌아온 사람이 없어서 하는 말이야.' },
   ],
@@ -55,7 +74,7 @@ export const SCRIPT = {
   NO_SHIP: [
     { speaker: '', bg: 'harbor', text: '섬 하나뿐인 마을이다. 배는 대개 남의 것이고, 바다는 늘 남의 일이었다.' },
     { speaker: '', text: '부두. 배는 많고, 그중 내 것은 없다.' },
-    { speaker: '루', sprite: 'ru', text: '한 척만 빌려주세요. 사흘이면 됩니다.' },
+    { speaker: '루', sprite: 'ru', text: '한 척만 빌려주세요. 반드시 돌려드리겠습니다.' },
     { speaker: '', text: '아무도 대답하지 않았다.' },
     { speaker: '루', sprite: 'ru', text: '(살 돈도 없고, 빌릴 신용도 없다.)' },
     { speaker: '루', sprite: 'ru', text: '그럼 만든다.' },
@@ -87,8 +106,9 @@ export const SCRIPT = {
   DEPARTURE: [
     { speaker: '', bg: 'dawn_wreck', text: '새벽. 물이 잔잔하다.' },
     { speaker: '', text: '멀리, 가라앉다 만 배들이 아직 떠 있다.' },
-    { speaker: '루', sprite: 'ru', text: '사흘.' },
-    { speaker: '루', sprite: 'ru', text: '그 안에 돌아온다.' },
+    // 시한을 없앤 대신 목적을 두 마디로 못 박는다. 짧은 두 줄이라는 리듬은 그대로다.
+    { speaker: '루', sprite: 'ru', text: '불가사리.' },
+    { speaker: '루', sprite: 'ru', text: '그 정수를 가져온다.' },
     { speaker: '', text: '미오의 종이를 펴고, 연필을 쥐었다.' },
   ],
 };
