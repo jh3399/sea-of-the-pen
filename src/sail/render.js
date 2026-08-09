@@ -5,7 +5,8 @@
 import { bounds, pointInPolygon } from '../geom/poly.js';
 import { MATERIALS } from '../hull/params.js';
 import {
-  drawItemMarker, drawCrewSprite, drawPixelGrid, markerAngleToward, itemMarkerSize, OAR_PUSH,
+  drawItemMarker, drawRudderMarker, drawCrewSprite, drawPixelGrid,
+  markerAngleToward, itemMarkerSize, OAR_PUSH,
 } from '../draw/icons.js';
 
 /** 선체 폴리곤을 몇 칸 그리드로 래스터화할 것인가 (긴 변 기준). */
@@ -27,6 +28,7 @@ const TAU = Math.PI * 2;
 /** 아이템·주인공 아이콘의 한 칸 크기 (m) — `draw/icons.js` 는 화면 고정 픽셀(CSS px)로 쓰지만
  *  여기는 월드 좌표라 선체 스케일에 맞는 작은 값을 쓴다. */
 const ITEM_PIXEL = 0.06;
+const RUDDER_PIXEL = ITEM_PIXEL * 2;
 const CREW_PIXEL = 0.05;
 /** 노는 선체 밖으로 뻗는 장치라 다른 마커보다 크다 (22칸 × 0.09 = 약 2 m 짜리 노). */
 const OAR_PIXEL = 0.09;
@@ -489,11 +491,20 @@ function drawOar(ctx, item) {
     () => drawItemMarker(ctx, 'oar', 0, 0, OAR_PIXEL, markerAngleToward(0, -outward)));
 }
 
+/** 키 — 하니스와 같이 부착 축은 고정하고 막대만 실제 타각만큼 좌우로 움직인다. */
+function drawRudder(ctx, item, angle) {
+  // drawUprightIcon 안에서는 Y가 뒤집히므로 월드 타각과 같은 방향으로 보이게 부호를 뒤집는다.
+  drawUprightIcon(ctx, item.x, item.y,
+    () => drawRudderMarker(ctx, 0, 0, RUDDER_PIXEL, -angle));
+}
+
 /** 강체 하나(선체 로컬 좌표계 안에서) — 선체 + 부착 아이템 + 주인공. */
 export function drawHullBody(ctx, hull) {
   drawHullPixels(ctx, hull.outline, hull.params.material.key);
+  const rudderAngle = hull.control?.rudder ?? 0;
   for (const item of hull.items) {
     if (item.type === 'oar' && item.side) { drawOar(ctx, item); continue; }
+    if (item.type === 'rudder') { drawRudder(ctx, item, rudderAngle); continue; }
     drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, item.type, 0, 0, ITEM_PIXEL));
   }
   if (hull.crew) {
