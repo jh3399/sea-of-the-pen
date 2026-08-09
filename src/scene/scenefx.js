@@ -14,6 +14,31 @@ const FX = {
     // 잘려 세로 이음매가 생기고, 열마다 훑는 방식은 빛기둥 경계에서 깨진다 — 둘 다 해 봤다.
     breath: { seeds: [[400, 520], [250, 470], [700, 540]], yBot: 600, amp: 3, period: 4.6 },
   },
+  // 거실 — 인물이 앉아만 있는 컷이라 가만두면 화면이 통째로 정지 사진이 된다.
+  //
+  // ★ **눈 깜빡임이 제일 크게 먹는다.** 램프나 먼지는 "분위기"지만 깜빡임은 살아 있다는
+  //   신호라, 이것 하나로 "PNG 그 자체" 느낌이 깨진다. 눈 좌표는 눈대중이 아니라
+  //   그림에서 초록 화소를 훑어 클러스터로 찾았다 (좌 788,373 · 우 882,373, 대칭).
+  //   덮는 색도 눈 바로 위 털에서 뽑은 값이다 — 손으로 고르면 얼굴에 얼룩이 생긴다.
+  // ★ 귀·꼬리를 따로 움직이는 것은 **하지 않았다.** 그러려면 PNG 에서 그 부분만 레이어로
+  //   떼고 원래 자리를 배경색으로 메워야 하는데, 꼬리가 소파(붉은색) 위에 있고 목도리도
+  //   같은 붉은색이라 sickroom 처럼 플러드 필로 자를 수가 없다. 잘못 자르면 얼굴이
+  //   몸에서 떨어져 나온다. 레이어를 나눠 그린 그림이 생기면 그때 붙일 자리다.
+  living_room: {
+    lamp: { cx: 230, cy: 352, r: 260, period: 5.2 },
+    // 깜빡임은 **불규칙해야 한다.** 정확히 6초마다 감으면 시계처럼 보인다 —
+    // 가끔 두 번 연속으로 깜빡이게 해서 그것을 깬다.
+    //
+    // ⚠ 상자는 **검은 테두리까지 덮어야 한다.** 초록 홍채만 덮으면 테두리가 그대로 남아
+    //   감은 눈이 아니라 검은 사각형이 된다 (한 번 그렇게 만들었다). 눈 위의 갈색 눈썹
+    //   자국(y 354~361)은 덮으면 안 된다 — 그건 눈이 아니라 무늬다.
+    //   행 히스토그램으로 잰 값: 눈 = x 765~825 · 847~907, y 363~393.
+    blink: {
+      boxes: [[765, 363, 61, 31], [847, 363, 61, 31]],
+      fur: '#f6d2a1', lid: '#241a12', period: 6.2, dur: 0.15,
+    },
+    dust: { count: 40, x0: 110, x1: 470, y0: 660, y1: 150, period: 11 },
+  },
   // "가만히 누워서 물이고 배고 고기고 다 빨아들인다지." 에만 붙는다.
   // 앞 줄(bulgasari_deep)은 같은 그림을 쓰되 아무것도 움직이지 않는다 — 가만히 있다가
   // 빨아들이기 시작하는 것이 대사의 순서이고, 그림을 두 장 그리지 않아도 그게 된다.
@@ -103,6 +128,38 @@ function buildMotes(cfg) {
   return out;
 }
 
+/**
+ * 지금 눈을 감고 있는가. 0 = 뜸, 1 = 완전히 감음.
+ *
+ * 한 주기에 한 번 감되, 주기의 3할쯤에서 **두 번째 깜빡임**을 섞는다. 사람도 고양이도
+ * 일정한 간격으로 깜빡이지 않아서, 규칙적으로 감으면 살아 있는 게 아니라 기계로 보인다.
+ */
+function blinkAmount(sec, cfg) {
+  const t = (sec / cfg.period) % 1;
+  const hit = (at) => {
+    const d = cfg.dur / cfg.period;
+    if (t < at || t > at + d) return 0;
+    return Math.sin(((t - at) / d) * Math.PI);   // 감았다 뜨는 한 번
+  };
+  return Math.max(hit(0), hit(0.31));
+}
+
+/** 램프빛 속의 먼지. 아주 느리게 오르고, 빛 안에서만 보인다. */
+function buildDust(cfg) {
+  const out = [];
+  for (let i = 0; i < cfg.count; i++) {
+    const h1 = Math.sin(i * 33.17) * 27183.281;
+    const h2 = Math.sin(i * 61.43) * 14142.135;
+    out.push({
+      x: cfg.x0 + (h1 - Math.floor(h1)) * (cfg.x1 - cfg.x0),
+      phase: h2 - Math.floor(h2),
+      size: 1 + Math.floor((h1 - Math.floor(h1)) * 2),
+      sway: 5 + (h2 - Math.floor(h2)) * 16,
+    });
+  }
+  return out;
+}
+
 /** 올라가는 기포. 위상을 흩어야 한 줄로 몰려 올라가지 않는다. */
 function buildBubbles(cfg) {
   const out = [];
@@ -163,6 +220,7 @@ export function startSceneFx(canvas, key, src) {
     const sparks = cfg.sea ? buildSparks(img, cfg.sea) : [];
     const motes = cfg.suck ? buildMotes(cfg.suck) : [];
     const bubbles = cfg.bubbles ? buildBubbles(cfg.bubbles) : [];
+    const dust = cfg.dust ? buildDust(cfg.dust) : [];
     state = { canvas, ctx };
 
     const frame = (t) => {
@@ -216,6 +274,50 @@ export function startSceneFx(canvas, key, src) {
         grad.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = grad;
         ctx.fillRect(g.cx - g.r, g.cy - g.r, g.r * 2, g.r * 2);
+      }
+
+      // 램프 — 갓 둘레의 빛이 아주 느리게 밝아졌다 어두워진다. 기름등이라 흔들린다는 뜻이고,
+      // 덧그리기만 하므로 원본 갓의 결은 그대로 남는다 (essence 의 glow 와 같은 수법).
+      if (cfg.lamp) {
+        const L = cfg.lamp;
+        const puls = 0.5 + 0.5 * Math.sin((sec / L.period) * Math.PI * 2);
+        // 두 번째 사인은 주기가 안 떨어지게 잡았다 — 겹치면 맥박이 규칙적으로 들린다.
+        const flick = 0.9 + 0.1 * Math.sin(sec * 7.3);
+        const grad = ctx.createRadialGradient(L.cx, L.cy, 0, L.cx, L.cy, L.r);
+        grad.addColorStop(0, `rgba(255,214,140,${(0.1 * puls + 0.05) * flick})`);
+        grad.addColorStop(0.55, `rgba(240,180,90,${(0.05 * puls + 0.02) * flick})`);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(L.cx - L.r, L.cy - L.r, L.r * 2, L.r * 2);
+      }
+
+      // 먼지 — 램프빛 안에서만 보인다. 위로 갈수록 옅어진다.
+      if (cfg.dust) {
+        const D = cfg.dust;
+        for (const p of dust) {
+          const t = ((sec / D.period) + p.phase) % 1;
+          const y = D.y0 + (D.y1 - D.y0) * t;
+          const x = p.x + Math.sin(t * Math.PI * 3 + p.phase * 11) * p.sway;
+          ctx.globalAlpha = 0.34 * (1 - t) * Math.min(1, t * 5);
+          ctx.fillStyle = '#ffe6b0';
+          ctx.fillRect(Math.round(x), Math.round(y), p.size, p.size);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // 눈 깜빡임 — 눈을 털색으로 덮고 가운데에 감은 선을 긋는다.
+      // ⚠ 반쯤 감은 중간 상태를 그리면 도트가 뭉개져 눈병처럼 보인다. 임계로 딱 끊는다.
+      if (cfg.blink && blinkAmount(sec, cfg.blink) > 0.5) {
+        const B = cfg.blink;
+        for (const [bx, by, bw, bh] of B.boxes) {
+          ctx.fillStyle = B.fur;
+          ctx.fillRect(bx, by, bw, bh);
+          // 감은 선은 상자 한가운데가 아니라 아래쪽 3분의 2 지점이다 — 눈꺼풀은
+          // 위에서 아래로 내려와 덮으므로, 가운데 그으면 눈을 치켜뜬 것처럼 보인다.
+          const lh = Math.max(2, Math.round(bh * 0.13));
+          ctx.fillStyle = B.lid;
+          ctx.fillRect(bx + 2, by + Math.round(bh * 0.62), bw - 4, lh);
+        }
       }
 
       // 기포 — 물속이라는 표시. 위로 갈수록 옅어진다.

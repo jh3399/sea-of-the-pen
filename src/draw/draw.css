@@ -24,6 +24,18 @@
   --wood-light: #c98a52;
   --banner: #2f5178;
   --banner-light: #3d6693;
+
+  /* ★ 만년필 커서 — 모루가 S-04 에서 준 그 펜이다. 모양·팔레트는 `bgkit.js` 의
+     `fountainPen`(과 그것을 쓰는 `the_pen` 씬)과 같은 물건이어야 한다. 여기만 45°로
+     눕혔는데, 커서는 촉이 왼쪽 아래를 향해야 어디를 찍는지 눈으로 읽히기 때문이다.
+     ⚠ hotspot 은 **촉 끝(3 29)** 이다. 다른 데 두면 그리는 자리와 커서가 어긋난다.
+     ⚠ 색은 `#` 을 %23 으로 써야 한다 — data URI 안에서 `#` 은 프래그먼트 구분자다.
+     ⚠ 마지막 `crosshair` 는 폴백이다. SVG 커서를 못 읽는 환경에서 커서가 사라지면
+       그리기 화면이 통째로 못 쓰게 되므로 반드시 남긴다. */
+  --pen-cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' shape-rendering='crispEdges'%3E%3Cg stroke='%230b111a' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpolygon points='9,18 14,23 29.5,7.4 24.5,2.4' fill='%2316202e'/%3E%3Cpolygon points='7.1,19 13,24.9 14.5,23.5 8.5,17.5' fill='%23e8c46a'/%3E%3Cpolygon points='5.1,22.6 9.4,26.9 12.2,24 8,19.8' fill='%2316202e'/%3E%3Cpolygon points='3,29 5.1,22.6 9.4,26.9' fill='%23e8c46a'/%3E%3Cpolygon points='24.5,2.4 29.5,7.4 31.3,5.7 26.3,0.7' fill='%23a8813a'/%3E%3C/g%3E%3Cg stroke='none'%3E%3Cpolygon points='9,18 24.5,2.4 27,4.9 11.5,20.5' fill='%232c4360'/%3E%3Cpolygon points='15,15.6 16.4,17 23.5,9.9 22.1,8.5' fill='%235fd6e8'/%3E%3Cpolygon points='17.1,6.3 19.3,8.6 24.3,3.6 22,1.4' fill='%23e8c46a' stroke='%230b111a' stroke-width='1.2'/%3E%3Crect x='6.2' y='24.4' width='1.8' height='1.8' fill='%230b111a'/%3E%3Cpolygon points='3,29 4,25.8 6.5,25.5' fill='%23f7e6ae'/%3E%3C/g%3E%3C/svg%3E")
+    3 29,
+    crosshair;
 }
 
 * { box-sizing: border-box; }
@@ -81,7 +93,7 @@ html, body {
     var(--paper);
   border: 2px solid var(--paper-edge);
   overflow: hidden;
-  cursor: crosshair;
+  cursor: var(--pen-cursor);
   touch-action: none;
 }
 

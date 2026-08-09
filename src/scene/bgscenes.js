@@ -5,7 +5,7 @@
 import {
   hash, fill, blob, overlay, vignette, skyGradient, stars, moon, sun, clouds, hills, palm,
   seaBands, waves, glitter, tallShip, lighthouse, pier, gulls, particles, rain, fogBands,
-  lightning, wreckage, blight, crystal, goldCrack, BLIGHT,
+  lightning, wreckage, blight, crystal, goldCrack, fountainPen, BLIGHT,
 } from './bgkit.js';
 
 const R = Math.round;
@@ -88,6 +88,64 @@ function harbor_dusk(ctx, { w, h, sec }) {
   gulls(ctx, w, sec, { y: hz * 0.35, count: 5, speed: 10, seed: 17, color: '#e8c2a4', alpha: 0.7 });
   pier(ctx, w, h, { wood: '#241a12', dark: '#140d09', top: '#33241a' });
   vignette(ctx, w, h, 0.1);
+}
+
+// ---------------- the_pen — S-04 모루가 꺼내는 펜 ----------------
+//
+// ★ `essence`(정수 한 병)와 같은 자리다 — 물건 하나가 화면을 통째로 가져가는 컷.
+//   이 펜이 곧 제목이고 다음 두 줄이 그 내력이라, 화면에 다른 것이 있으면 안 된다.
+// ★ 그림이 아니라 코드로 찍는다 (`bulgasari_name` 과 같은 이유). 모양은 bgkit 의
+//   `fountainPen` 하나뿐이고, **설계 화면의 커서가 같은 모양을 쓴다** (draw.css).
+//   둘이 다르게 생기면 "모루가 준 펜으로 그린다"는 연결이 끊긴다.
+// ★ 빛은 청록이 아니라 **호박색**이다. 정수(청록)와 같은 색을 쓰면 두 물건이 겹쳐 보이고,
+//   지금 이 펜은 바다가 아니라 램프 켜진 작업장의 서랍에서 나오는 중이다.
+
+function the_pen(ctx, { w, h, sec }) {
+  const cx = R(w * 0.5);
+  const cy = R(h * 0.5);
+  skyGradient(ctx, w, 0, h, ['#0a0d14', '#111726', '#161f33', '#111726', '#0a0d14']);
+
+  // 놓인 자리 — 탁자 윗면. 서랍에서 꺼내 놓았다는 것 이상은 말하지 않는다.
+  // ⚠ 탁자가 밝으면 화면의 절반을 가져가 버린다. 아래로 갈수록 검게 빠뜨려서
+  //   눈에 남는 것이 펜 하나뿐이도록 만든다.
+  const deck = cy + 14;
+  fill(ctx, 0, deck, w, h - deck, '#1d150e');
+  fill(ctx, 0, deck, w, 1, '#4a3626');
+  fill(ctx, 0, deck + 1, w, 2, '#2c2015');
+  const fade = ctx.createLinearGradient(0, deck, 0, h);
+  fade.addColorStop(0, 'rgba(0,0,0,0)');
+  fade.addColorStop(1, 'rgba(0,0,0,0.72)');
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, deck, w, h - deck);
+
+  // 헤일로 — 숨 쉬듯 커졌다 작아진다. 정지 그림이면 "낡은 펜"이 그냥 아이콘이 된다.
+  // ⚠ blob(하드 타원)으로 쌓으면 띠가 눈에 보인다 — essence 처럼 방사 그라디언트를 쓴다.
+  const puls = 0.5 + 0.5 * Math.sin((sec / 3.1) * Math.PI * 2);
+  const rad = R(w * 0.42);
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+  grad.addColorStop(0, `rgba(226,168,74,${0.22 * puls + 0.1})`);
+  grad.addColorStop(0.45, `rgba(180,124,52,${0.1 * puls + 0.045})`);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+
+  const s = Math.max(1, Math.round(w / 190));   // 356 폭에서 s=2 (펜 172×28)
+  const px = cx - 43 * s;
+  const py = cy - 7 * s;
+
+  // 탁자에 지는 그림자. 이게 없으면 펜이 허공에 뜬다.
+  ctx.globalAlpha = 0.45;
+  fill(ctx, px + 2 * s, deck - 1, 84 * s, 2, '#120c08');
+  ctx.globalAlpha = 1;
+
+  fountainPen(ctx, px, py, s);
+
+  // 램프빛 속의 먼지. 위로 아주 느리게 오른다.
+  particles(ctx, w, h, sec, {
+    count: 34, color: '#e8c46a', speed: 5, dir: -1, sway: 9,
+    alpha: 0.5, seed: 211, y0: 0.15, y1: 1, twinkle: true,
+  });
+  vignette(ctx, w, h, 0.16, 10);
 }
 
 // ---------------- sea_day — S-02 맑은 낮 바다 ----------------
@@ -1164,6 +1222,7 @@ export const SCENES = {
   night_sea,
   harbor,
   harbor_dusk,
+  the_pen,
   sea_day,
   rock_strait,
   fog_black,
