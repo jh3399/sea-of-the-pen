@@ -64,7 +64,7 @@ src/
             zones.json(테스트 존 = 필드 정의. 코드 0줄)
   game/     crew.js(주인공 — 카메라 중심이자 도착 판정의 주체) · goal.js(도착 판정)
             turrets.js(포탑 시계·발사 요청) · scoring.js(도착 시간 → 별)
-            progress.js(바다의 순서 — 맵을 하나도 모른다) · handoff.js(항해 중 배 고치기)
+            progress.js(바다의 순서·전체 노선 — 맵을 하나도 모른다) · handoff.js(항해 중 배 고치기)
   rules/    engine.js(§6 논리 엔진 — 규칙을 하나도 모른다) · table.json(규칙 10줄)
   physics/  world.js(planck 어댑터·고정 타임스텝) · body.js(폴리곤→강체) · hydro.js★③
             devices.js(노 스트로크·키·닻·부스터의 힘) · fields.js(필드 적용부)
@@ -74,6 +74,7 @@ src/
   draw/     screen.js(그리기 화면) · icons.js(픽셀 아이콘·주인공) · templates.js · draw.css
   sail/     screen.js(항해 화면) · render.js(절차적 픽셀 렌더) · sail.css
             map.js(0장 연습 해역 · 1장 바위 협곡 — 순수 데이터. 맵별 코드 0줄)
+            voyagemap.js(Tab 지도 — ROUTE 를 읽어 그릴 뿐, 노선을 모른다)
   menu/     screen.js(메뉴·컷신 오케스트레이션 — 대사 0줄) · menu.css
   story/    dialogue.js(대사 오버레이 엔진) · script.js(대사 전문 ← docs/SCRIPT.md 와 1:1)
   scene/    pixelbg.js(씬 크로스페이드) · bgscenes.js(배경 29종) · bgkit.js(레이어 프리미티브)

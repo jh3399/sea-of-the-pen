@@ -220,7 +220,6 @@ export const SCRIPT = {
   //     받을 것(돛)은 **이름을 대지 않는다.** §8 은 큰 돛을 플레이어가 스스로 찾길 원한다.
   FIRST_ISLAND: [
     { speaker: '', bg: 'jungle_green', text: '노를 놓았다. 팔이 후들거린다.' },
-    { speaker: '', text: '섬이다. 바다 셋 중에 아직 하나도 세지 않았다.' },
     { speaker: '세렌', sprite: 'seren', text: '어이. 그 배, 노만 달고 왔어?' },
     { speaker: '루', sprite: 'ru', text: '…네.' },
     { speaker: '세렌', sprite: 'seren', text: '용감하거나 급했거나 둘 중 하난데.' },
@@ -231,12 +230,23 @@ export const SCRIPT = {
 
     // 세렌이 직접 달아 준다. 여기서 `handoff.grantItem('rudder')` 이 실제로 붙는다.
     { speaker: '', text: '세렌이 배 뒤로 돌아가 무언가를 붙였다.' },
-    { speaker: '세렌', sprite: 'seren', text: '키야. 선미에 달아 뒀어. Q 랑 E, 왼쪽 오른쪽.' },
+    { speaker: '세렌', sprite: 'seren', text: '키야. 선미에 달아 뒀어.' },
+    // ⚠ 실제 조작을 그대로 적는다 — 누르고 있는 동안 키가 그쪽으로 꺾인다 (devices.js 가
+    //   held.KeyQ / held.KeyE 를 직접 읽는다). "Q 랑 E, 왼쪽 오른쪽" 만으로는 무엇을
+    //   어떻게 하라는 건지 안 읽혔다.
+    { speaker: '세렌', sprite: 'seren', text: 'Q 를 누르고 있으면 왼쪽으로, E 를 누르고 있으면 오른쪽으로 꺾인다.' },
+    { speaker: '세렌', sprite: 'seren', text: '노랑 같이 써. 노로 밀고 키로 방향을 잡는 거야.' },
     { speaker: '세렌', sprite: 'seren', text: '단, 느릴 땐 아무 일도 안 나. 물이 안 흐르는데 뭘 밀겠어.' },
     { speaker: '세렌', sprite: 'seren', text: '빨라지면 그때 듣는다.' },
     { speaker: '루', sprite: 'ru', text: '어떻게 빨라집니까.' },
     { speaker: '세렌', sprite: 'seren', text: '다음 바다는 바람이 등을 밀어 줘. 받을 게 있으면 받고.' },
     { speaker: '세렌', sprite: 'seren', text: '없으면 팔로 가는 거지.' },
+
+    // ★ 지도를 여기서 준다. 항해 화면의 안내판은 연습 해역에서만 뜨므로(D4: 1장부터는
+    //   화면이 설명하지 않는다), 1장 이후에 Tab 을 알려 줄 사람은 세렌뿐이다.
+    { speaker: '', text: '세렌이 접힌 종이를 배 위로 던졌다.' },
+    { speaker: '세렌', sprite: 'seren', text: '해도야. Tab 누르면 어디까지 왔는지 보인다.' },
+    { speaker: '세렌', sprite: 'seren', text: '실은 것도 거기 다 적혀 있고.' },
     { speaker: '', text: '뱃머리를 돌렸다. 바위 협곡 쪽이다.' },
   ],
 };

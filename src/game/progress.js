@@ -60,3 +60,28 @@ export function advanceStage() {
 export function resetStage() {
   sessionStorage.removeItem(STAGE_KEY);
 }
+
+/**
+ * 항해 전체 노선 — **지도가 읽는 데이터**다. 아직 못 가는 바다까지 들어 있다.
+ *
+ * ★ `STAGES` 와 나눠 둔 이유: STAGES 는 "지금 플레이할 수 있는 것"이고 ROUTE 는
+ *   "포포가 말한 전체 여정"이다. S-02 에서 바다 셋을 다 들었으므로 루도 플레이어도
+ *   갈 곳을 이미 안다 — 지도에 없으면 오히려 이상하다. 만들어지지 않은 바다는
+ *   `locked` 로 흐리게 그린다 (`sail/voyagemap.js`).
+ * ⚠ 이름과 한 줄 설명은 [S-02] 포포의 대사에서 그대로 가져온 것이다. 한쪽만 고치면
+ *   지도와 이야기가 어긋난다.
+ */
+export const ROUTE = [
+  { id: 'practice', name: '시작의 섬', note: '노를 익힌 곳' },
+  { id: 'reef', name: '바위 협곡', note: '바람은 등을 밀어주지만, 주변이 온통 바위' },
+  { id: 'storm', name: '역풍 협곡', note: '바람이 정면으로 막아서고, 해적이 들끓는다', locked: true },
+  { id: 'volcano', name: '불의 바다', note: '물 대신 용암이 흐르는 곳', locked: true },
+  { id: 'bulgasari', name: '불가사리의 바다', note: '전설로만 전해지던 그것', locked: true },
+];
+
+/** 지도에서 "여기까지 왔다" 를 표시할 지점. ROUTE 인덱스. */
+export function routeIndex() {
+  const id = currentStage().id;
+  const i = ROUTE.findIndex((r) => r.id === id);
+  return i < 0 ? 0 : i;
+}

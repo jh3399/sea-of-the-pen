@@ -24,7 +24,13 @@ const PALETTE_MATERIALS = ['wood', 'iron'];
 
 // 시작 시점에 열려 있는 것 — 나머지는 진행에 따라 언락된다. 팔레트 순서(위 두 배열)는
 // 최종 구성 그대로 두고 여기서만 걸러 내므로, 언락은 이 Set 에 키를 넣는 것으로 끝난다.
-const UNLOCKED_ITEMS = new Set(['rudder']);
+//
+// ★ **키(rudder)는 여기 없다.** 키는 시작의 섬에서 세렌이 달아 준다 ([S-06]) — 그리기
+//   화면에서 미리 달 수 있으면 그 장면이 통째로 의미를 잃고, "노만 달고 왔어?" 라는
+//   세렌의 첫 대사가 거짓말이 된다. `game/handoff.js` 의 grantItem 이 실제 부착을 맡는다.
+// ★ 대신 돛(sail)을 연다. 1장의 정답이 큰 돛이라(설계 문서 §8) 재료는 처음부터 있어야
+//   하고, 세렌의 "받을 게 있으면 받고" 도 그 돛을 가리킨다.
+const UNLOCKED_ITEMS = new Set(['sail']);
 const UNLOCKED_MATERIALS = new Set(['wood']);
 
 const ITEM_MARKER_HIT_PX = 16;
