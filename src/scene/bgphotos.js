@@ -14,9 +14,14 @@
 import sickroom from '../../assets/scene/sickroom.png';
 import mioDrawing from '../../assets/scene/mio-drawing.png';
 import livingRoom from '../../assets/scene/living-room.png';
+import bulgasariDeep from '../../assets/scene/bulgasari-deep.png';
 
 export const BG_PHOTOS = {
   sickroom,
   mio_drawing: mioDrawing,
   living_room: livingRoom,
+  // ★ 같은 그림을 키 둘이 나눠 쓴다. `_feed` 쪽에만 scenefx 의 흡입 움직임이 붙는다 —
+  //   "누워 있다" → "빨아들인다" 로 넘어가는 두 줄에 그림을 두 장 그리지 않기 위해서다.
+  bulgasari_deep: bulgasariDeep,
+  bulgasari_feed: bulgasariDeep,
 };

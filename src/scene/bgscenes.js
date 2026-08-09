@@ -803,6 +803,45 @@ function living_room(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.16, 8);
 }
 
+// ---------------- bulgasari_deep / bulgasari_feed — S-02 전설 (심해) ----------------
+// 화면에 뜨는 것은 assets/scene/bulgasari-deep.png 다 (bgphotos.js). 아래는 그 받침.
+//
+// ★ **키가 둘인데 그림은 한 장이다.** `_deep` 은 가만히 있고 `_feed` 는 같은 그림 위에서
+//   빨아들이는 움직임(scenefx)이 돈다. 대사 두 줄이 "누워 있다" → "빨아들인다" 로
+//   넘어가는데, 그림을 두 장 그리는 대신 같은 자리에서 움직임만 붙였다.
+function bulgasariDeepBase(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#04101f');
+  const lit = R(h * 0.5);
+  for (let y = 0; y < lit; y++) {
+    ctx.globalAlpha = 0.1 * (1 - y / lit);
+    fill(ctx, 0, y, w, 1, '#2a5f8f');
+  }
+  ctx.globalAlpha = 1;
+  fill(ctx, 0, R(h * 0.72), w, h - R(h * 0.72), '#061726');   // 바닥
+  // 별 모양 덩어리 — 팔 다섯을 중심에서 뻗는다
+  const cx = R(w * 0.49), cy = R(h * 0.55);
+  ctx.fillStyle = '#0b2237';
+  for (let a = 0; a < 5; a++) {
+    const ang = (a / 5) * Math.PI * 2 - Math.PI / 2;
+    for (let t = 0; t < R(w * 0.34); t++) {
+      const wdt = R((1 - t / (w * 0.34)) * h * 0.09) + 2;
+      fill(ctx, cx + Math.cos(ang) * t - wdt / 2, cy + Math.sin(ang) * t * 0.55 - wdt / 2, wdt, wdt);
+    }
+  }
+  blob(ctx, cx, cy, R(w * 0.08), R(h * 0.08), '#0e2a42');
+  // 위에서 내려오는 빛 한 줄기
+  ctx.globalAlpha = 0.07;
+  ctx.fillStyle = '#bfe4ff';
+  for (let i = 0; i < R(h * 0.7); i++) fill(ctx, R(w * 0.46) - i * 0.25, i, R(w * 0.06) + i * 0.5, 1);
+  ctx.globalAlpha = 1;
+  particles(ctx, w, h, sec, {
+    count: 30, color: '#8fc0e0', speed: 3, dir: -1, sway: 4, alpha: 0.2, seed: 402,
+  });
+  vignette(ctx, w, h, 0.34, 10);
+}
+const bulgasari_deep = bulgasariDeepBase;
+const bulgasari_feed = bulgasariDeepBase;
+
 // ---------------- bulgasari_name — S-02 不可殺伊 (이름 풀이) ----------------
 // 이름 자체가 이 괴물의 성격이라 화면이 이름만 보여준다.
 //
@@ -1003,6 +1042,8 @@ export const SCENES = {
   sickroom,
   mio_drawing,
   living_room,
+  bulgasari_deep,
+  bulgasari_feed,
   bulgasari_name,
   world_end,
   golden_isle,

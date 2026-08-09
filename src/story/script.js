@@ -56,11 +56,13 @@ export const SCRIPT = {
     { speaker: '포포', sprite: 'examiner', text: '믿을지 말지는 네가 정하려무나.' },
 
     // 전설. 이름 풀이(불가살이 = 죽일 수 없는 것)가 이 괴물의 성격을 한 줄에 담는다.
-    { speaker: '포포', sprite: 'examiner', bg: 'fog_black', text: '바다 밑에 불가사리라는 게 산다더구나.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'bulgasari_deep', text: '바다 밑에 불가사리라는 게 산다더구나.' },
     // 이름만 화면 가득. 그림이 아니라 코드로 찍는다 (bgscenes.js `bulgasari_name` 머리말).
     { speaker: '포포', sprite: 'examiner', bg: 'bulgasari_name', text: '불가살이(不可殺伊). 죽일 수 없는 것이라는 뜻이란다.' },
-    // 이름 카드에서 다시 물속으로. 여기가 나중에 "빨아들이는" 그림이 들어올 자리다.
-    { speaker: '포포', sprite: 'examiner', bg: 'fog_black', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
+    // 이름 카드에서 다시 물속으로. 앞과 **같은 그림**이지만 이번엔 부유물이 중심으로
+    // 빨려든다 (scenefx `bulgasari_feed`). 가만히 있다가 빨아들이기 시작하는 것이
+    // 대사의 순서이고, 그림을 두 장 그리지 않아도 그게 된다.
+    { speaker: '포포', sprite: 'examiner', bg: 'bulgasari_feed', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
     { speaker: '포포', sprite: 'examiner', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 하는구나.' },
     { speaker: '포포', sprite: 'examiner', text: '그 정수 한 모금이면 어떤 병도 낫는다고, 오래전부터 이 바다에 전해 오는 이야기란다.' },
     { speaker: '루', sprite: 'ru', text: '그 괴물이 어디 있는지 아시나요.' },

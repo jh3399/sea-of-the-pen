@@ -14,6 +14,12 @@ const FX = {
     // 잘려 세로 이음매가 생기고, 열마다 훑는 방식은 빛기둥 경계에서 깨진다 — 둘 다 해 봤다.
     breath: { seeds: [[400, 520], [250, 470], [700, 540]], yBot: 600, amp: 3, period: 4.6 },
   },
+  // "가만히 누워서 물이고 배고 고기고 다 빨아들인다지." 에만 붙는다.
+  // 앞 줄(bulgasari_deep)은 같은 그림을 쓰되 아무것도 움직이지 않는다 — 가만히 있다가
+  // 빨아들이기 시작하는 것이 대사의 순서이고, 그림을 두 장 그리지 않아도 그게 된다.
+  bulgasari_feed: {
+    suck: { cx: 820, cy: 400, count: 120, radius: 900, period: 3.4 },
+  },
 };
 
 /** 나무(벽·침대틀·걸상). 이불·고양이·베개는 전부 여기서 빠지므로 플러드 필이 벽에 막힌다. */
@@ -71,6 +77,26 @@ function buildSparks(img, sea) {
   return out;
 }
 
+/**
+ * 빨려드는 부유물의 출발 자리. 각도와 반지름만 미리 정해 두고 매 프레임 안으로 당긴다.
+ * 위상을 흩어 두는 것이 요점이다 — 안 그러면 전부 같은 박자로 빨려들어 파도처럼 보인다.
+ */
+function buildMotes(cfg) {
+  const out = [];
+  for (let i = 0; i < cfg.count; i++) {
+    const h1 = Math.sin(i * 12.9898) * 43758.5453;
+    const h2 = Math.sin(i * 78.233) * 12345.6789;
+    const h3 = Math.sin(i * 39.425) * 24634.6345;
+    out.push({
+      angle: (h1 - Math.floor(h1)) * Math.PI * 2,
+      dist: 0.35 + (h2 - Math.floor(h2)) * 0.65,   // 중심에서 얼마나 먼 데서 출발하는가
+      phase: h3 - Math.floor(h3),
+      size: 1 + Math.floor((h1 - Math.floor(h1)) * 3),
+    });
+  }
+  return out;
+}
+
 let raf = 0;
 let state = null;
 // 그림 로드는 비동기라 씬을 빨리 넘기면 **이미 지나간 씬의 setup 이 나중에 도착**한다.
@@ -113,6 +139,7 @@ export function startSceneFx(canvas, key, src) {
     const ctx = canvas.getContext('2d');
     const breathLayer = cfg.breath ? buildBreathLayer(img, cfg.breath) : null;
     const sparks = cfg.sea ? buildSparks(img, cfg.sea) : [];
+    const motes = cfg.suck ? buildMotes(cfg.suck) : [];
     state = { canvas, ctx };
 
     const frame = (t) => {
@@ -135,6 +162,22 @@ export function startSceneFx(canvas, key, src) {
           ctx.globalAlpha = 0.25 + 0.35 * (0.5 + 0.5 * Math.sin(sec * 2.2 + s.phase));
           ctx.fillStyle = '#dbeaf4';
           ctx.fillRect(Math.round(x), cfg.sea.y + s.y, s.len, 2);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // 흡입 — 부유물이 중심으로 당겨지고, 가까워질수록 빨라지며 사라진다.
+      // t 를 제곱해서 쓰는 것이 핵심이다: 등속으로 당기면 빨려드는 게 아니라 떠내려간다.
+      if (cfg.suck) {
+        const s = cfg.suck;
+        for (const m of motes) {
+          const t = ((sec / s.period) + m.phase) % 1;
+          const r = s.radius * m.dist * (1 - t * t);
+          const x = s.cx + Math.cos(m.angle) * r;
+          const y = s.cy + Math.sin(m.angle) * r * 0.52;   // 바닥에 누운 것이라 세로를 눌러 준다
+          ctx.globalAlpha = 0.55 * Math.min(1, t * 4) * (1 - t);
+          ctx.fillStyle = '#9fd4f2';
+          ctx.fillRect(Math.round(x), Math.round(y), m.size, m.size);
         }
         ctx.globalAlpha = 1;
       }
