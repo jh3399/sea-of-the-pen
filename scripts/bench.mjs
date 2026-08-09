@@ -3122,11 +3122,12 @@ check('절단 조각에 없는 대포의 발사 스케줄은 함께 버려진다
     && rebindTest.bodyUpdated && rebindTest.independentCopy,
   `승계 ${rebindTest.keptCount}개(bind ${rebindTest.keptBind}) · body 갱신 ${rebindTest.bodyUpdated} · 독립 복사 ${rebindTest.independentCopy}`);
 
-// 데모 맵에 실제로 배치한 해적이 스키마를 통과하는지 — 데이터 오타는 맵 파일에서 가장 흔하다.
-const demoMapPirates = createPirates(createWorld(), DEMO_MAP.pirates ?? []);
-check('DEMO_MAP.pirates 가 유효한 스펙으로 로드된다',
-  demoMapPirates.length === (DEMO_MAP.pirates ?? []).length && demoMapPirates.length > 0,
-  `${demoMapPirates.length}척 로드`);
+// 해적선은 데모 맵에서 빠졌다(스톰 맵으로 이관 예정) — DEMO_MAP.pirates 는 없거나 빈 배열이어야
+// createPirates 가 빈 배열을 그대로 돌려주는지만 확인한다. 스펙 파싱 자체는 위 pirateThrows 와
+// 아래 스케줄/명중/승계 테스트가 명시적 스펙으로 이미 덮는다.
+check('DEMO_MAP 에는 해적선이 배치되어 있지 않다 (테스트용 배치 제거됨)',
+  createPirates(createWorld(), DEMO_MAP.pirates ?? []).length === 0,
+  `${(DEMO_MAP.pirates ?? []).length}척`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
