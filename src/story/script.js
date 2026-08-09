@@ -56,18 +56,19 @@ export const SCRIPT = {
 
     // 전설. 이름 풀이(불가살이 = 죽일 수 없는 것)가 이 괴물의 성격을 한 줄에 담는다.
     { speaker: '포포', sprite: 'examiner', bg: 'fog_black', text: '바다 밑에 불가사리라는 게 산다더구나.' },
-    { speaker: '포포', sprite: 'examiner', text: '불가살이(不可殺伊). 죽일 수 없는 것이라는 뜻이야.' },
+    { speaker: '포포', sprite: 'examiner', text: '불가살이(不可殺伊). 죽일 수 없는 것이라는 뜻이란다.' },
     { speaker: '포포', sprite: 'examiner', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
     { speaker: '포포', sprite: 'examiner', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 하는구나.' },
-    { speaker: '포포', sprite: 'examiner', text: '그거 한 모금이면 어떤 병도 낫는다더라.' },
+    { speaker: '포포', sprite: 'examiner', text: '그 정수 한 모금이면 어떤 병도 낫는다고, 오래전부터 이 바다에 전해 오는 이야기란다.' },
     { speaker: '루', sprite: 'ru', text: '그 괴물이 어디 있는지 아시나요.' },
 
     // 바다 셋 = 실제 3맵. 각 줄이 그 맵에서 플레이어를 죽이는 것을 하나씩 말한다.
     { speaker: '포포', sprite: 'examiner', text: '바다를 셋 건너야 하지.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'sea_day', text: '첫째는 순풍 해협. 바람은 등을 밀어주는데 물속이 온통 바위야.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 바람은 정면으로 오고, 해적이 붙는다더구나.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 물 대신 용암이 흐르는 데야.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'world_end', text: '그 셋을 다 건너면 삼킨 바다가 나온다. 불가사리는 거기 있다더구나.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'sea_day', text: '첫째는 바위 협곡. 바람은 등을 밀어주지만, 주변이 온통 바위지.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 바람이 정면으로 막아서는데, 해적까지 들끓는단다.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 물 대신 용암이 흐르는 곳이지…' },
+    { speaker: '포포', sprite: 'examiner', bg: 'world_end', text: '그 셋을 다 건너면 불가사리의 바다가 나온단다…' },
+    { speaker: '포포', sprite: 'examiner', text: '전설로만 전해지던 그것이 거기 있다더구나.' },
 
     // 루는 기한을 묻지 않는다. 다 듣고 한 마디 하는 것이 그의 말수에 맞고,
     // 포포의 핀잔이 곧바로 경고로 이어지는 것이 시한보다 무섭다.
