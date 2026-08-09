@@ -580,7 +580,7 @@ export const SCRIPT = {
     { speaker: '', bg: 'harbor', text: '몇 해가 지났다.' },
     { speaker: '', bg: 'mio_drawing', text: '종이 한 장. 배가 그려져 있다. 그 안에 고양이 둘.' },
     { speaker: '', bg: 'sea_day', text: '…….' },
-    { speaker: '미오', sprite: 'mio', text: '오빠. 이제 우리 배로 가자.' },
+    { speaker: '미오', sprite: 'mio', text: '오빠. 이제 우리의 배를 그리자.' },
     { speaker: '루', sprite: 'ru', text: '그래.' },
   ],
 };

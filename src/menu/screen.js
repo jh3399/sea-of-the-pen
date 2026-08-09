@@ -7,7 +7,7 @@
 // 이 파일은 순서만 다룬다 — 대사는 story/script.js 한 곳에 있다.
 
 import './menu.css';
-import { startPixelBg, SCENES } from '../scene/pixelbg.js';
+import { startPixelBg, setScene, SCENES } from '../scene/pixelbg.js';
 import { stars, glitter } from '../scene/bgkit.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { runDialogue, setDialogueBlip, skipDialogue } from '../story/dialogue.js';
@@ -20,6 +20,17 @@ const HANDOFF_KEY = 'shipwright:handoff';      // session — draw → sail 이 
 
 const BGM_VOL = 0.7;
 const SFX_VOL = 0.9;
+
+/**
+ * 마지막 대사가 끝나고 **그림만 남아 있는** 시간 (ms).
+ *
+ * 씬 크로스페이드(`pixelbg.js` 의 FADE_MS 650ms)가 끝나고도 한 박자 더 남아야 "정지"가
+ * 읽힌다. 3초면 그림을 한 번 훑고 숨을 고를 만하다 — 더 길면 멈춘 줄 알고, 더 짧으면
+ * 넘어가는 화면 중 하나로 지나간다.
+ */
+const ENDING_HOLD_MS = 3000;
+/** THE END 페이드 길이 (ms). `menu.css` 의 `the-end-in` 과 **같아야 한다.** */
+const THE_END_FADE_MS = 1600;
 
 const els = {
   bg: document.getElementById('bg'),
@@ -223,16 +234,36 @@ async function playEnding() {
     if (beat.bgm) playBgm(beat.bgm);
     await runDialogue(SCRIPT[beat.key]);
   }
-  showCutscene(false);
 
   sessionStorage.removeItem(HANDOFF_KEY);
   sessionStorage.removeItem('shipwright:stage');
 
+  /**
+   * ★ **마지막에 남는 것은 그림이다.** 대사가 끝나면 대화창만 사라지고(runDialogue 가 알아서
+   *   감춘다) 미오의 종이가 화면을 통째로 가진 채 잠깐 버틴다. 게임 내내 그리던 그 종이로
+   *   끝나는 것이 "그린 것이 실체가 된다"를 마지막으로 한 번 더 말하는 방법이고,
+   *   [S-01] 에서 받은 그림([S-04] 에서 펴고 [S-05] 에서 그린)이 여기서 닫힌다.
+   * ⚠ `showCutscene(false)` 를 **여기서 부르면 안 된다.** 그러면 타이틀 화면이 곧바로
+   *   돌아와 그림 대신 로고가 뜬다. 검은 화면이 덮은 **뒤에** 끈다.
+   * ⚠ 건너뛰기(Esc)로 온 경우에도 이 정적은 유지한다 — 대사를 건너뛴 것이지 엔딩을
+   *   건너뛴 것이 아니다.
+   */
+  els.skip.hidden = true;
+  setScene('mio_drawing');
+  await new Promise((done) => { setTimeout(done, ENDING_HOLD_MS); });
+
+  // 검은 화면이 그림을 덮으며 THE END 가 떠오른다 (CSS 가 페이드를 맡는다).
   els.theEnd.hidden = false;
+  showCutscene(false);
+
   // 아무 키·클릭으로 타이틀. `once` 라 두 입력이 겹쳐도 한 번만 돈다.
+  // ⚠ 페이드가 도는 동안은 안 받는다. 마지막 줄을 넘기려고 누르던 손이 그대로 이어져
+  //   THE END 를 못 보고 타이틀로 튄다 — 실제로 그러기 쉬운 자리다.
   const leave = () => { location.href = 'index.html'; };
-  window.addEventListener('keydown', leave, { once: true });
-  window.addEventListener('pointerdown', leave, { once: true });
+  setTimeout(() => {
+    window.addEventListener('keydown', leave, { once: true });
+    window.addEventListener('pointerdown', leave, { once: true });
+  }, THE_END_FADE_MS);
 }
 
 /** 주소에 `?beat=KEY` 가 있으면 그 막간을 재생한다. 없거나 모르는 키면 null. */

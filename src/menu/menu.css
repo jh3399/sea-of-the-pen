@@ -229,25 +229,34 @@ body::after {
 /* ⚠ 반드시 있어야 한다. `display: flex` 가 `hidden` 을 이겨서, 없으면 처음부터 떠 있는다. */
 .the-end[hidden] { display: none; }
 
+/* ★ 글씨는 **검은 화면이 그림을 다 덮은 뒤에** 떠오른다. 같이 페이드하면 그림 위에
+   글씨가 겹쳐 보이는 순간이 생겨 "덮었다"가 아니라 "포개졌다"가 된다.
+   지연(1.6s)은 `.the-end` 의 페이드 길이와 같다 — 한쪽을 바꾸면 다른 쪽도 바꿀 것.
+   ⚠ `menu/screen.js` 의 `THE_END_FADE_MS` 도 이 값과 맞물려 있다 (그동안 입력을 안 받는다). */
 .the-end-mark {
   margin: 0;
   color: var(--sand);
   font-size: 40px;
   letter-spacing: 12px;                     /* 자간이 넓어야 마침표처럼 읽힌다 */
   text-indent: 12px;                        /* 자간이 만든 오른쪽 여백을 상쇄 */
+  animation: the-end-in 1.4s ease-out 1.6s both;
 }
 
+/* 안내는 글씨보다 더 늦게. 마침표를 먼저 읽히고, "이제 눌러도 된다"는 그 뒤에 온다.
+   ⚠ `the-end-in` 을 쓰면 안 된다 — 그건 opacity 1 로 끝나서 여기 0.4 를 덮고, 이어지는
+     깜빡임의 기준값까지 1 로 만든다. 흐린 상태로 끝나는 키프레임을 따로 둔다. */
 .the-end-hint {
   margin: 0;
   color: var(--sand);
   font-size: 13px;
   letter-spacing: 2px;
-  opacity: 0.4;
-  animation: the-end-blink 2s step-end infinite;
+  animation: the-end-hint-in 0.8s ease-out 3s both,
+             the-end-blink 2s step-end 3.8s infinite;
 }
 
 @keyframes the-end-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes the-end-blink { 50% { opacity: 0.12; } }
+@keyframes the-end-hint-in { from { opacity: 0; } to { opacity: 0.4; } }
+@keyframes the-end-blink { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.12; } }
 
 /* ---- 확인창 (되돌릴 수 없는 것 앞에서 한 번 묻는다) ---- */
 
