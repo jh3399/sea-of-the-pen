@@ -74,7 +74,7 @@ src/
   sail/     screen.js(항해 화면) · render.js(절차적 픽셀 렌더) · map.js · sail.css
   menu/     screen.js(메뉴·컷신 오케스트레이션 — 대사 0줄) · menu.css
   story/    dialogue.js(대사 오버레이 엔진) · script.js(대사 전문 ← docs/SCRIPT.md 와 1:1)
-  scene/    pixelbg.js(씬 크로스페이드) · bgscenes.js(배경 19종) · bgkit.js(레이어 프리미티브)
+  scene/    pixelbg.js(씬 크로스페이드) · bgscenes.js(배경 29종) · bgkit.js(레이어 프리미티브)
             sprites.js(24×32 흉상 6종)          ← 구 프로토타입에서 이관한 에셋
   audio/    audio.js(진입점) · tracks.js(BGM 7곡) · sfx.js(11종) · synth.js
                                                   ← 구 프로토타입에서 이관한 에셋
