@@ -27,6 +27,9 @@ import { fieldBehind } from '../rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
+import { currentStage, hasNextStage, resetStage, ROUTE, routeIndex } from '../game/progress.js';
+import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
+import { drawVoyageMap } from '../scene/voyagemap.js';
 import { View } from '../render/view.js';
 import {
   drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass,
@@ -36,12 +39,48 @@ import { MAPS, boundaryWalls } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
 const HANDOFF_KEY = 'shipwright:handoff';
-const LEVEL_KEY = 'shipwright:sailLevel';
 /** 트리거로 쓰는 키 코드 — 부착 아이템(부스터·키)의 bind 풀. `main.js` 와 같은 집합. */
 const TRIGGER_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyQ', 'KeyE']);
 /** 항적 표시 간격 — 이 스텝 수마다 한 점씩 남긴다. */
 const WAKE_EVERY_STEPS = 4;
 const WAKE_MAX = 16;
+
+const MUTED_KEY = 'shipwright:muted';   // local — 메뉴와 같은 키를 쓴다 (취향은 화면을 넘어 남는다)
+const BGM_VOL = 0.7;
+const SFX_VOL = 0.9;
+
+/**
+ * 연습 해역의 조작 안내 — **읽는 목록이 아니라 해 보면 켜지는 판**이다.
+ *
+ * ★ 각 줄에 `did(strokes, held)` 가 붙어 있어서, 플레이어가 실제로 그 입력을 넣은 순간에만
+ *   불이 들어온다. 설명을 읽히는 대신 **해 보게 만드는** 것이 이 프로젝트의 방식이고
+ *   (맵도 골을 옆에 두어 돌게 만든다).
+ *
+ * ★ 순서가 곧 배우는 순서다. 「넓게 선회」가 마지막인 이유는 그것이 앞의 둘을 **겹쳐서**
+ *   나오는 것이기 때문이다 — 상쇄 규칙에서 저절로 나오는 조작이라 아무도 안 알려준다
+ *   (CLAUDE.md D3). 실측: 제자리 반경 2.5 m / 1.69 m/s vs 넓게 10.5 m / 3.67 m/s.
+ *
+ * ⚠ 다 해 봤다고 판이 **사라지지 않는다.** 한 번 해 봤다고 외운 것은 아니고, 급할 때 눈이
+ *   가는 자리에 계속 있어야 한다. 켜진 줄과 안 켜진 줄의 대비만 남는다.
+ * `info: true` 인 줄은 해 보고 켜는 것이 아니라 **처음부터 켜져 있는 안내**다 (창 여는 키).
+ *
+ * ⚠ **키(Q/E)는 여기 없다.** 키는 시작의 섬에서 받는데 그 다음 바다는 안내가 꺼져 있어
+ *   (D4: "튜토리얼 텍스트 없이 1장을 클리어하는가") 이 판에 넣어 봐야 영영 안 뜬다.
+ *   그 역할은 세렌의 대사가 한다 — "Q 랑 E, 왼쪽 오른쪽" ([S-06]). 화면이 아니라 인물이
+ *   가르치는 편이 이 게임의 방식이기도 하다.
+ *   ★ 안내가 켜진 바다에서 아이템별 줄이 필요해지면 `needs: '<type>'` 를 붙이면 된다 —
+ *     `initHints()` 가 배에 실제로 달린 것만 골라 만든다.
+ */
+const SAIL_HINTS = [
+  { id: 'row', keys: '↑', label: '젓기', did: (s) => s.has('ArrowUp') && !s.has('ArrowLeft') && !s.has('ArrowRight') },
+  { id: 'pivot', keys: '← →', label: '제자리 선회', did: (s) => (s.has('ArrowLeft') !== s.has('ArrowRight')) && !s.has('ArrowUp') },
+  { id: 'wide', keys: '↑ + ← →', label: '넓게 선회', did: (s) => s.has('ArrowUp') && (s.has('ArrowLeft') !== s.has('ArrowRight')) },
+  { id: 'back', keys: '↓', label: '뒤로 젓기', did: (s) => s.has('ArrowDown') },
+  // `needs: 'gear'` 는 아이템이 아니라 **스테이지 권한**을 본다 — 해도를 받기 전에는
+  // Tab 줄이 아예 없어야 한다 (없는 것을 누르라고 하면 안 된다).
+  { id: 'gear', keys: 'Tab', label: '지도·장비', info: true, needsGear: true },
+  { id: 'settings', keys: 'Esc', label: '설정', info: true },
+];
 
 /** `draw.html` 이 sessionStorage 에 남긴 설계. 없거나 깨졌으면 null. */
 function loadHandoff() {
@@ -53,11 +92,6 @@ function loadHandoff() {
   } catch {
     return null;
   }
-}
-
-function loadLevelIndex() {
-  const index = Number.parseInt(sessionStorage.getItem(LEVEL_KEY) ?? '0', 10);
-  return Number.isInteger(index) && index >= 0 && index < MAPS.length ? index : 0;
 }
 
 /** 핸드오프가 없을 때(직접 sail.html 을 연 경우)의 기본 배 — 기존 코퍼스 재사용. */
@@ -97,8 +131,11 @@ class SailScreen {
     this.view = new View(this.canvas);
     this.view.ppm = PPM * 0.5;
 
-    this.levelIndex = loadLevelIndex();
-    this.map = MAPS[this.levelIndex] ?? MAPS[0];
+    // 어느 바다인가는 progress.js 가 정하고, 맵은 id 로 한 번만 고른다.
+    this.stage = currentStage();
+    this.map = MAPS[this.stage.id];
+    if (!this.map) throw new Error(`스테이지에 대응하는 맵이 없습니다: ${this.stage.id}`);
+
     this.world = createWorld();
     this.rules = loadRules(RULE_TABLE);
     // 맵은 필드 데이터만 고르고, 힘·규칙·파손 경로는 모든 레벨이 똑같이 탄다.
@@ -124,7 +161,8 @@ class SailScreen {
         this.checkGoal();
         this.stepIndex += 1;
         this.simTime = this.stepIndex * FIXED_DT;
-        if (!this.cleared) this.applyControls(dt);
+        // 창이 열려 있으면 조종을 받지 않는다 — 지도를 보는 동안 배가 혼자 달리면 안 된다.
+        if (!this.cleared && !this.panelOpen()) this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
         applyFieldsToWorld(this.world, this.fields, dt, this.simTime);
         this.engine.tick(this.world, dt, this.simTime);
@@ -144,22 +182,18 @@ class SailScreen {
       time: document.getElementById('clear-time'),
       retry: document.getElementById('btn-retry'),
       next: document.getElementById('btn-next'),
-      note: document.getElementById('next-stage-note'),
+      nextNote: document.getElementById('next-stage-note'),
       menu: document.getElementById('btn-clear-menu'),
     };
     this.clearUi.retry.addEventListener('click', () => {
       location.href = 'sail.html';
     });
-    this.clearUi.next.addEventListener('click', () => {
-      if (this.levelIndex + 1 >= MAPS.length) return;
-      sessionStorage.setItem(LEVEL_KEY, String(this.levelIndex + 1));
-      location.href = 'sail.html';
-    });
     this.clearUi.menu.addEventListener('click', () => {
       sessionStorage.removeItem(HANDOFF_KEY);
-      sessionStorage.removeItem(LEVEL_KEY);
+      resetStage();
       location.href = 'index.html';
     });
+    this.clearUi.next.addEventListener('click', () => this.toNextStage());
 
     window.addEventListener('resize', () => this.view.resize());
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -172,6 +206,12 @@ class SailScreen {
     for (const spec of boundaryWalls(this.map.bounds)) this.placeObstacle(spec);
     this.goal = createGoal(this.map.goal);
     this.initialDistance = this.currentDistance();
+    // ⚠ 반드시 `launch()` **뒤에** 부른다 — 어느 줄을 띄울지는 배에 실제로 달린 것으로
+    //   정하므로, 배가 없는 상태로 부르면 아이템 줄이 영영 안 나온다.
+    this.initHints();
+    this.initAudioUi();
+    // 장비 목록도 배를 읽으므로 여기서. (설정창은 배와 무관하지만 같이 묶어 둔다)
+    this.initPanels();
 
     this.lastFrame = performance.now();
     requestAnimationFrame((t) => this.loop(t));
@@ -217,7 +257,7 @@ class SailScreen {
 
   /** 이벤트가 이미 지목한 강체만 깎고, 재생성된 조각으로 Set 을 원자적으로 갈아 끼운다. */
   carveBody(target, worldPoint, radius) {
-    if (!target || !this.bodies.has(target)) return null;
+    if (!target || !this.bodies.has(target) || this.map.damage === false) return null;
     const outcome = applyImpact(this.world, target, worldPoint, radius);
     if (!outcome) return null;
 
@@ -277,7 +317,206 @@ class SailScreen {
 
   // ------------------------------------------------------------ 입력
 
+  /**
+   * 조작 안내판을 만든다. `hints` 가 꺼진 바다에서는 아무것도 하지 않는다.
+   *
+   * 어느 줄을 띄울지는 **배에 실제로 달린 것**으로 정한다 — `needs` 가 붙은 줄은 그
+   * 아이템이 없으면 아예 만들지 않는다. 배가 만들어진 뒤에 불려야 하므로 `launch()`
+   * 다음에 호출한다.
+   */
+  initHints() {
+    const host = document.getElementById('sail-hints');
+    const list = document.getElementById('sail-hints-list');
+    this.hints = null;
+    if (!host || !list || !this.stage.hints) return;
+
+    const have = new Set();
+    for (const body of this.bodies) {
+      for (const it of body.getUserData()?.hull?.items ?? []) have.add(it.type);
+    }
+
+    const rows = SAIL_HINTS.filter((h) => (!h.needs || have.has(h.needs))
+      && (!h.needsGear || this.stage.gear));
+    list.innerHTML = '';
+    const els = new Map();
+    for (const h of rows) {
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="sail-hints-key"></span><span class="sail-hints-text"></span>`;
+      li.querySelector('.sail-hints-key').textContent = h.keys;
+      li.querySelector('.sail-hints-text').textContent = h.label;
+      if (h.info) li.classList.add('on');
+      list.appendChild(li);
+      els.set(h.id, li);
+    }
+    host.hidden = false;
+    this.hints = { host, rows, els, done: new Set() };
+  }
+
+  /**
+   * 매 프레임 입력을 보고 "해 본 것"에 불을 켠다.
+   *
+   * ⚠ 한 번 켜진 줄은 다시 끄지 않는다. 손을 뗄 때마다 꺼지면 깜빡이기만 하고
+   *   "해 봤다"는 기록이 안 남는다.
+   */
+  updateHints() {
+    const H = this.hints;
+    if (!H || H.finished) return;
+    for (const h of H.rows) {
+      if (h.info || H.done.has(h.id)) continue;
+      if (!h.did(this.heldStrokes, this.held)) continue;
+      H.done.add(h.id);
+      H.els.get(h.id).classList.add('on');
+    }
+    // ⚠ 다 해 봤다고 판을 **지우지 않는다.** 한 번 해 봤다고 외운 것은 아니고, 급할 때
+    //   눈이 가는 자리에 계속 있어야 한다. 켜진 줄과 안 켜진 줄의 대비만 남는다.
+    if (H.done.size >= H.rows.filter((h) => !h.info).length) H.finished = true;
+  }
+
+  // ---------------------------------------------------------- 소리 · 창
+
+  /**
+   * 항해 화면의 BGM.
+   *
+   * ⚠ 이 문서는 **제스처 없이 시작된다** (그리기 화면에서 넘어온다). AudioContext 가 잠겨
+   *   있어서 로드 시점의 playBgm 은 그냥 버려지므로, 첫 입력에서 깨운다 — 메뉴 화면이
+   *   막간 BGM 에 쓰는 것과 같은 수법이다.
+   * 취향(음소거)은 `MUTED_KEY` 로 메뉴와 공유한다. 화면마다 따로 끄게 하면 안 된다.
+   */
+  initAudioUi() {
+    this.muted = localStorage.getItem(MUTED_KEY) === '1';
+    this.audioReady = false;
+    const wake = () => {
+      if (this.audioReady) return;
+      this.audioReady = true;
+      initAudio();
+      this.applyVolumes();
+      playBgm('sail');
+    };
+    window.addEventListener('pointerdown', wake, { once: true });
+    window.addEventListener('keydown', wake, { once: true });
+  }
+
+  applyVolumes() {
+    setBgmVolume(this.muted ? 0 : BGM_VOL);
+    setSfxVolume(this.muted ? 0 : SFX_VOL);
+  }
+
+  /** 장비·지도(Tab)와 설정(Esc). 둘 다 **항해를 멈추지 않는다** — 배는 계속 뜬다. */
+  initPanels() {
+    this.panels = {
+      gear: document.getElementById('gear-overlay'),
+      settings: document.getElementById('settings-overlay'),
+      gearList: document.getElementById('gear-list'),
+      map: document.getElementById('voyage-map'),
+      sound: document.getElementById('btn-sound'),
+    };
+    this.mapCtx = this.panels.map?.getContext('2d') ?? null;
+
+    document.getElementById('btn-gear-close')?.addEventListener('click', () => this.togglePanel('gear', false));
+    document.getElementById('btn-settings-close')?.addEventListener('click', () => this.togglePanel('settings', false));
+    this.panels.sound?.addEventListener('click', () => this.toggleMute());
+    document.getElementById('btn-quit')?.addEventListener('click', () => {
+      // 나가면 이 항해는 끝이다 — 설계와 진행을 같이 지운다. 하나만 지우면 다음에
+      // "3장 진행도인데 배가 없는" 상태가 된다 (progress.js 머리말의 그 이유).
+      sessionStorage.removeItem(HANDOFF_KEY);
+      resetStage();
+      location.href = 'index.html';
+    });
+    this.renderSoundBtn();
+    this.renderGearList();
+  }
+
+  /** 장비창이든 설정창이든 하나라도 열려 있는가. */
+  panelOpen() {
+    return Boolean(this.panels
+      && (!this.panels.gear.classList.contains('hidden')
+        || !this.panels.settings.classList.contains('hidden')));
+  }
+
+  /** 지도는 열려 있을 때만 그린다 — 안 보이는 캔버스를 매 프레임 다시 그릴 이유가 없다. */
+  drawMapIfOpen() {
+    if (!this.mapCtx || this.panels.gear.classList.contains('hidden')) return;
+    const c = this.panels.map;
+    drawVoyageMap(this.mapCtx, {
+      w: c.width, h: c.height, route: ROUTE, at: routeIndex(), sec: this.simTime,
+    });
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    localStorage.setItem(MUTED_KEY, this.muted ? '1' : '0');
+    this.applyVolumes();
+    this.renderSoundBtn();
+    if (!this.muted && this.audioReady) sfx('click');
+  }
+
+  renderSoundBtn() {
+    const b = this.panels?.sound;
+    if (!b) return;
+    b.textContent = this.muted ? '♪ 소리 꺼짐' : '♪ 소리 켜짐';
+    b.setAttribute('aria-pressed', this.muted ? 'true' : 'false');
+  }
+
+  /** 배에 실제로 실린 것 — 기본 장치(노·닻)까지 전부 보여 준다. 지금 무엇을 탔는지가 답이다. */
+  renderGearList() {
+    const list = this.panels?.gearList;
+    if (!list) return;
+    const items = [];
+    for (const body of this.bodies) {
+      for (const it of body.getUserData()?.hull?.items ?? []) items.push(it);
+    }
+    list.innerHTML = '';
+    if (!items.length) {
+      const li = document.createElement('li');
+      li.className = 'gear-empty';
+      li.textContent = '아무것도 없다.';
+      list.appendChild(li);
+      return;
+    }
+    for (const it of items) {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = it.side ? `${it.name} (${it.side === 'port' ? '좌현' : '우현'})` : it.name;
+      const bind = document.createElement('span');
+      bind.className = 'gear-bind';
+      // 방향키로 젓는 노는 bind 가 없다 — 빈칸 대신 실제로 누르는 것을 적어 준다.
+      bind.textContent = it.bind ?? (it.kind === 'oar' ? '↑ ← → ↓' : '—');
+      li.append(name, bind);
+      list.appendChild(li);
+    }
+  }
+
+  togglePanel(which, on) {
+    const el = this.panels?.[which];
+    if (!el) return;
+    const next = on ?? el.classList.contains('hidden');
+    // 두 창을 겹쳐 띄우지 않는다 — 하나를 열면 다른 하나는 닫는다.
+    if (next) {
+      for (const other of ['gear', 'settings']) {
+        if (other !== which) this.panels[other]?.classList.add('hidden');
+      }
+      if (which === 'gear') this.renderGearList();
+    }
+    el.classList.toggle('hidden', !next);
+    // 창을 열면 누르고 있던 것을 놓는다. 안 그러면 Tab 을 누른 채로 창이 뜨고
+    // 배는 계속 젓는다 (창 뒤에서 배가 혼자 달려가는 그 버그).
+    if (next) {
+      this.heldStrokes.clear();
+      this.held = {};
+      this.keys.clear();
+    }
+  }
+
   onKey(e, down) {
+    // 창 여닫기는 눌릴 때 한 번만. Tab 은 기본 동작(포커스 이동)을 반드시 막아야 한다.
+    if (down && (e.code === 'Tab' || e.code === 'Escape')) {
+      e.preventDefault();
+      // ⚠ 해도(Tab)는 시작의 섬에서 받는다. 설정(Esc)은 **항상** 열린다 — 게임을 끝낼
+      //   방법이 없는 화면을 만들면 안 된다.
+      if (e.code === 'Tab' && !this.stage.gear) return;
+      this.togglePanel(e.code === 'Tab' ? 'gear' : 'settings');
+      return;
+    }
     if (STROKE_KEYMAP[e.key]) {
       e.preventDefault();
       if (down) {
@@ -334,13 +573,32 @@ class SailScreen {
     this.clearUi.stars.forEach((star, i) => star.classList.toggle('active', i < stars));
     this.clearUi.rating.textContent = `별 ${stars}개`;
     this.clearUi.time.textContent = formatClearTime(this.clearTime);
-    const nextMap = MAPS[this.levelIndex + 1] ?? null;
-    this.clearUi.next.disabled = !nextMap;
-    this.clearUi.note.textContent = nextMap
-      ? `다음: 레벨 ${nextMap.number} · ${nextMap.label}`
+
+    // 다음 바다가 있으면 그리로, 없으면 잠근 채 이유를 적어 둔다.
+    const next = hasNextStage();
+    this.clearUi.next.disabled = !next;
+    this.clearUi.nextNote.textContent = next
+      ? '이어서 다음 바다로'
       : '모든 스테이지 완료';
+
     this.clearUi.overlay.classList.remove('hidden');
-    (nextMap ? this.clearUi.next : this.clearUi.retry).focus();
+    // 이어서 갈 수 있으면 그쪽에 초점을 준다 — 키보드만 쓰는 사람에게 「다시하기」가
+    // 기본이면 클리어할 때마다 같은 바다를 한 번 더 돌게 된다.
+    (next ? this.clearUi.next : this.clearUi.retry).focus();
+  }
+
+  /**
+   * 다음 바다로. **여기서 진행을 올리지 않는다** — 사이 대사(`interlude`)가 있으면
+   * 그 대사를 재생하는 쪽(`menu/screen.js`)이 대사를 다 보여 준 뒤에 올린다.
+   *
+   * ⚠ 순서를 뒤집으면 안 된다. 여기서 먼저 올려 두면 플레이어가 섬 대사 도중에 새로고침
+   *   했을 때 이야기를 못 본 채 다음 바다에 서 있게 된다. "대사를 봤다"와 "진행이 올랐다"가
+   *   같은 사건이어야 한다.
+   */
+  toNextStage() {
+    const beat = this.stage.interlude;
+    // base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 — 상대경로로만 옮긴다.
+    location.href = beat ? `index.html?beat=${encodeURIComponent(beat)}` : 'sail.html';
   }
 
   updateCamera() {
@@ -365,6 +623,8 @@ class SailScreen {
     // 하니스와 같은 순서 — 규칙·충돌이 지목한 강체를 물리 스텝 밖에서 재생성한다.
     this.consumeRuleEvents();
     this.consumeImpacts();
+    this.drawMapIfOpen();
+    this.updateHints();
     this.checkGoal();
     this.updateCamera();
     this.render();

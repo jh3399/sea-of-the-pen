@@ -11,7 +11,8 @@ import { startPixelBg, SCENES } from '../scene/pixelbg.js';
 import { stars, glitter } from '../scene/bgkit.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { runDialogue, setDialogueBlip, skipDialogue } from '../story/dialogue.js';
-import { SCRIPT, INTRO_BEATS } from '../story/script.js';
+import { SCRIPT, INTRO_BEATS, INTERLUDES } from '../story/script.js';
+import { advanceStage, resetStage } from '../game/progress.js';
 
 const INTRO_SEEN_KEY = 'shipwright:introSeen'; // session — 처음 온 사람은 항상 인트로를 본다
 const MUTED_KEY = 'shipwright:muted';          // local — 취향은 남는다
@@ -31,6 +32,7 @@ const els = {
 
 let muted = localStorage.getItem(MUTED_KEY) === '1';
 let audioReady = false;
+let pendingBgm = null;
 let skipping = false;
 
 /**
@@ -56,13 +58,28 @@ function renderSoundBtn() {
   els.sound.textContent = muted ? '♪ 소리 꺼짐' : '♪ 소리 켜짐';
 }
 
-/** 첫 제스처에서만 오디오를 깨운다 — 로드 시점에 부르면 브라우저 자동재생 정책에 막힌다. */
+/**
+ * 첫 제스처에서만 오디오를 깨운다 — 로드 시점에 부르면 브라우저 자동재생 정책에 막힌다.
+ *
+ * ⚠ 막간(`?beat=`)으로 들어오면 **제스처 없이 화면이 시작된다.** 새 문서라 AudioContext 가
+ *   다시 잠겨 있어서 그때 부른 playBgm 은 그냥 버려진다. 무엇을 틀려 했는지 기억해 뒀다가
+ *   첫 입력에서 그것을 튼다 — 안 그러면 섬 대사 내내 무음이거나, 더 나쁘게는 타이틀 곡이
+ *   깔린다.
+ */
 function wakeAudio() {
   if (audioReady) return;
   audioReady = true;
   initAudio();
   applyVolumes();
-  playBgm('title');
+  playBgm(pendingBgm ?? 'title');
+  pendingBgm = null;
+}
+
+/** 오디오가 잠겨 있는 동안 요청된 곡. 깨어나면 이것부터 튼다. */
+function requestBgm(name) {
+  if (!name) return;
+  if (audioReady) playBgm(name);
+  else pendingBgm = name;
 }
 
 function click() {
@@ -90,8 +107,51 @@ function toDraw() {
   sessionStorage.setItem(INTRO_SEEN_KEY, '1');
   // 옛 설계가 남아 있으면 sail 화면이 유령 배를 띄운다. 새 항해는 새 배로 시작한다.
   sessionStorage.removeItem(HANDOFF_KEY);
+  // 배를 새로 그리는 것은 곧 새 항해다 — 진행도 처음으로 되돌린다. 안 그러면 메인 메뉴로
+  // 나갔다 들어온 사람이 1장 진행도인 채로 새 배를 그려, 연습 해역을 건너뛴다.
+  resetStage();
   // base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 — draw → sail 과 같은 상대경로.
   location.href = 'draw.html';
+}
+
+/**
+ * 막간 — 바다 하나를 끝낸 배가 이 페이지를 잠깐 빌려 쓴다 (`sail.html` → `index.html?beat=`).
+ *
+ * ★ 컷신 재생기를 여기 두는 이유는 인트로와 같다: 대사·배경·BGM 스택이 전부 이 문서에
+ *   부팅돼 있다. `sail.html` 에 대화창을 다시 심으면 같은 것이 두 벌이 된다.
+ *
+ * ⚠ **`toDraw()` 를 타면 안 된다.** 그쪽은 새 항해라 설계와 진행을 지운다 — 막간은
+ *   타고 온 배 그대로 다음 바다로 가는 것이다.
+ * ⚠ 아이템을 달고 진행을 올리는 것은 **대사가 끝난 뒤**다. 도중에 새로고침한 사람이
+ *   이야기를 못 본 채 다음 바다에 서 있으면 안 된다.
+ */
+async function playInterlude(beat) {
+  skipping = false;
+  showCutscene(true);
+  requestBgm(beat.bgm);
+  await runDialogue(SCRIPT[beat.key]);
+  showCutscene(false);
+
+  advanceStage();
+  // ★ 다음 바다로 곧장 가지 않고 **그리기 화면으로** 간다. 세렌이 "그 배로 바로 출발
+  //   하려고? 배를 다시 그려 봐" 라고 하는 것이 곧 이 이동이다 — 새로 열린 아이템(키·돛)을
+  //   플레이어가 직접 달아 보는 자리이고, 배를 두 번 그리는 것이 이 게임의 본론이기도 하다.
+  // ⚠ `toDraw()` 를 쓰면 안 된다. 그쪽은 새 항해라 **진행도까지 지운다** — 방금 올린
+  //   것이 지워져 연습 해역으로 되돌아간다. 설계만 비우고 진행은 그대로 둔다.
+  sessionStorage.removeItem(HANDOFF_KEY);
+  location.href = 'draw.html';
+}
+
+/** 주소에 `?beat=KEY` 가 있으면 그 막간을 재생한다. 없거나 모르는 키면 null. */
+function requestedInterlude() {
+  const key = new URLSearchParams(location.search).get('beat');
+  if (!key) return null;
+  const beat = INTERLUDES[key];
+  if (!beat || !SCRIPT[beat.key]) {
+    console.warn(`[story] 알 수 없는 막간: ${key}`);
+    return null;
+  }
+  return beat;
 }
 
 function onSkip() {
@@ -189,6 +249,11 @@ function init() {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') onSkip();
   });
+
+  // 항해 중간에 들른 것이라면 메뉴를 보여 주지 않고 곧바로 막간을 재생한다.
+  // ⚠ 리스너를 다 건 **뒤에** 부른다 — 건너뛰기(Esc)가 이 대사에도 걸려야 한다.
+  const beat = requestedInterlude();
+  if (beat) playInterlude(beat);
 }
 
 init();

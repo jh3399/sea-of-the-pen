@@ -11,6 +11,7 @@ import { canAttachAt, attachItem, detachItem } from '../items/attach.js';
 import { ITEM_CATALOG } from '../items/catalog.js';
 import { oarAnchorsAt } from '../items/defaults.js';
 import { MATERIALS } from '../hull/params.js';
+import { unlockedItems, unlockedMaterials } from '../game/progress.js';
 import { TEMPLATES, TEMPLATE_LABELS, TEMPLATE_ORDER } from './templates.js';
 import { DrawTutorial } from './tutorial.js';
 import {
@@ -22,10 +23,13 @@ import {
 const PALETTE_ITEMS = ['cannon', 'rudder', 'sail', 'booster'];
 const PALETTE_MATERIALS = ['wood', 'iron'];
 
-// 시작 시점에 열려 있는 것 — 나머지는 진행에 따라 언락된다. 팔레트 순서(위 두 배열)는
-// 최종 구성 그대로 두고 여기서만 걸러 내므로, 언락은 이 Set 에 키를 넣는 것으로 끝난다.
-const UNLOCKED_ITEMS = new Set(['rudder']);
-const UNLOCKED_MATERIALS = new Set(['wood']);
+// 열려 있는 것은 **진행도가 정한다** (`game/progress.js` 의 STAGES[].items/materials).
+// 팔레트 순서(위 두 배열)는 최종 구성 그대로 두고 여기서 걸러 내므로, 언락은 그 데이터에
+// 키를 넣는 것으로 끝난다 — 이 파일은 안 고친다.
+//
+// ★ **첫 배는 노만 단다.** 연습 해역이 노 젓기를 익히는 바다라, 키도 돛도 아직 없다.
+//   키는 시작의 섬에서 세렌을 만난 뒤에 열린다 ([S-06]) — 미리 달 수 있으면 그 장면이
+//   통째로 의미를 잃고 "노만 달고 왔어?" 라는 세렌의 첫 대사가 거짓말이 된다.
 
 const ITEM_MARKER_HIT_PX = 16;
 const ITEM_MARKER_PIXEL = 3;
@@ -179,7 +183,8 @@ class DrawScreen {
   // ── 재질 = 펜 색 ──────────────────────────────────────────
   buildMaterialList() {
     this.materialListEl.innerHTML = '';
-    for (const key of PALETTE_MATERIALS.filter((k) => UNLOCKED_MATERIALS.has(k))) {
+    const openMats = unlockedMaterials();
+    for (const key of PALETTE_MATERIALS.filter((k) => openMats.has(k))) {
       const mat = MATERIALS[key];
       const row = document.createElement('button');
       row.type = 'button';
@@ -244,7 +249,11 @@ class DrawScreen {
   // ── 아이템 팔레트 ─────────────────────────────────────────
   buildItemList() {
     this.itemListEl.innerHTML = '';
-    for (const type of PALETTE_ITEMS.filter((t) => UNLOCKED_ITEMS.has(t))) {
+    const open = unlockedItems();
+    // 열린 아이템이 없으면 칸을 통째로 숨긴다 — 빈 칸은 고장으로 읽힌다.
+    const card = document.getElementById('item-card');
+    if (card) card.hidden = open.size === 0;
+    for (const type of PALETTE_ITEMS.filter((t) => open.has(t))) {
       const spec = ITEM_CATALOG[type];
       const row = document.createElement('button');
       row.type = 'button';
@@ -398,9 +407,8 @@ class DrawScreen {
     this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
     this.tutorial.complete();
-    // 항해 화면(sail.html)이 이어받는다 — 새 설계는 언제나 레벨 1부터 시작한다.
+    // 항해 화면(sail.html)이 이어받는다 — 진행도는 game/progress.js 한 곳에서만 관리한다.
     sessionStorage.setItem('shipwright:handoff', JSON.stringify(this.finishedDesign));
-    sessionStorage.setItem('shipwright:sailLevel', '0');
     location.href = 'sail.html';
   }
 

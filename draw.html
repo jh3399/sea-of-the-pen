@@ -34,7 +34,9 @@
         <div class="panel-card-title">기본 장치</div>
         <div id="device-list" class="item-list"></div>
       </div>
-      <div class="panel-card">
+      <!-- 아이템 칸은 열린 아이템이 하나도 없으면 통째로 숨는다 (첫 배는 노만 단다).
+           빈 칸을 남겨 두면 "여기 뭔가 있어야 하는데 안 뜬다"로 읽힌다. -->
+      <div class="panel-card" id="item-card">
         <div class="panel-card-title">아이템</div>
         <div id="item-list" class="item-list"></div>
       </div>
