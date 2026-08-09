@@ -58,6 +58,15 @@ export const STAGES = [
     items: [],
     materials: [],
   },
+  {
+    id: 'volcano',
+    label: '불의 바다',
+    interlude: null,
+    hints: false,
+    gear: true,
+    items: [],
+    materials: [],
+  },
 ];
 
 /** 지금까지 열린 것들을 모은다 (앞 바다 것 포함). */
@@ -137,7 +146,7 @@ export const ROUTE = [
   { id: 'practice', kind: 'isle', name: '시작의 섬', note: '노를 익힌 곳' },
   { id: 'reef', kind: 'reef', name: '바위 협곡', note: '바람은 등을 밀어주지만, 주변이 온통 바위' },
   { id: 'storm', kind: 'storm', name: '역풍 협곡', note: '바람이 막아서고, 해적이 들끓는다' },
-  { id: 'volcano', kind: 'volcano', name: '불의 바다', note: '물 대신 용암이 흐르는 곳', locked: true },
+  { id: 'volcano', kind: 'volcano', name: '불의 바다', note: '물 대신 용암이 흐르는 곳' },
   { id: 'bulgasari', kind: 'abyss', name: '불가사리의 바다', note: '전설로만 전해지던 그것', locked: true },
 ];
 

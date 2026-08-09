@@ -238,6 +238,114 @@ export const STORM_MAP = {
 };
 
 /**
+ * 레벨 3 「불의 바다」 — 해역 **전체**가 용암인 암초 해역.
+ *
+ * 용암은 전용 장애물이나 맵 분기가 아니다. 화면은 `surface` 값 데이터를 읽고, 물리는
+ * `current`, 연소는 `temperature` 를 읽는다.
+ *
+ * ★ 온도가 목재 발화점(250°) **위**라는 것이 이 맵의 전부다. 나무 선체는 어디에 있든
+ *   붙고 4.2초 뒤 무너진다 — 우회로도 안전 지대도 없다 (스칼라장은 최댓값 합성이라
+ *   뜨거운 uniform 안에 시원한 통로를 파는 것은 표현 자체가 불가능하다: 시원함은
+ *   소스의 **부재**로만 만든다). 그래서 이 바다의 답은 항로가 아니라 **재질**이다.
+ * ⚠ 기본 노는 `material: 'wood'` 라 선체가 철이어도 4.2초에 타 없어진다. 추진은
+ *   철 부스터로 한다 — 규칙표에 철+온도 규칙이 **없어서** 성립하는 내화다.
+ */
+export const VOLCANO_MAP = {
+  id: 'volcano',
+  number: 3,
+  label: '불의 바다',
+  goal: { x: 150, y: 6, radius: 7, label: '화산섬' },
+  scoring: { threeStarMaxSeconds: 80, twoStarMaxSeconds: 120 },
+  bounds: SEA_BOUNDS,
+  fields: {
+    // 전 해역의 완만한 흐름 + 더 빠른 두 줄기. 벡터장은 **합**이라 줄기 안에서는
+    // 둘이 더해져 대각선으로 밀린다.
+    current: [
+      { shape: 'uniform', x: 0.8, y: 0.2 },
+      { shape: 'band', axis: 'y', from: 18, to: 34, x: 3.2, y: -1.4 },
+      { shape: 'band', axis: 'y', from: -42, to: -26, x: 2.8, y: 1.8 },
+    ],
+    // ★ 균일 330° — 목재 발화점 250° 위다. 이 한 줄이 "바다 전체가 용암"의 전부이고,
+    //   더 뜨거운 줄기를 겹쳐도 규칙은 임계 하나뿐이라 거동이 달라지지 않는다.
+    temperature: [{ shape: 'uniform', value: 330 }],
+    darkness: [{ shape: 'uniform', value: 0.18 }],
+  },
+  weather: { rain: 0, gloom: 0.24 },
+  surface: {
+    base: '#8f1d0f',
+    deep: 'rgba(55, 8, 5, 0.42)',
+    glint: '#ffd35c',
+    shoal: 'rgba(255, 116, 38, 0.68)',
+    wake: '#ffb347',
+    flowField: 'current',
+  },
+  damage: true,
+  obstacles: [
+    // 북쪽부터 남쪽까지 끊긴 현무암 열. 같은 줄에서도 틈의 위치가 달라 한 길로 관통할 수 없다.
+    { shape: 'circle', x: 18, y: 62, radius: 4.5 },
+    { shape: 'circle', x: 46, y: 57, radius: 3.5 },
+    { shape: 'circle', x: 74, y: 65, radius: 5 },
+    { shape: 'circle', x: 104, y: 58, radius: 4 },
+    { shape: 'circle', x: 132, y: 63, radius: 4.5 },
+    { shape: 'circle', x: 164, y: 56, radius: 5 },
+
+    { shape: 'circle', x: 30, y: 43, radius: 5 },
+    { shape: 'circle', x: 58, y: 38, radius: 4 },
+    { shape: 'circle', x: 88, y: 46, radius: 3.5 },
+    { shape: 'circle', x: 116, y: 39, radius: 5 },
+    { shape: 'circle', x: 143, y: 45, radius: 4 },
+    { shape: 'circle', x: 168, y: 35, radius: 3.5 },
+
+    // 위쪽 빠른 줄기 — 암초 사이를 타면 빠르지만 횡류가 있어 암초 쪽으로 떠밀린다.
+    // (온도는 해역 전체가 같으므로 줄기의 대가는 열이 아니라 **조종**이다.)
+    { shape: 'circle', x: 17, y: 24, radius: 4 },
+    { shape: 'circle', x: 43, y: 30, radius: 5 },
+    { shape: 'circle', x: 70, y: 21, radius: 3.5 },
+    { shape: 'circle', x: 98, y: 29, radius: 4.5 },
+    { shape: 'circle', x: 126, y: 20, radius: 4 },
+    { shape: 'circle', x: 160, y: 28, radius: 5 },
+
+    // 중앙의 완만한 통로. 출발점과 골은 열려 있지만 일직선은 암초가 끊는다.
+    { shape: 'circle', x: 27, y: 7, radius: 4.5 },
+    { shape: 'circle', x: 54, y: -5, radius: 4 },
+    { shape: 'circle', x: 82, y: 8, radius: 5 },
+    { shape: 'circle', x: 110, y: -4, radius: 3.5 },
+    { shape: 'circle', x: 136, y: 14, radius: 4 },
+    { shape: 'circle', x: 166, y: -5, radius: 4.5 },
+
+    { shape: 'circle', x: 17, y: -18, radius: 4 },
+    { shape: 'circle', x: 45, y: -23, radius: 3.5 },
+    { shape: 'circle', x: 72, y: -15, radius: 5 },
+    { shape: 'circle', x: 101, y: -22, radius: 4 },
+    { shape: 'circle', x: 130, y: -16, radius: 4.5 },
+    { shape: 'circle', x: 160, y: -21, radius: 3.5 },
+
+    // 아래쪽 빠른 줄기 — 진행 방향으로 밀지만 횡류가 있어 암초 쪽으로 떠밀릴 수 있다.
+    { shape: 'circle', x: 29, y: -37, radius: 4.5 },
+    { shape: 'circle', x: 57, y: -43, radius: 5 },
+    { shape: 'circle', x: 86, y: -34, radius: 3.5 },
+    { shape: 'circle', x: 114, y: -41, radius: 4 },
+    { shape: 'circle', x: 142, y: -33, radius: 5 },
+    { shape: 'circle', x: 166, y: -44, radius: 4 },
+
+    { shape: 'circle', x: 18, y: -60, radius: 5 },
+    { shape: 'circle', x: 47, y: -55, radius: 3.5 },
+    { shape: 'circle', x: 76, y: -64, radius: 4.5 },
+    { shape: 'circle', x: 106, y: -57, radius: 4 },
+    { shape: 'circle', x: 136, y: -63, radius: 3.5 },
+    { shape: 'circle', x: 164, y: -56, radius: 5 },
+
+    // 행 사이 대각선 연결점 — 넓은 빈 복도를 직선으로 우회하는 것만 막는다.
+    { shape: 'circle', x: 38, y: 14, radius: 3 },
+    { shape: 'circle', x: 66, y: 35, radius: 3.5 },
+    { shape: 'circle', x: 94, y: -10, radius: 3 },
+    { shape: 'circle', x: 120, y: -29, radius: 3.5 },
+    { shape: 'circle', x: 149, y: 34, radius: 3 },
+    { shape: 'circle', x: 151, y: -47, radius: 3.5 },
+  ].map((o) => ({ ...o, material: 'rock' })),
+};
+
+/**
  * 해역 경계 → 사방을 두르는 암초 벽 넷 (정적 poly 강체 스펙).
  *
  * ★ 막는 방식이 **보이지 않는 벽이 아니라 암초**인 것이 요점이다. `createObstacle` 이 이미
@@ -285,4 +393,5 @@ export const MAPS = {
   practice: PRACTICE_MAP,
   reef: DEMO_MAP,
   storm: STORM_MAP,
+  volcano: VOLCANO_MAP,
 };

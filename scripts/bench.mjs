@@ -35,8 +35,10 @@ import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
 import { rateTravelTime } from '../src/game/scoring.js';
-import { DEMO_MAP, PRACTICE_MAP, STORM_MAP, MAPS, boundaryWalls } from '../src/sail/map.js';
-import { STAGES } from '../src/game/progress.js';
+import {
+  DEMO_MAP, PRACTICE_MAP, STORM_MAP, VOLCANO_MAP, MAPS, boundaryWalls,
+} from '../src/sail/map.js';
+import { STAGES, ROUTE } from '../src/game/progress.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
@@ -2839,7 +2841,8 @@ check('★ STAGES 와 MAPS 가 양방향 1:1 이다 (진행 표와 맵 표)',
   stageIds.map((id) => `${id}${MAPS[id] ? '✓' : '✗'}`).join(' · '));
 check('연습 해역이 첫 스테이지다', STAGES[0].id === 'practice', stageIds.join(' → '));
 check('연습만 파손이 꺼지고 본편 해역은 파손이 켜진다',
-  MAPS.practice.damage === false && MAPS.reef.damage === true && MAPS.storm.damage === true,
+  MAPS.practice.damage === false
+    && Object.values(MAPS).filter((map) => map.number > 0).every((map) => map.damage === true),
   mapIds.map((id) => `${id}:${MAPS[id].damage ? 'on' : 'off'}`).join(' · '));
 
 // 경계 벽 — 배를 계속 밀어붙여도 넘어가지 못한다. 벽을 빼면 그대로 나가 버리는 것이 대조군이다.
@@ -2884,11 +2887,13 @@ console.log('\n\x1b[36m▌레벨 2 — 성긴 암초밭 · 5초 방향 폭풍\x1
 
 const playableMaps = Object.values(MAPS);
 check('기존 1장 맵은 MAPS.reef 로 그대로 보존된다', MAPS.reef === DEMO_MAP,
-  `${MAPS.practice.label} → ${MAPS.reef.label} → ${MAPS.storm.label}`);
-check('항해 레벨은 3장이고 ID가 겹치지 않는다',
-  playableMaps.length === 3
-    && new Set(playableMaps.map((map) => map.id)).size === playableMaps.length,
-  `${playableMaps.length}장 · ${playableMaps.map((map) => map.id).join(' / ')}`);
+  playableMaps.map((map) => map.label).join(' → '));
+check('연습 0장과 본편 1~3장이 있고 ID·번호가 겹치지 않는다',
+  playableMaps.length === 4
+    && new Set(playableMaps.map((map) => map.id)).size === playableMaps.length
+    && new Set(playableMaps.map((map) => map.number)).size === playableMaps.length
+    && playableMaps.map((map) => map.number).sort((a, b) => a - b).join(',') === '0,1,2,3',
+  `${playableMaps.length}장 · ${playableMaps.map((map) => `${map.id}:${map.number}`).join(' / ')}`);
 
 function declarativeMap(value, key = '') {
   if (typeof value === 'function') return false;
@@ -2973,6 +2978,145 @@ const stormPrediction = (() => {
 })();
 check('★ 5초 바람 전환을 가로질러도 예측선과 실물리가 일치한다', stormPrediction < 1e-7,
   `최종 오차 ${(stormPrediction * 1000).toFixed(6)} mm`);
+
+// ─────────────────────────────────────────────── 레벨 3 · 흐르는 용암
+console.log('\n\x1b[36m▌레벨 3 — 암초 사이로 흐르는 불의 바다\x1b[0m\n');
+
+const volcanoBands = [];
+for (let y0 = VOLCANO_MAP.bounds.minY; y0 < VOLCANO_MAP.bounds.maxY; y0 += BAND) {
+  volcanoBands.push(VOLCANO_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length);
+}
+const volcanoClearance = (p) => Math.min(...VOLCANO_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const volcanoStartClear = volcanoClearance({ x: 0, y: 0 });
+const volcanoGoalClear = volcanoClearance(VOLCANO_MAP.goal) - VOLCANO_MAP.goal.radius;
+check('레벨 3도 해역 전체에 빈 암초 띠가 없고 출발·도착이 열려 있다',
+  volcanoBands.every((n) => n > 0) && volcanoStartClear > 5 && volcanoGoalClear > 0,
+  `띠 ${volcanoBands.join('·')} · 출발 ${volcanoStartClear.toFixed(1)} m · 골 ${volcanoGoalClear.toFixed(1)} m`);
+check('레벨 3 도착 지점은 해역 경계 안에 있다',
+  VOLCANO_MAP.goal.x + VOLCANO_MAP.goal.radius < VOLCANO_MAP.bounds.maxX
+    && VOLCANO_MAP.goal.y - VOLCANO_MAP.goal.radius > VOLCANO_MAP.bounds.minY
+    && VOLCANO_MAP.goal.y + VOLCANO_MAP.goal.radius < VOLCANO_MAP.bounds.maxY,
+  `골 (${VOLCANO_MAP.goal.x}, ${VOLCANO_MAP.goal.y})`);
+check('불의 바다는 storm 다음 플레이 스테이지이며 지도에서 열려 있다',
+  STAGES.findIndex((stage) => stage.id === 'volcano') === STAGES.findIndex((stage) => stage.id === 'storm') + 1
+    && ROUTE.find((node) => node.id === 'volcano')?.locked !== true
+    && ROUTE.find((node) => node.id === 'bulgasari')?.locked === true,
+  STAGES.map((stage) => stage.id).join(' → '));
+
+const volcanoFields = createFields(VOLCANO_MAP.fields);
+const calmCurrent = volcanoFields.sampleVector('current', 0, 0, 0);
+const northCurrent = volcanoFields.sampleVector('current', 60, 25, 0);
+const southCurrent = volcanoFields.sampleVector('current', 60, -34, 0);
+// 해역 구석구석 — "전부 용암"은 표본 하나로 보증되지 않는다. 출발·골·네 귀퉁이를 다 훑는다.
+const { minX, maxX, minY, maxY } = VOLCANO_MAP.bounds;
+const volcanoProbes = [
+  { x: 0, y: 0 }, { x: VOLCANO_MAP.goal.x, y: VOLCANO_MAP.goal.y },
+  { x: minX + 1, y: minY + 1 }, { x: maxX - 1, y: minY + 1 },
+  { x: minX + 1, y: maxY - 1 }, { x: maxX - 1, y: maxY - 1 },
+  { x: 60, y: 25 }, { x: 60, y: -34 },
+].map((p) => volcanoFields.sampleScalar('temperature', p.x, p.y, 0));
+const coldest = Math.min(...volcanoProbes);
+check('용암은 전 해역에서 흐르고 고온 띠마다 흐름 방향이 달라진다',
+  mag(calmCurrent) > 0
+    && (northCurrent.x !== calmCurrent.x || northCurrent.y !== calmCurrent.y)
+    && (southCurrent.x !== northCurrent.x || southCurrent.y !== northCurrent.y),
+  `중앙 (${calmCurrent.x.toFixed(1)},${calmCurrent.y.toFixed(1)}) · 북 (${northCurrent.x.toFixed(1)},${northCurrent.y.toFixed(1)}) · 남 (${southCurrent.x.toFixed(1)},${southCurrent.y.toFixed(1)})`);
+// 임계는 규칙표에서 읽는다 — 250 을 벤치에 박아 두면 표를 고쳤을 때 조용히 어긋난다.
+const woodIgnite = RULES.find((r) => r.id === 'wood-ignites')?.when?.gte ?? Infinity;
+check('★ 해역 전체가 목재 발화점 위다 — 안전 지대가 없다',
+  coldest >= woodIgnite,
+  `가장 서늘한 표본 ${coldest.toFixed(0)}° ≥ 발화점 ${woodIgnite}°`);
+
+/**
+ * 불의 바다에 배 하나를 띄우고 12초를 돌린다.
+ *
+ * ⚠ 온도를 재는 것으로는 부족하다 — 규칙 엔진·파손 소비 경로가 통째로 빠져도 온도 검사는
+ *   통과한다. 실제로 "화면은 용암인데 배가 안 부서진다"가 그렇게 새어 나갔다.
+ */
+function volcanoVoyage(material, attach = []) {
+  const { world, body } = spawn('sloop', { devices: true, material, attach });
+  const engine = createRuleEngine(RULES, volcanoFields);
+  const hull = body.getUserData().hull;
+  let t = 0;
+  let destroyedAt = null;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, volcanoFields, dt, t);
+      engine.tick(world, dt, t);
+      t += dt;
+    },
+  });
+  for (let i = 0; i < Math.round(12 / FIXED_DT); i++) {
+    stepper.advance(FIXED_DT);
+    for (const ev of engine.drain()) {
+      if (ev.type === 'destroyed' && destroyedAt === null) destroyedAt = t;
+    }
+  }
+  return { destroyedAt, kinds: hull.items.map((it) => it.kind ?? it.type) };
+}
+
+const woodInLava = volcanoVoyage('wood');
+check('★ 나무 선체는 출발점에서 그대로 불타 무너진다',
+  woodInLava.destroyedAt !== null && woodInLava.destroyedAt < 6,
+  `파괴 ${woodInLava.destroyedAt === null ? '없음' : `${woodInLava.destroyedAt.toFixed(1)}s`}`);
+
+// 철의 내화는 **규칙이 없어서** 성립한다 (§6). 강점 코드가 아니라 규칙 부재가 근거다.
+const ironInLava = volcanoVoyage('iron');
+check('철 선체는 같은 자리에서 멀쩡하지만 나무 노는 타 없어진다',
+  ironInLava.destroyedAt === null && !ironInLava.kinds.includes('oar'),
+  `파괴 ${ironInLava.destroyedAt === null ? '없음' : `${ironInLava.destroyedAt.toFixed(1)}s`} · 남은 장치 ${ironInLava.kinds.join(',') || '없음'}`);
+
+// 그래서 이 바다의 추진은 부스터다 — 노가 사라져도 철 장치는 남는다.
+const ironBooster = volcanoVoyage('iron', [{ type: 'booster', x: -3, y: 0, angle: 0 }]);
+check('★ 철 부스터는 살아남아 노를 잃은 뒤의 추진이 된다',
+  ironBooster.destroyedAt === null && ironBooster.kinds.includes('thruster'),
+  `남은 장치 ${ironBooster.kinds.join(',') || '없음'}`);
+check('용암 표면은 current 를 읽는 선언형 팔레트다',
+  VOLCANO_MAP.surface?.flowField === 'current'
+    && VOLCANO_MAP.surface.base !== '#1c4fae'
+    && ['base', 'deep', 'glint', 'shoal', 'wake'].every((key) => VOLCANO_MAP.surface[key]),
+  `${VOLCANO_MAP.surface?.base} · ${VOLCANO_MAP.surface?.flowField}`);
+
+const currentDrift = (() => {
+  const { world, body } = spawn('sloop');
+  const live = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, volcanoFields, dt);
+    },
+  });
+  for (let i = 0; i < Math.round(3 / FIXED_DT); i++) live.advance(FIXED_DT);
+  return body.getWorldCenter();
+})();
+check('★ 돛과 장치가 없는 정지 선체도 해류를 따라 움직인다',
+  Math.hypot(currentDrift.x, currentDrift.y) > 0.01,
+  `3초 뒤 (${currentDrift.x.toFixed(3)}, ${currentDrift.y.toFixed(3)}) m`);
+
+const currentPrediction = (() => {
+  const { world, body } = spawn('sloop');
+  body.setPosition(new Vec2(20, 17.5));
+  body.setLinearVelocity(new Vec2(2.2, 1.2));
+  const horizon = 1.5;
+  const path = predictPath(body, {}, {
+    fields: volcanoFields, startTime: 0, horizon, stride: 1,
+  });
+  let step = 0;
+  const live = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      step += 1;
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, volcanoFields, dt, step * FIXED_DT);
+    },
+  });
+  for (let i = 0; i < Math.round(horizon / FIXED_DT); i++) live.advance(FIXED_DT);
+  const actual = body.getWorldCenter();
+  const predicted = path.at(-1);
+  return Math.hypot(actual.x - predicted.x, actual.y - predicted.y);
+})();
+check('★ 해류 띠 경계를 지나도 예측선과 실물리가 일치한다', currentPrediction < 1e-7,
+  `최종 오차 ${(currentPrediction * 1000).toFixed(6)} mm`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +

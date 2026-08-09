@@ -117,12 +117,21 @@ function visibleWorldRect(view) {
  *
  * @param {number} sec 경과 시간(초). 물리 시각(`simTime`)을 넣으면 일시정지도 따라 멈춘다.
  */
-export function drawWater(ctx, view, sec = 0, { gloom = 0 } = {}) {
+export function drawWater(ctx, view, sec = 0, {
+  gloom = 0, surface = null, flow = { x: 0, y: 0 },
+} = {}) {
   const pad = WATER_CELL * 2;
   const { x0, x1, y0, y1 } = visibleWorldRect(view);
   const dim = clamp(gloom, 0, 1);
+  const base = surface?.base ?? WATER_BASE;
+  const deep = surface?.deep ?? WATER_DEEP;
+  const glint = surface?.glint ?? '#ffffff';
+  const flowMag = Math.hypot(flow.x, flow.y);
+  const flowing = flowMag > 1e-6;
+  const driftX = flowing ? ((flow.x * sec * 0.35) % WATER_CELL) : 0;
+  const driftY = flowing ? ((flow.y * sec * 0.35) % WATER_CELL) : 0;
 
-  ctx.fillStyle = dim > 0 ? shade(WATER_BASE, -0.42 * dim) : WATER_BASE;
+  ctx.fillStyle = dim > 0 ? shade(base, -0.42 * dim) : base;
   ctx.fillRect(x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2);
 
   const gx0 = Math.floor((x0 - pad) / WATER_CELL) * WATER_CELL;
@@ -130,9 +139,11 @@ export function drawWater(ctx, view, sec = 0, { gloom = 0 } = {}) {
   for (let y = gy0; y <= y1 + pad; y += WATER_CELL) {
     for (let x = gx0; x <= x1 + pad; x += WATER_CELL) {
       const h = hash2(x, y);
+      const xx = x + driftX;
+      const yy0 = y + driftY;
       if (h < 0.1) {
-        ctx.fillStyle = WATER_DEEP;
-        ctx.fillRect(x, y, WATER_CELL * 0.6, WATER_CELL * 0.6);
+        ctx.fillStyle = deep;
+        ctx.fillRect(xx, yy0, WATER_CELL * 0.6, WATER_CELL * 0.6);
         continue;
       }
       if (h < 0.6) continue; // 아무것도 서지 않는 칸
@@ -142,25 +153,27 @@ export function drawWater(ctx, view, sec = 0, { gloom = 0 } = {}) {
       const blink = Math.sin(sec * speed + phase);
       if (blink < -0.1) continue; // 가라앉은 물결 — 대부분의 칸이 여기서 빠진다
 
-      // 찰랑임: 깜빡임의 절반 주기로 위아래로 조금 뜬다. 칸 크기의 12% 를 넘기면
-      // 도트가 격자를 벗어나 "떠다니는 점"으로 읽힌다.
-      const bob = Math.sin(sec * speed * 0.5 + phase) * WATER_CELL * 0.12;
-      const yy = y + bob;
+      // 잔잔한 수면은 위아래로 찰랑이고, 흐르는 표면은 필드 벡터를 따라 월드 위를 이동한다.
+      const bob = flowing ? 0 : Math.sin(sec * speed * 0.5 + phase) * WATER_CELL * 0.12;
+      const yy = yy0 + bob;
 
       if (h < 0.72) {
         // ★ 점과 잔물결은 **해시 대역이 갈라져 있어** 한 칸에 같이 설 수 없다. 겹치면
         //   가로 막대 위에 점이 얹혀 T 자로 읽힌다 (실제로 그렇게 보였다). 그릴 때
         //   위치를 비켜 놓는 것보다 애초에 표현 불가능하게 두는 편이 낫다.
-        //   점 자리는 칸 안에서 다시 해시로 흩는다 — 칸 원점에 두면 격자가 드러난다.
         if (blink < 0.55) continue; // 마루에서만 잠깐 튄다
-        const px = x + hash2(x * 4.1, y * 4.1) * WATER_CELL * 0.7;
-        ctx.fillStyle = `rgba(255,255,255,${(0.25 + 0.5 * blink).toFixed(3)})`;
+        const px = xx + hash2(x * 4.1, y * 4.1) * WATER_CELL * 0.7;
+        ctx.fillStyle = rgba(glint, 0.25 + 0.5 * blink);
         ctx.fillRect(px, yy, WATER_CELL * 0.18, WATER_CELL * 0.18);
         continue;
       }
 
-      ctx.fillStyle = `rgba(255,255,255,${(0.08 + 0.26 * blink).toFixed(3)})`;
-      ctx.fillRect(x, yy, WATER_CELL * 0.55, WATER_CELL * 0.22);
+      ctx.fillStyle = rgba(glint, 0.08 + 0.26 * blink);
+      if (flowing && Math.abs(flow.y) > Math.abs(flow.x)) {
+        ctx.fillRect(xx, yy, WATER_CELL * 0.22, WATER_CELL * 0.55);
+      } else {
+        ctx.fillRect(xx, yy, WATER_CELL * 0.55, WATER_CELL * 0.22);
+      }
     }
   }
 }
@@ -225,7 +238,7 @@ export function drawDarkness(ctx, view, darkness = 0) {
  * 가장자리 바깥으로는 성긴 여울 고리(얕은 청록 점묘)를 둔다.
  * @param {{x:number,y:number,radius:number}} spec 월드 좌표 (obstacle 강체와 같은 자리)
  */
-export function drawRock(ctx, spec) {
+export function drawRock(ctx, spec, { shoal = SHOAL_RING } = {}) {
   const { x, y, radius } = spec;
   const cell = clamp((radius * 2) / ROCK_PIXEL_COLS, 0.15, 0.6);
   const cols = Math.max(4, Math.ceil((radius * 2.8) / cell));
@@ -252,7 +265,7 @@ export function drawRock(ctx, spec) {
         ctx.fillStyle = d > edgeR * 0.72 ? dark : (t > 0.78 ? light : mid);
         ctx.fillRect(x0 + c * cell, y0 + r * cell, cell, cell);
       } else if (d <= edgeR * 1.4 && hash2(cx * 5.7, cy * 5.7) > 0.58) {
-        ctx.fillStyle = SHOAL_RING;
+        ctx.fillStyle = shoal;
         ctx.fillRect(x0 + c * cell, y0 + r * cell, cell, cell);
       }
     }
@@ -281,7 +294,7 @@ function polyBox(spec) {
  * 벽 하나가 200 m 를 넘으므로 화면과 겹치는 칸만 훑는다. 통째로 찍으면 한 프레임에
  * 수천 칸을 채우게 되고, 그것도 대부분 화면 밖이다.
  */
-function drawReefWall(ctx, view, spec, box) {
+function drawReefWall(ctx, view, spec, box, { shoal = SHOAL_RING } = {}) {
   const [ix, iy] = spec.reef?.inward ?? [0, 1];
   const horizontal = Math.abs(iy) >= Math.abs(ix);
   const vis = visibleWorldRect(view);
@@ -320,7 +333,7 @@ function drawReefWall(ctx, view, spec, box) {
         ctx.fillStyle = depth < jag + 1.4 ? dark : (t > 0.78 ? light : mid);
         ctx.fillRect(x, y, WALL_CELL, WALL_CELL);
       } else if (depth > -SHOAL_BAND && hash2(cx * 5.7, cy * 5.7) > 0.62) {
-        ctx.fillStyle = SHOAL_RING;
+        ctx.fillStyle = shoal;
         ctx.fillRect(x, y, WALL_CELL, WALL_CELL);
       }
     }
@@ -333,17 +346,17 @@ function drawReefWall(ctx, view, spec, box) {
  * 컬링이 렌더 쪽에 있는 이유: 맵이 넓어질수록 장애물 수가 늘어나는데 그중 화면에 걸치는
  * 것은 늘 몇 개뿐이다. 호출자(`sail/screen.js`)는 전부 넘기고 여기서 거른다.
  */
-export function drawObstacle(ctx, view, spec) {
+export function drawObstacle(ctx, view, spec, options = {}) {
   if (!spec) return;
   const vis = visibleWorldRect(view);
   if (spec.shape === 'circle') {
     const r = spec.radius * 1.4 + SHOAL_BAND;
     if (spec.x + r < vis.x0 || spec.x - r > vis.x1) return;
     if (spec.y + r < vis.y0 || spec.y - r > vis.y1) return;
-    drawRock(ctx, spec);
+    drawRock(ctx, spec, options);
     return;
   }
-  if (spec.shape === 'poly') drawReefWall(ctx, view, spec, polyBox(spec));
+  if (spec.shape === 'poly') drawReefWall(ctx, view, spec, polyBox(spec), options);
 }
 
 /**
@@ -560,12 +573,12 @@ export function drawHullBody(ctx, hull) {
 }
 
 /** 항적 — 최근 위치를 옅어지는 픽셀 점으로. `points` 는 최신이 배열 끝. */
-export function drawWake(ctx, points) {
+export function drawWake(ctx, points, { color = '#ffffff' } = {}) {
   const n = points.length;
   for (let i = 0; i < n; i++) {
     const p = points[i];
     const t = (i + 1) / n; // 오래될수록 0에 가깝다
-    ctx.fillStyle = `rgba(255,255,255,${(0.22 * t).toFixed(3)})`;
+    ctx.fillStyle = rgba(color, 0.22 * t);
     const s = 0.12 + 0.1 * t;
     ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
   }
