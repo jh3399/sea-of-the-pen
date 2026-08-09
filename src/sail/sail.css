@@ -403,9 +403,13 @@ html, body {
   background: #0b1c2c;
   border: 3px solid #3d6693;
   box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.45);
+  /* ⚠ 한글은 기본값(normal)에서 **음절 단위로 아무 데서나** 끊긴다 — "처음부 / 터" 가
+     그래서 나온다. keep-all 은 어절(띄어쓰기) 단위로만 끊으므로 낱말이 안 쪼개진다.
+     폭을 키우는 것만으로는 안 된다: 문장이 조금만 길어지면 같은 일이 다시 난다. */
+  word-break: keep-all;
 }
 
-.sail-panel-box-narrow { width: min(300px, 100%); }
+.sail-panel-box-narrow { width: min(360px, 100%); }
 
 .sail-panel-box h2 {
   margin: 0 0 12px;

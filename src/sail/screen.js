@@ -181,8 +181,12 @@ class SailScreen {
     this.clearUi.retry.addEventListener('click', () => {
       location.href = 'sail.html';
     });
+    // ⚠ 메뉴로 나가는 두 출구(여기와 설정창의 `btn-quit`)는 **아무것도 지우지 않는다.**
+    //   메뉴의 「계속하기」가 진짜 이어하기가 된 뒤로는, 지우는 쪽이 곧 이어갈 것을
+    //   없애는 쪽이다. 처음부터 다시는 메뉴의 「이야기 다시 보기」 하나가 맡는다.
+    //   ★ 두 출구가 같은 규칙이어야 한다 — 예전엔 여기가 설계만, 저기가 설계와 진행을
+    //     지워서, 어느 문으로 나갔느냐에 따라 남는 것이 달랐다.
     this.clearUi.menu.addEventListener('click', () => {
-      sessionStorage.removeItem(HANDOFF_KEY);
       location.href = 'index.html';
     });
     this.clearUi.next.addEventListener('click', () => this.toNextStage());
@@ -347,11 +351,8 @@ class SailScreen {
       sessionStorage.removeItem(HANDOFF_KEY);
       location.href = 'draw.html';
     });
+    // 클리어 화면의 「메인 메뉴」와 **같은 규칙**이다 — 지우지 않는다. 위 주석 참조.
     document.getElementById('btn-quit')?.addEventListener('click', () => {
-      // 나가면 이 항해는 끝이다 — 설계와 진행을 같이 지운다. 하나만 지우면 다음에
-      // "3장 진행도인데 배가 없는" 상태가 된다 (progress.js 머리말의 그 이유).
-      sessionStorage.removeItem(HANDOFF_KEY);
-      sessionStorage.removeItem('shipwright:stage');
       location.href = 'index.html';
     });
     this.renderSoundBtn();

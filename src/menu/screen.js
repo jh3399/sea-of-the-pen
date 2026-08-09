@@ -12,7 +12,7 @@ import { stars, glitter } from '../scene/bgkit.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { runDialogue, setDialogueBlip, skipDialogue } from '../story/dialogue.js';
 import { SCRIPT, INTRO_BEATS, INTERLUDES } from '../story/script.js';
-import { advanceStage, resetStage } from '../game/progress.js';
+import { advanceStage, resetStage, stageIndex } from '../game/progress.js';
 
 const INTRO_SEEN_KEY = 'shipwright:introSeen'; // session — 처음 온 사람은 항상 인트로를 본다
 const MUTED_KEY = 'shipwright:muted';          // local — 취향은 남는다
@@ -28,6 +28,9 @@ const els = {
   replay: document.getElementById('btn-replay'),
   sound: document.getElementById('btn-sound'),
   skip: document.getElementById('btn-skip'),
+  confirm: document.getElementById('confirm-layer'),
+  confirmYes: document.getElementById('btn-confirm-yes'),
+  confirmNo: document.getElementById('btn-confirm-no'),
 };
 
 let muted = localStorage.getItem(MUTED_KEY) === '1';
@@ -103,6 +106,12 @@ async function playIntro() {
   toDraw();
 }
 
+/**
+ * **새 항해** — 진행과 설계를 버리고 첫 바다부터. 「이야기 다시 보기」와 인트로가 여기로 온다.
+ *
+ * ⚠ 이 함수는 **되돌릴 수 없다.** 부르기 전에 반드시 `confirmRestart()` 로 묻는다
+ *   (인트로 직후는 예외 — 그때는 버릴 진행이 애초에 없다).
+ */
 function toDraw() {
   sessionStorage.setItem(INTRO_SEEN_KEY, '1');
   // 옛 설계가 남아 있으면 sail 화면이 유령 배를 띄운다. 새 항해는 새 배로 시작한다.
@@ -112,6 +121,57 @@ function toDraw() {
   resetStage();
   // base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 — draw → sail 과 같은 상대경로.
   location.href = 'draw.html';
+}
+
+/**
+ * 이어갈 항해가 있는가 — 그린 배가 남아 있거나, 첫 바다를 이미 지났거나.
+ *
+ * 세션 저장이라 **탭을 새로 열면 false 다.** 의도된 수명이다 (`progress.js` 머리말:
+ * 진행과 설계의 수명은 반드시 같아야 한다). 그래서 새 탭은 언제나 「시작하기」로 뜬다.
+ */
+function canContinue() {
+  return Boolean(sessionStorage.getItem(HANDOFF_KEY)) || stageIndex() > 0;
+}
+
+/**
+ * 이어하기 — **아무것도 지우지 않는다.** `toDraw()` 와 갈리는 지점이 정확히 이것뿐이다.
+ *
+ * 배가 남아 있으면 그 배로 바다에, 진행만 있으면(막간을 보고 나온 경우) 배부터 그린다.
+ * ⚠ 배가 없는데 `sail.html` 로 보내면 안 된다 — 폴백 슬루프가 뜬다. 플레이어가 그린 적
+ *   없는 배로 자기 항해가 이어지는 것이 제일 나쁜 결과다.
+ */
+function continueVoyage() {
+  location.href = sessionStorage.getItem(HANDOFF_KEY) ? 'sail.html' : 'draw.html';
+}
+
+/**
+ * 되돌릴 수 없는 것 앞에서 한 번 묻는다. @returns {Promise<boolean>} 예를 눌렀는가
+ *
+ * 기본 초점을 「아니요」에 두는 이유: Enter 를 습관적으로 치는 손이 진행을 지우면 안 된다.
+ */
+function confirmRestart() {
+  return new Promise((resolve) => {
+    const done = (answer) => {
+      els.confirm.hidden = true;
+      els.confirmYes.removeEventListener('click', onYes);
+      els.confirmNo.removeEventListener('click', onNo);
+      window.removeEventListener('keydown', onKey);
+      resolve(answer);
+    };
+    const onYes = () => { click(); done(true); };
+    const onNo = () => { click(); done(false); };
+    // Esc 는 취소다. 아래 전역 Esc(건너뛰기)는 컷신이 떠 있을 때만 도므로 겹치지 않는다.
+    const onKey = (e) => {
+      if (e.code !== 'Escape') return;
+      e.preventDefault();
+      onNo();
+    };
+    els.confirmYes.addEventListener('click', onYes);
+    els.confirmNo.addEventListener('click', onNo);
+    window.addEventListener('keydown', onKey);
+    els.confirm.hidden = false;
+    els.confirmNo.focus();
+  });
 }
 
 /**
@@ -217,9 +277,12 @@ function init() {
   renderSoundBtn();
 
   const seen = sessionStorage.getItem(INTRO_SEEN_KEY) === '1';
+  const resumable = seen && canContinue();
   if (seen) {
-    els.start.textContent = '▶ 계속하기';
     els.replay.hidden = false;
+    // ⚠ 이어갈 것이 있을 때만 이름을 바꾼다. 예전엔 인트로를 봤다는 이유만으로 「계속하기」가
+    //   됐는데 누르면 진행을 지우고 처음으로 갔다 — 이름이 하는 말과 동작이 정반대였다.
+    if (resumable) els.start.textContent = '▶ 계속하기';
   }
 
   // 키보드만 쓰는 사람도 있으므로 둘 다 건다. wakeAudio 는 멱등이다.
@@ -228,12 +291,19 @@ function init() {
 
   els.start.addEventListener('click', () => {
     click();
-    if (seen) toDraw();
-    else playIntro();
+    // 셋이 갈린다: 처음 온 사람은 인트로 / 이어갈 것이 있으면 이어하기 / 없으면 새 항해.
+    // 마지막 갈래에 확인창이 없는 것은 버릴 진행이 없어서다 (canContinue 가 false 다).
+    if (!seen) playIntro();
+    else if (resumable) continueVoyage();
+    else toDraw();
   });
 
-  els.replay.addEventListener('click', () => {
+  els.replay.addEventListener('click', async () => {
     click();
+    // 이 버튼은 이야기만 다시 트는 것이 아니라 **진행을 버린다** (playIntro → toDraw).
+    // 이어갈 것이 없으면 버릴 것도 없으니 묻지 않는다 — 아무 대가 없는 선택에 확인창을
+    // 띄우면 다음에 진짜 위험할 때의 확인창도 그냥 넘기게 된다.
+    if (resumable && !(await confirmRestart())) return;
     playIntro();
   });
 

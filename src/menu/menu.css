@@ -211,6 +211,39 @@ body::after {
 .title-menu { display: flex; flex-direction: column; gap: 12px; align-items: center; min-width: 260px; }
 .title-menu .btn-primary, .title-menu .btn-tool { width: 100%; }
 
+/* ---- 확인창 (되돌릴 수 없는 것 앞에서 한 번 묻는다) ---- */
+
+.confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;                              /* 대화 오버레이·건너뛰기 버튼보다 위 */
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 8, 22, 0.78);
+}
+
+/* ⚠ 반드시 있어야 한다. `display: grid` 가 `hidden` 속성의 기본 display:none 을 이겨서,
+   이 줄이 없으면 창이 처음부터 떠 있는다. */
+.confirm-layer[hidden] { display: none; }
+
+.confirm-box {
+  width: min(380px, 100%);
+  padding: 22px 24px 20px;
+  color: var(--sand);
+  text-align: center;
+  background: var(--panel);
+  border: 3px solid var(--panel-border);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.5);
+  word-break: keep-all;                     /* sail.css 와 같은 이유 — 낱말이 쪼개진다 */
+}
+
+.confirm-box h2 { margin: 0 0 12px; font-size: 20px; letter-spacing: 1px; }
+.confirm-box p { margin: 0 0 20px; font-size: 15px; line-height: 1.7; opacity: 0.82; }
+
+.confirm-actions { display: flex; gap: 10px; }
+.confirm-actions button { flex: 1; }
+
 .title-credit {
   position: absolute;
   bottom: 14px;
