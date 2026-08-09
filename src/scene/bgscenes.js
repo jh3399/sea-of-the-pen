@@ -1144,6 +1144,57 @@ function mio_drawing(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.22, 8);
 }
 
+// ---------------- ending_drawing — 엔딩의 마지막 화면 ----------------
+//
+// ★ 그림(assets/scene/ending-drawing.png)의 폴백. **스케치북 그 자체**라 `mio_drawing`
+//   (책상 위의 낱장)과 구도가 다르다 — 나무 프레임과 스프링 제본이 화면을 두르고 모눈종이가
+//   가운데를 채운다. 설계 화면(`draw.css`)과 같은 것이어야 "게임 내내 그리던 그 종이"가 된다.
+function ending_drawing(ctx, { w, h }) {
+  // 나무 표지 — 화면 전체를 두른다.
+  fill(ctx, 0, 0, w, h, '#6b4a2e');
+  for (let y = 0; y < h; y += 11) fill(ctx, 0, y, w, 1, '#5a3d25');
+  // 스프링 제본 — 위쪽에 구멍 줄.
+  const holeY = R(h * 0.045);
+  for (let x = R(w * 0.03); x < w * 0.97; x += R(w * 0.035)) {
+    blob(ctx, x, holeY, R(w * 0.009), R(w * 0.009), '#2a1c10');
+  }
+  // 모눈종이.
+  const px = R(w * 0.025);
+  const py = R(h * 0.10);
+  const pw = w - px * 2;
+  const ph = R(h * 0.86);
+  fill(ctx, px, py, pw, ph, '#f7f4ec');
+  ctx.globalAlpha = 0.5;
+  for (let x = px; x < px + pw; x += R(w * 0.022)) fill(ctx, x, py, 1, ph, '#cfd8e2');
+  for (let y = py; y < py + ph; y += R(w * 0.022)) fill(ctx, px, y, pw, 1, '#cfd8e2');
+  ctx.globalAlpha = 1;
+
+  // 배 한 척 — `mio_drawing` 과 같은 구성(붉은 선체·노란 돛·파란 물결)이다.
+  // 같은 그림이 같은 손에서 나왔다는 뜻이라 색을 바꾸지 않는다.
+  const bx = R(px + pw * 0.5);
+  const by = R(py + ph * 0.62);
+  fill(ctx, bx - R(pw * 0.24), by, R(pw * 0.48), R(ph * 0.16), '#c1584f');
+  fill(ctx, bx - 3, by - R(ph * 0.40), 5, R(ph * 0.40), '#7a5636');
+  for (let i = 0; i < R(ph * 0.30); i++) {
+    fill(ctx, bx - 6 - i * 0.8, by - R(ph * 0.36) + i, i * 0.8 + 3, 1, '#e0a940');
+  }
+  // 고양이 둘 — 형체만. 자리를 남긴 배라는 것이 이 그림의 요점이다 (§7.5).
+  for (const [dx, s] of [[-0.05, 1], [0.05, 0.82]]) {
+    const cx = bx + R(pw * dx);
+    const cy = by - R(ph * 0.10 * s);
+    blob(ctx, cx, cy, R(pw * 0.032 * s), R(ph * 0.055 * s), '#efd9a8');
+    fill(ctx, cx - R(pw * 0.03 * s), cy + R(ph * 0.03 * s), R(pw * 0.06 * s), R(ph * 0.06 * s),
+      s > 0.9 ? '#4a7fb5' : '#c85a86');
+  }
+  for (let i = 0; i < 3; i++) {
+    const wy = by + R(ph * 0.18) + i * R(h * 0.012);
+    for (let x = 0; x < pw * 0.66; x += 3) {
+      fill(ctx, px + pw * 0.17 + x, wy + Math.round(Math.sin(x * 0.09 + i) * 3), 3, 2, '#4f7fa8');
+    }
+  }
+  vignette(ctx, w, h, 0.14, 7);
+}
+
 // ---------------- world_end — 최종전 (세계의 끝) ----------------
 
 function world_end(ctx, { w, h, sec }) {
@@ -1401,6 +1452,7 @@ export const SCENES = {
   bulgasari_asleep,
   bulgasari_gullet,
   essence_handoff,
+  ending_drawing,
   golden_isle,
 };
 

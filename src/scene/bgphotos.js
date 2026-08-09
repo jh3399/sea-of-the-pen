@@ -20,6 +20,7 @@ import starIsle from '../../assets/scene/star-isle.png';
 import bulgasariAsleep from '../../assets/scene/bulgasari-asleep.png';
 import bulgasariGullet from '../../assets/scene/bulgasari-gullet.png';
 import essenceHandoff from '../../assets/scene/essence-handoff.png';
+import endingDrawing from '../../assets/scene/ending-drawing.png';
 
 export const BG_PHOTOS = {
   sickroom,
@@ -45,4 +46,13 @@ export const BG_PHOTOS = {
   // 블루베리가 정수를 건네는 컷. 병 하나가 화면을 통째로 가져가는 자리라 `essence` 와
   // 같은 문법이고, 이 항해의 목적어가 처음으로 손에 들린 장면이다.
   essence_handoff: essenceHandoff,
+
+  // ── 엔딩의 마지막 화면 ──────────────────────────────────────
+  // ★ **게임 내내 그리던 바로 그 스케치북이다** — 종이·모눈·나무 프레임·스프링 제본까지
+  //   설계 화면(`draw.css`)과 같은 것. 마지막에 남는 것이 그 종이라야 "그린 것이 실체가
+  //   된다"가 대사 없이 한 번 더 성립하고, 미오의 "이제 우리의 배를 그리자"가 곧바로
+  //   이 화면으로 이어진다.
+  // ★ 아래 두 아이콘이 §7.5 를 회수한다 — 배 안에 **자기 자리를 남긴** 둘이다.
+  //   설계 화면에서 주인공이 늘 화면 한가운데 서 있던 그 규칙의 마지막 모습이다.
+  ending_drawing: endingDrawing,
 };
