@@ -22,9 +22,10 @@ import { strokeToHull, HULL_DEFAULTS } from '../hull/polygon.js';
 import { CORPUS } from '../hull/corpus.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
+import { rateTravelTime } from '../game/scoring.js';
 import { View } from '../render/view.js';
-import { drawWater, drawRock, drawHullBody, drawWake } from './render.js';
-import { DEMO_MAP } from './map.js';
+import { drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
+import { DEMO_MAP, boundaryWalls } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
 const HANDOFF_KEY = 'shipwright:handoff';
@@ -56,6 +57,27 @@ function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
 
+/** 남은 거리 표기. 맵 한 장이 수백 m 규모라 km 로 고정하면 도착할 때까지 0.0x km 만 보인다. */
+function formatDistance(m) {
+  if (!Number.isFinite(m)) return '-- m';
+  return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${m.toFixed(0)} m`;
+}
+
+function formatClock(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  const mm = Math.floor(total / 60).toString().padStart(2, '0');
+  const ss = (total % 60).toString().padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+function formatClearTime(seconds) {
+  const total = Math.max(0, Math.floor(seconds * 100 + 1e-6));
+  const mm = Math.floor(total / 6000).toString().padStart(2, '0');
+  const ss = Math.floor((total % 6000) / 100).toString().padStart(2, '0');
+  const cs = (total % 100).toString().padStart(2, '0');
+  return `${mm}:${ss}.${cs}`;
+}
+
 class SailScreen {
   constructor() {
     this.canvas = document.getElementById('sea');
@@ -79,12 +101,15 @@ class SailScreen {
     this.keys = new Set();
     this.wake = [];
     this.cleared = false;
+    this.clearTime = null;
 
     this.stepper = new FixedStepper(this.world, {
       onPreStep: (dt) => {
+        // 여러 물리 스텝이 한 렌더 프레임에 몰려도 직전 스텝의 도착 시각을 놓치지 않는다.
+        this.checkGoal();
         this.stepIndex += 1;
         this.simTime = this.stepIndex * FIXED_DT;
-        this.applyControls(dt);
+        if (!this.cleared) this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
         applyFieldsToWorld(this.world, this.fields, dt);
         this.engine.tick(this.world, dt);
@@ -96,8 +121,22 @@ class SailScreen {
       clock: document.getElementById('hud-clock'),
       barFill: document.getElementById('hud-bar-fill'),
       distance: document.getElementById('hud-distance'),
-      banner: document.getElementById('hud-banner'),
     };
+    this.clearUi = {
+      overlay: document.getElementById('clear-overlay'),
+      stars: [...document.querySelectorAll('#clear-stars span')],
+      rating: document.getElementById('clear-rating'),
+      time: document.getElementById('clear-time'),
+      retry: document.getElementById('btn-retry'),
+      menu: document.getElementById('btn-clear-menu'),
+    };
+    this.clearUi.retry.addEventListener('click', () => {
+      location.href = 'sail.html';
+    });
+    this.clearUi.menu.addEventListener('click', () => {
+      sessionStorage.removeItem(HANDOFF_KEY);
+      location.href = 'index.html';
+    });
 
     window.addEventListener('resize', () => this.view.resize());
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -105,6 +144,9 @@ class SailScreen {
 
     this.launch(loadHandoff() ?? fallbackDesign());
     for (const spec of DEMO_MAP.obstacles) this.placeObstacle(spec);
+    // 해역 경계 — 벽도 그냥 암초다 (같은 `placeObstacle`, 같은 재질). 경계 전용 물리·판정
+    // 코드가 0줄인 이유이고, 그래서 "여기서부터 못 간다"를 규칙이 아니라 지형이 말한다.
+    for (const spec of boundaryWalls(DEMO_MAP.bounds)) this.placeObstacle(spec);
     this.goal = createGoal(DEMO_MAP.goal);
     this.initialDistance = this.currentDistance();
 
@@ -116,7 +158,9 @@ class SailScreen {
 
   /** 선체 로컬 폴리곤 + 손으로 붙인 아이템을 기본 장치 위에 얹어 강체로 만든다 (main.js#launch). */
   launch(design) {
-    const items = defaultDevices(design.outline)
+    // oarX 는 그리기 화면에서 플레이어가 찍은 노의 세로 위치. 폴백 설계(fallbackDesign)에는
+    // 없으므로 그때는 D1~D3 의 자동 배치(station)로 되돌아간다.
+    const items = defaultDevices(design.outline, { oarX: design.oarX ?? null })
       .concat((design.items ?? []).map((it) => ({ ...it })));
     const body = createHullBody(
       this.world,
@@ -185,7 +229,20 @@ class SailScreen {
     const at = crewWorldPoint(findCrewBody(this.bodies));
     if (!at || !goalReached(this.goal, at)) return;
     this.cleared = true;
-    this.hud.banner.classList.remove('hidden');
+    this.clearTime = this.simTime;
+    this.heldStrokes.clear();
+    this.tappedStrokes.clear();
+    this.keys.clear();
+    this.held = {};
+    this.showClearResult(rateTravelTime(this.clearTime, DEMO_MAP.scoring));
+  }
+
+  showClearResult(stars) {
+    this.clearUi.stars.forEach((star, i) => star.classList.toggle('active', i < stars));
+    this.clearUi.rating.textContent = `별 ${stars}개`;
+    this.clearUi.time.textContent = formatClearTime(this.clearTime);
+    this.clearUi.overlay.classList.remove('hidden');
+    this.clearUi.retry.focus();
   }
 
   updateCamera() {
@@ -223,11 +280,14 @@ class SailScreen {
     view.begin();
     ctx.imageSmoothingEnabled = false;
 
-    drawWater(ctx, view);
-    for (const body of this.obstacles) {
-      const spec = body.getUserData()?.obstacle?.spec;
-      if (spec?.shape === 'circle') drawRock(ctx, spec);
-    }
+    // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 물결만 따로 흐른다.
+    drawWater(ctx, view, this.simTime);
+    // 도착 지점은 수면 위 표식이라 배·암초보다 **아래**에 깐다 — 도착하는 순간 배가 고리를
+    // 가리는 것이 맞다 (고리 위에 배가 올라앉아야 "들어갔다"로 읽힌다).
+    drawGoal(ctx, view, this.goal, { cleared: this.cleared, sec: this.simTime });
+    // 화면 밖 장애물을 거르는 것은 `drawObstacle` 안에서 한다 — 암초밭이 해역 전체를 덮어
+    // 60개가 넘고, 그중 화면에 걸치는 것은 늘 몇 개뿐이다.
+    for (const body of this.obstacles) drawObstacle(ctx, view, body.getUserData()?.obstacle?.spec);
     drawWake(ctx, this.wake);
     for (const body of this.bodies) {
       const p = body.getPosition();
@@ -238,24 +298,24 @@ class SailScreen {
       drawHullBody(ctx, body.getUserData().hull);
       ctx.restore();
     }
+    // 화면 밖일 때만 가장자리 화살표가 뜬다 — 판단은 `drawGoalCompass` 안에서 한다.
+    drawGoalCompass(ctx, view, this.goal, crewWorldPoint(findCrewBody(this.bodies)), {
+      cleared: this.cleared,
+    });
   }
 
   updateHud() {
     // 도착하면 시계·거리 바를 그 순간 값에 고정한다 — 이후 배가 표류해도 숫자가 흔들리지 않는다.
     if (this.cleared && this._huddedAtClear) return;
 
-    const mm = Math.floor(this.simTime / 60).toString().padStart(2, '0');
-    const ss = Math.floor(this.simTime % 60).toString().padStart(2, '0');
-    this.hud.clock.textContent = `${mm}:${ss}`;
+    this.hud.clock.textContent = formatClock(this.clearTime ?? this.simTime);
 
     const remaining = this.cleared ? 0 : this.currentDistance();
     const frac = this.cleared || this.initialDistance <= 0
       ? Number(this.cleared)
       : clamp01(1 - remaining / this.initialDistance);
     this.hud.barFill.style.width = `${(frac * 100).toFixed(1)}%`;
-    this.hud.distance.textContent = Number.isFinite(remaining)
-      ? `${(remaining / 1000).toFixed(2)} km`
-      : '-- km';
+    this.hud.distance.textContent = formatDistance(remaining);
 
     if (this.cleared) this._huddedAtClear = true;
   }

@@ -16,9 +16,9 @@
   --bad: #ff6b6b;
   --ok: #8ce99a;
 
-  --paper: #f3e6c8;
-  --paper-line: rgba(90, 65, 30, 0.14);
-  --paper-edge: #e4d3a8;
+  --paper: #fffdf7;
+  --paper-line: rgba(105, 88, 58, 0.10);
+  --paper-edge: #e8e1d3;
   --wood: #8a5a34;
   --wood-dark: #4a2f1a;
   --wood-light: #c98a52;
@@ -251,6 +251,13 @@ html, body {
   opacity: 0.4;
   cursor: not-allowed;
   background: rgba(90, 65, 30, 0.03);
+}
+
+/* 기본 장치 행의 상태 꼬리표 (노 — 위치 미정 / 지정됨) */
+.item-row .row-note {
+  display: block;
+  font-size: 14px;
+  opacity: 0.65;
 }
 
 .item-row .icon, .material-row .icon {

@@ -31,6 +31,8 @@ import {
 import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
+import { rateTravelTime } from '../src/game/scoring.js';
+import { DEMO_MAP, boundaryWalls } from '../src/sail/map.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
@@ -136,7 +138,9 @@ console.log('\n\x1b[36m▌스파이크 ③ — 이방성 저항 안정성\x1b[0m
 function spawn(key, options = {}) {
   const world = createWorld();
   const hull = hulls[key];
-  const items = options.devices ? defaultDevices(hull.outline) : [];
+  const items = options.devices
+    ? defaultDevices(hull.outline, { oarX: options.oarX ?? null })
+    : [];
   if (options.rudder) items.push(rudderItem(hull.outline));
   // §4.1 부착 아이템 — 기본 장치와 **같은 배열, 같은 형식**으로 얹힌다.
   for (const spec of options.attach ?? []) {
@@ -238,6 +242,7 @@ function drive(key, input, setup = {}) {
   const seconds = setup.seconds ?? 3;
   const { world, body } = spawn(key, {
     devices: setup.devices ?? true, rudder: setup.rudder, attach: setup.attach,
+    oarX: setup.oarX,
   });
   if (setup.v) body.setLinearVelocity(new Vec2(setup.v.x, setup.v.y));
   if (setup.w) body.setAngularVelocity(setup.w);
@@ -578,6 +583,94 @@ const halfBeamOf = (key) => sideAnchors(hulls[key].outline, oarX(key)).halfBeam;
 check('넓은 배가 한쪽 젓기로 더 잘 돈다 (팔길이 = 노 반폭)',
   halfBeamOf('round') > halfBeamOf('sloop'),
   `둥근 배 반폭 ${halfBeamOf('round').toFixed(2)} > 슬루프 ${halfBeamOf('sloop').toFixed(2)} m`);
+
+// ── 플레이어가 정하는 노 위치 (그리기 화면 → oarX) ────────────────────────────
+//
+// 정하는 것은 **세로 위치 x 하나**다. 좌우로 벌리는 일은 sideAnchors 가, 중심선은
+// sternAnchor 반직선이 맡는다 — 조향 코드는 여전히 0줄이고, x 는 그 두 수치를 고르는
+// 손잡이일 뿐이다. 아래가 그 손잡이가 실제로 무엇을 바꾸는지 (그리고 무엇을 안 바꾸는지) 다.
+console.log('\n  \x1b[36m노 위치 지정 (oarX)\x1b[0m');
+
+// ① 인자를 주지 않으면 D1~D3 의 자동 배치와 **비트 단위로 같아야** 한다. 그리기 화면이
+//    생겨도 하니스·폴백 설계·기존 벤치 89건이 재는 것이 달라지면 안 된다.
+const autoDevices = defaultDevices(hulls.sloop.outline);
+const autoAgain = defaultDevices(hulls.sloop.outline, {});
+check('oarX 를 주지 않으면 자동 배치와 비트 일치 (기존 경로 회귀)',
+  autoDevices.every((d, i) => d.x === autoAgain[i].x && d.y === autoAgain[i].y),
+  `장치 ${autoDevices.length}개 좌표 동일`);
+
+// ② 플레이어가 찍은 x 에 두 노가 놓이고, 좌우는 그 자리의 실제 선폭에서 나온다.
+const PICKED_X = -1.2;
+const picked = defaultDevices(hulls.sloop.outline, { oarX: PICKED_X })
+  .filter((d) => d.type === 'oar');
+const pickedSpan = sideAnchors(hulls.sloop.outline, PICKED_X,
+  sternAnchor(hulls.sloop.outline).y * (PICKED_X / sternAnchor(hulls.sloop.outline).x));
+check('찍은 x 에 좌우 노가 놓인다 (플레이어는 앞뒤만 정한다)',
+  picked.length === 2 && picked.every((d) => Math.abs(d.x - PICKED_X) < 1e-12),
+  `x = ${picked.map((d) => d.x.toFixed(3)).join(' · ')} m`);
+check('좌우 벌림은 그 자리의 실제 선폭에서 나온다 (손으로 찍는 값이 아니다)',
+  Math.abs(Math.abs(picked[0].y - picked[1].y) - pickedSpan.halfBeam * 2) < 1e-12,
+  `노 간격 ${Math.abs(picked[0].y - picked[1].y).toFixed(3)} m = 반폭 ×2`);
+
+// ③ ★ 대칭 선체에서는 x 를 어디에 찍든 **가짜 토크가 생기면 안 된다.** 중심선을 sideAnchors
+//    의 국소 중심으로 되돌리면 여기서 걸린다 (D1·D2 에서 두 번 잡힌 버그의 세 번째 재발 지점).
+const roundBB = bounds(hulls.round.outline);
+const worstOffset = [0.2, 0.4, 0.6, 0.8].reduce((worst, r) => {
+  const x = roundBB.minX + roundBB.width * r;
+  const pair = defaultDevices(hulls.round.outline, { oarX: x }).filter((d) => d.type === 'oar');
+  return Math.max(worst, Math.abs(pair[0].y + pair[1].y));
+}, 0);
+check('★ 대칭 선체는 어느 x 에 찍어도 두 노의 y 합이 0 이다 (가짜 선회 없음)',
+  worstOffset < 0.01,
+  `4자리 중 최악 어긋남 ${(worstOffset * 100).toFixed(2)} cm`);
+
+// ④ §7.5 — 두 부착점이 선체 안이어야 한다. 그리기 화면이 canAttachAt 으로 막는 그 조건을
+//    여기서도 확인한다 (밖에 걸친 노는 첫 파손에 무조건 사라진다).
+const insideAll = [0.25, 0.5, 0.75].every((r) => {
+  const bb = bounds(hulls.sloop.outline);
+  const pair = defaultDevices(hulls.sloop.outline, { oarX: bb.minX + bb.width * r })
+    .filter((d) => d.type === 'oar');
+  return pair.every((d) => canAttachAt(hulls.sloop.outline, [], { x: d.x, y: d.y }));
+});
+check('선체 중앙부에 찍은 노는 두 짝 모두 선체 안이다 (§7.5 소속 판정)',
+  insideAll, '앞·중앙·뒤 3자리 모두 통과');
+
+// ⑤ 그래서 x 는 무엇을 바꾸는가 — **반폭뿐이다.** 노 힘은 fx += f · torque += −y·f 라
+//    x 항이 아예 없다. 넓은 자리에 찍으면 선회가 커지고, 직진 속도는 그대로다.
+const beamAt = (r) => {
+  const bb = bounds(hulls.sloop.outline);
+  const x = bb.minX + bb.width * r;
+  return { x, half: sideAnchors(hulls.sloop.outline, x).halfBeam };
+};
+// 슬루프의 최대 선폭은 뱃머리 1/4 지점이고 선미·선수로 갈수록 좁아진다 (실측 프로파일).
+const wideSpot = beamAt(0.25);
+const narrowSpot = beamAt(0.8);
+// 입력은 반드시 STROKE_KEYMAP 을 거친다 (위 ⚠ 와 같은 이유).
+const wideOars = drive('sloop', holdKeys('ArrowLeft'), { seconds: 6, oarX: wideSpot.x });
+const narrowOars = drive('sloop', holdKeys('ArrowLeft'), { seconds: 6, oarX: narrowSpot.x });
+// 직진(↑)은 토크 없이 추력만 — x 를 옮겨도 달라지지 않아야 한다 (힘 식에 x 항이 없다).
+const wideStraight = drive('sloop', holdKeys('ArrowUp'), { seconds: 6, oarX: wideSpot.x });
+const narrowStraight = drive('sloop', holdKeys('ArrowUp'), { seconds: 6, oarX: narrowSpot.x });
+console.log(`  넓은 자리(반폭 ${wideSpot.half.toFixed(2)} m) → ← 6초 ${wideOars.turned.toFixed(1)}° · ` +
+  `↑ 6초 ${wideStraight.speed.toFixed(3)} m/s`);
+console.log(`  좁은 자리(반폭 ${narrowSpot.half.toFixed(2)} m) → ← 6초 ${narrowOars.turned.toFixed(1)}° · ` +
+  `↑ 6초 ${narrowStraight.speed.toFixed(3)} m/s`);
+check('넓은 자리에 찍을수록 잘 돈다 (플레이어의 x 선택이 조향으로 이어진다)',
+  wideOars.turned > narrowOars.turned * 1.5,
+  `${wideOars.turned.toFixed(1)}° > ${narrowOars.turned.toFixed(1)}° × 1.5`);
+// ⚠ **원칙 2 미해결 — 통과/미달로 재지 않고 경고로 남긴다.**
+//
+// 노 힘은 `fx += f` · `τ += −y·f` 라 **x 항이 아예 없다.** 그래서 넓은 자리에 찍으면 선회만
+// 얻고 직진 속도는 한 푼도 잃지 않는다 (아래 실측 차이는 비대칭 잔여 요잉이 만든 항력 차이
+// 뿐이다). 지금 상태에서는 "가장 넓은 곳"이 **항상 정답**이라 §5.2 원칙 2 를 만족하지 못한다.
+//
+// 이것을 check 로 고정하지 않는 이유: 지금의 결함을 불변식으로 박아 두면, 대가를 붙이는 날
+// 벤치가 그것을 회귀로 신고한다. 고쳐야 할 것은 코드지 이 수치가 아니다.
+const straightGap = Math.abs(wideStraight.speed - narrowStraight.speed);
+console.log(`  \x1b[33m⚠ 원칙 2 미해결\x1b[0m — 넓은 자리는 선회를 `
+  + `${(wideOars.turned / narrowOars.turned).toFixed(1)}배 얻고 직진 속도는 `
+  + `${(straightGap / wideStraight.speed * 100).toFixed(3)}% 만 잃는다 (사실상 대가 없음).`);
+console.log('    노 힘 식에 x 항이 없어 "가장 넓은 곳"이 항상 정답이다 — 약점을 붙일 자리다.');
 
 // ── 부착 아이템으로서의 키: 유속 비례 선회력, 정지 시 무효 (§5.1) ───────────────
 //
@@ -2506,6 +2599,102 @@ check('주인공 없는 선체도 파손 경로를 그대로 탄다 (crew 는 �
   splitResult.result.crewLost === false && splitResult.bodies.every(
     (bd) => bd.getUserData().hull.crew === null),
   `조각 ${splitResult.bodies.length}개 · crew null · crewLost false`);
+
+// 도착 결과는 그림을 채점하지 않고 맵 데이터의 시간 기준만 읽는다.
+const starScoring = DEMO_MAP.scoring;
+check('클리어 시간 3별 경계는 포함된다', rateTravelTime(60, starScoring) === 3,
+  `60.000초 → ${rateTravelTime(60, starScoring)}별`);
+check('3별 경계를 한 물리 스텝 넘으면 2별이다', rateTravelTime(60 + FIXED_DT, starScoring) === 2,
+  `${(60 + FIXED_DT).toFixed(3)}초 → ${rateTravelTime(60 + FIXED_DT, starScoring)}별`);
+check('클리어 시간 2별 경계는 포함된다', rateTravelTime(90, starScoring) === 2,
+  `90.000초 → ${rateTravelTime(90, starScoring)}별`);
+check('2별 경계를 한 물리 스텝 넘으면 1별이다', rateTravelTime(90 + FIXED_DT, starScoring) === 1,
+  `${(90 + FIXED_DT).toFixed(3)}초 → ${rateTravelTime(90 + FIXED_DT, starScoring)}별`);
+let malformedScoringRejected = false;
+let reversedScoringRejected = false;
+try { rateTravelTime(30, { threeStarMaxSeconds: NaN, twoStarMaxSeconds: 90 }); } catch (error) {
+  malformedScoringRejected = error instanceof RangeError;
+}
+try { rateTravelTime(30, { threeStarMaxSeconds: 90, twoStarMaxSeconds: 60 }); } catch (error) {
+  reversedScoringRejected = error instanceof RangeError;
+}
+check('잘못되거나 역전된 별 시간 기준은 거절한다', malformedScoringRejected && reversedScoringRejected,
+  `잘못된 값 ${malformedScoringRejected ? '거절' : '통과'} · 역전 ${reversedScoringRejected ? '거절' : '통과'}`);
+
+// ─────────────────────────────────────────────── D3 ⑤ 해역
+// D3 통과 질문 (b) "3맵 전부 클리어 가능한가" 의 반대편 — 클리어는 되어야 하지만 **옆으로
+// 돌아가서** 되면 안 된다. 항해 화면의 줌은 20 px/m 이라 한 화면이 대략 70 m × 40 m 다.
+// 암초를 항로 주변에만 깔면 y 로 한 화면만 벗어나도 텅 빈 바다가 나오고, 그러면 암초는
+// 장애물이 아니라 무시해도 되는 장식이 된다. 여기서는 암초밭이 해역 전체를 덮는지와,
+// 해역 밖으로는 정말 못 나가는지를 잰다.
+console.log('\n\x1b[36m▌D3 ⑤ — 해역 (암초밭의 폭 · 경계 벽)\x1b[0m\n');
+
+const sea = DEMO_MAP.bounds;
+/** 화면 한 폭에 못 미치는 띠로 해역을 가로로 썰어, 빈 띠가 있는지 본다. */
+const BAND = 25;
+const bands = [];
+for (let y0 = sea.minY; y0 < sea.maxY; y0 += BAND) {
+  const n = DEMO_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length;
+  bands.push({ y0, n });
+}
+const rockSpanY = Math.max(...DEMO_MAP.obstacles.map((o) => Math.abs(o.y) + o.radius));
+console.log(`  암초 ${DEMO_MAP.obstacles.length}개 · y 도달폭 ±${rockSpanY.toFixed(0)} m · ` +
+  `${BAND} m 띠별 개수 ${bands.map((b) => b.n).join('·')}`);
+check('★ 암초밭이 해역 전체를 덮는다 (빈 띠가 없다 — y 로 벗어나도 계속 암초를 만난다)',
+  bands.every((b) => b.n > 0),
+  `${bands.length}개 띠 중 빈 띠 ${bands.filter((b) => b.n === 0).length}개`);
+check('암초가 화면 한 폭(±20 m)보다 훨씬 넓게 퍼져 있다', rockSpanY > 60,
+  `y ±${rockSpanY.toFixed(0)} m`);
+
+// 출항 지점과 도착 지점은 암초에 묻혀 있으면 안 된다 (맵이 애초에 성립 불가가 된다).
+const clearance = (p) => Math.min(...DEMO_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const startClear = clearance({ x: 0, y: 0 });
+const goalClear = clearance(DEMO_MAP.goal) - DEMO_MAP.goal.radius;
+console.log(`  출항 지점 여유 ${startClear.toFixed(1)} m · 도착 원 밖 여유 ${goalClear.toFixed(1)} m`);
+check('출항 지점과 도착 원이 암초에 묻히지 않았다', startClear > 5 && goalClear > 0,
+  `출항 ${startClear.toFixed(1)} m · 도착 ${goalClear.toFixed(1)} m`);
+check('도착 지점이 해역 안에 있다 (경계 벽이 골을 삼키지 않는다)',
+  DEMO_MAP.goal.x + DEMO_MAP.goal.radius < sea.maxX
+  && Math.abs(DEMO_MAP.goal.y) + DEMO_MAP.goal.radius < sea.maxY,
+  `골 x=${DEMO_MAP.goal.x} · 해역 x≤${sea.maxX}`);
+
+// 경계 벽 — 배를 계속 밀어붙여도 넘어가지 못한다. 벽을 빼면 그대로 나가 버리는 것이 대조군이다.
+const seaWalls = boundaryWalls(sea);
+/**
+ * 경계를 향해 12초간 배를 밀어붙이고, 그 방향으로 가장 멀리 간 지점을 돌려준다.
+ * 항력은 켜지 않는다 — 여기서 재는 것은 "벽이 막는가" 하나이고, 항력이 있으면 벽에
+ * 닿기도 전에 멎어 무엇이 막았는지 알 수 없게 된다.
+ */
+function pushOut(dir, { walls = true, seconds = 12 } = {}) {
+  const world = createWorld();
+  if (walls) for (const spec of seaWalls) createObstacle(world, spec);
+  const body = createHullBody(world,
+    { outline: hulls.sloop.outline, holes: [], items: [], crew: { x: 0, y: 0 } },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const st = new FixedStepper(world, {});
+  let far = -Infinity;
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) {
+    body.setLinearVelocity(new Vec2(dir.x * 20, dir.y * 20));
+    st.advance(FIXED_DT);
+    const p = body.getPosition();
+    far = Math.max(far, p.x * dir.x + p.y * dir.y);
+  }
+  return far;
+}
+
+const ramNorth = pushOut({ x: 0, y: 1 });
+const ramEast = pushOut({ x: 1, y: 0 });
+const ramSouth = pushOut({ x: 0, y: -1 });
+const ramWest = pushOut({ x: -1, y: 0 });
+const ramFree = pushOut({ x: 0, y: 1 }, { walls: false });
+console.log(`  20 m/s 로 12초간 밀어붙임 — 북 ${ramNorth.toFixed(1)} / 남 ${ramSouth.toFixed(1)} / ` +
+  `동 ${ramEast.toFixed(1)} / 서 ${ramWest.toFixed(1)} m (벽 없으면 ${ramFree.toFixed(0)} m)`);
+check('★ 해역 밖으로는 나갈 수 없다 (사방이 암초 벽 — 경계 전용 물리 코드 0줄)',
+  ramNorth < sea.maxY && ramSouth < -sea.minY && ramEast < sea.maxX && ramWest < -sea.minX,
+  `북 ${ramNorth.toFixed(1)} ≤ ${sea.maxY} · 동 ${ramEast.toFixed(1)} ≤ ${sea.maxX}`);
+check('막는 것이 정말 벽이다 (빼면 그대로 나간다 — 대조군)', ramFree > 200,
+  `벽 없이 ${ramFree.toFixed(0)} m`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
