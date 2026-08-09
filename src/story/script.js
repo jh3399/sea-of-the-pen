@@ -20,7 +20,7 @@ export const SCRIPT = {
     { speaker: '미오', text: '누워만 있으니까 심심해서. 이거 봐.' },
     { speaker: '', text: '종이 한 장. 배가 그려져 있다.' },
     { speaker: '미오', text: '오빠 배야.' },
-    { speaker: '미오', text: '오빠 꿈이 바다 건너까지 가보는 거였잖아. 이거 타면 어디든 가.' },
+    { speaker: '미오', text: '바다 건너까지 가보는 게 꿈이었잖아. 이거 타면 어디든 갈 수 있어.' },
     { speaker: '루', sprite: 'ru', text: '(선이 울퉁불퉁하다. 쥘 힘이 없었던 모양이다.)' },
     { speaker: '미오', text: '바람이나 쐬고 와. 나 괜찮아!' },
     { speaker: '루', sprite: 'ru', text: '(괜찮다는 말은 사흘째고, 목소리는 어제보다 작다.)' },
@@ -37,7 +37,10 @@ export const SCRIPT = {
     { speaker: '포포', sprite: 'examiner', bg: 'sea_day', text: '첫째는 순풍 해협. 바람이 등을 민다. 거긴 쉽다.' },
     { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 같은 바람이 정면으로 온다.' },
     { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 약은 거기 있다.' },
-    { speaker: '루', sprite: 'ru', text: '사흘이면 됩니까.' },
+    // ⚠ "사흘"이라는 시한이 여기서 처음 나온다. 이 두 줄이 없으면 S-03·S-05 의 루가
+    //    아무도 말한 적 없는 기한을 혼자 알고 있는 꼴이 된다 (실제로 그랬다).
+    { speaker: '루', sprite: 'ru', text: '얼마나 걸립니까.' },
+    { speaker: '포포', sprite: 'examiner', text: '순풍을 만나도 사흘이다. 그 안에 못 돌아오면 소용없고.' },
     { speaker: '포포', sprite: 'examiner', bg: 'shipyard_grave', text: '가겠다고 나선 사람은 여럿 있었다.' },
     { speaker: '포포', sprite: 'examiner', text: '돌아온 사람이 없어서 하는 말이야.' },
   ],
@@ -64,7 +67,7 @@ export const SCRIPT = {
     { speaker: '모루', sprite: 'moru', text: '만들 줄은 아냐?' },
     { speaker: '루', sprite: 'ru', text: '아니요.' },
     { speaker: '모루', sprite: 'moru', text: '그럼 그려라. 이 바다에서는 그린 대로 뜨고, 그린 대로 가라앉는다.' },
-    { speaker: '', text: '모루가 스케치북을 밀어 놓다가, 루가 쥔 종이를 본다.' },
+    { speaker: '', text: '모루가 스케치북을 내밀다가, 루가 쥔 종이를 본다.' },
     { speaker: '모루', sprite: 'moru', text: '그건 뭐냐.' },
     { speaker: '루', sprite: 'ru', text: '동생이 그린 겁니다. 배라고.' },
     { speaker: '모루', sprite: 'moru', text: '…그걸로 시작해.' },
@@ -79,7 +82,7 @@ export const SCRIPT = {
   // 한낮 그림이 뜨고 있었다. 물에 남은 난파선이 S-02 의 경고를 말없이 받는다.
   DEPARTURE: [
     { speaker: '', bg: 'dawn_wreck', text: '새벽. 물이 잔잔하다.' },
-    { speaker: '', text: '멀리, 다 가라앉지 못한 배들이 아직 떠 있다.' },
+    { speaker: '', text: '멀리, 가라앉다 만 배들이 아직 떠 있다.' },
     { speaker: '루', sprite: 'ru', text: '사흘.' },
     { speaker: '루', sprite: 'ru', text: '그 안에 돌아온다.' },
     { speaker: '', text: '미오의 종이를 펴고, 연필을 쥐었다.' },

@@ -53,6 +53,23 @@ html, body {
   z-index: 0;
 }
 
+/* 그림 배경 — 절차적 캔버스 바로 위. 그림이 있는 씬에서만 불투명해진다.
+   object-fit: cover 는 #title-fx 와 같은 이유다: 창 비율이 어떻든 그림을 잘라서 채운다.
+   페이드 시간은 pixelbg.js 의 FADE_MS 와 맞춰 둔다 — 캔버스 크로스페이드와 그림 페이드가
+   서로 다른 속도로 돌면 전환 중간에 두 배경이 겹쳐 보인다. */
+#bg-photo {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 650ms ease;   /* = pixelbg.js 의 FADE_MS */
+  pointer-events: none;
+}
+#bg-photo[data-on='1'] { opacity: 1; }
+
 /* CRT 스캔라인 */
 body::after {
   content: '';

@@ -8,11 +8,33 @@
 // 대사 데이터에 { bg: 'harbor' }를 넣으면 dialogue.js가 대신 호출한다.
 
 import { SCENES, DEFAULT_SCENE } from './bgscenes.js';
+import { BG_PHOTOS } from './bgphotos.js';
 
 const MIN_SIDE = 200;   // 짧은 쪽 논리 픽셀 수 (도트 크기 기준)
 const FADE_MS = 650;
 
 let engine = null;
+
+/**
+ * 그림 배경 레이어(#bg-photo)를 현재 씬에 맞춘다.
+ *
+ * 요소를 여기서 찾는 이유: draw.html·sail.html 에는 이 레이어가 없다. 인자로 받게 하면
+ * 호출부 셋을 다 고쳐야 하고, 없는 화면에서는 어차피 null 을 넘기게 된다.
+ * 요소가 없으면 조용히 지나가는 것이 맞다 — 그림 배경은 컷신만의 기능이다.
+ *
+ * 캔버스는 계속 아래에서 같은 씬을 그리고 있다. 그림이 못 뜨면 그게 그대로 배경이 된다.
+ */
+function syncPhoto(key) {
+  const el = typeof document === 'undefined' ? null : document.getElementById('bg-photo');
+  if (!el) return;
+  const src = BG_PHOTOS[key];
+  if (src) {
+    if (el.getAttribute('src') !== src) el.setAttribute('src', src);
+    el.dataset.on = '1';
+  } else {
+    el.dataset.on = '0';
+  }
+}
 
 function makeBuffer(w, h) {
   const c = document.createElement('canvas');
@@ -92,10 +114,12 @@ function startEngine(canvas) {
       st.prevKey = instant ? null : st.key;
       st.fadeStart = performance.now();
       st.key = key;
+      syncPhoto(key);
     },
     start() {
       // 첫 프레임은 즉시 (rAF가 늦는 환경에서도 배경이 비지 않게)
       frame(performance.now());
+      syncPhoto(st.key);
     },
   };
 }
