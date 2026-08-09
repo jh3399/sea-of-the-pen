@@ -19,7 +19,7 @@ import { predictPath } from './physics/predict.js';
 import { createHullBody } from './physics/body.js';
 import { defaultDevices, sideAnchors } from './items/defaults.js';
 import { attachItem, nextBind, itemsExtraMass, canAttachAt } from './items/attach.js';
-import { ITEM_CATALOG, ATTACHABLE, bindLabel } from './items/catalog.js';
+import { ITEM_CATALOG, ATTACHABLE, ATTACH_DIRECTIONS, bindLabel } from './items/catalog.js';
 import { strokeToHull, toHullLocal, HULL_DEFAULTS } from './hull/polygon.js';
 import { computeHullParams, MATERIALS } from './hull/params.js';
 import { StrokeCapture } from './hull/strokes.js';
@@ -97,14 +97,6 @@ const OAR_SLIDERS = [
     set: (v) => { DEVICE_TUNING.oarMaxSpeed = v; },
     fmt: (v) => v.toFixed(1),
   },
-];
-
-/** 부착 시 고를 수 있는 방향 (§4.1 의 "방향"). 라디안, +X = 뱃머리. */
-const ATTACH_ANGLES = [
-  { label: '앞으로 ↑', value: 0 },
-  { label: '뒤로 ↓', value: Math.PI },
-  { label: '좌현 ←', value: Math.PI / 2 },
-  { label: '우현 →', value: -Math.PI / 2 },
 ];
 
 /** 스트레스 테스트용 결정론적 난수 — 매 실행 같은 지점을 깎아야 수치를 비교할 수 있다. */
@@ -198,6 +190,8 @@ class Harness {
     this.tappedStrokes = new Set();
     /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — 부스터·키가 읽는다 (§4.3). */
     this.held = {};
+    /** 마지막 물리 스텝 이후 생긴 트리거 키다운 엣지 — 대포 단발과 짧은 탭을 보존한다. */
+    this.pressed = {};
     /** 설계 단계에서 손으로 붙인 아이템들 (선체 로컬 좌표). launch() 가 기본 장치에 더한다. */
     this.attached = [];
     /** 부착 모드에서 선택된 카탈로그 타입. null 이면 그리기 모드. */
@@ -275,7 +269,7 @@ class Harness {
       itemSel.appendChild(opt);
     }
     const angleSel = document.getElementById('item-angle');
-    for (const a of ATTACH_ANGLES) {
+    for (const a of ATTACH_DIRECTIONS) {
       const opt = document.createElement('option');
       opt.value = String(a.value);
       opt.textContent = a.label;
@@ -415,10 +409,15 @@ class Harness {
       else this.keys.delete(e.key);
       return;
     }
-    // 트리거 바인딩(§4.3) — 홀드다. 부스터는 누르는 동안 켜지고 키는 누르는 동안 꺾인다.
+    // 트리거 바인딩(§4.3). 부스터·키는 홀드, 대포는 키다운 엣지를 한 번만 소비한다.
     if (TRIGGER_KEYS.has(e.code)) {
-      if (down) this.held[e.code] = true;
-      else delete this.held[e.code];
+      if (down) {
+        if (this.mode !== 'sail') return;
+        if (!e.repeat && !this.held[e.code]) this.pressed[e.code] = true;
+        this.held[e.code] = true;
+      } else {
+        delete this.held[e.code];
+      }
       return;
     }
     if (!down) return;
@@ -698,6 +697,9 @@ class Harness {
     // 모드를 옮기는 순간이다. 누르고 있던 키를 남겨 두면 새 배가 태어나자마자 저절로 젓는다.
     this.heldStrokes.clear();
     this.tappedStrokes.clear();
+    this.held = {};
+    this.pressed = {};
+    this.keys.clear();
   }
 
   /** 선체 로컬 폴리곤 하나를 기본 장치 + 부착 아이템을 얹은 강체로 만든다. */
@@ -808,10 +810,24 @@ class Harness {
     }
     this.tappedStrokes.clear();
 
-    // 요청 배열은 세 척이 **공유**한다. 수락/거절은 배마다 따로 판단하므로, 비교 주행에서
-    // 무거운 배만 젓기를 놓치는 일은 생기지 않는다.
-    const input = { strokes, held: this.held, anchor: this.keys.has(' ') };
-    for (const body of this.bodies) applyDevices(body, input, dt);
+    // 요청 배열과 트리거 엣지는 세 척이 **공유**한다. 수락/거절은 배마다 따로 판단하므로,
+    // 비교 주행에서 무거운 배만 젓기를 놓치거나 같은 키 대포의 일제사격이 갈라지지 않는다.
+    const input = {
+      strokes,
+      held: this.held,
+      pressed: this.pressed,
+      anchor: this.keys.has(' '),
+      now: this.simTime,
+    };
+    for (const body of this.bodies) {
+      for (const event of applyDevices(body, input, dt)) {
+        if (event.type !== 'cannonFire' || !event.request) continue;
+        const shot = spawnProjectile(this.world, event.request);
+        if (shot) this.projectiles.add(shot);
+      }
+    }
+    // 한 물리 스텝만 보이는 래치다. 재장전 중 엣지도 여기서 버려져 지연 발사되지 않는다.
+    this.pressed = {};
   }
 
   // ------------------------------------------------------- 스파이크 ②
@@ -1378,9 +1394,18 @@ class Harness {
       ctx.lineTo(p.x, p.y);
       ctx.stroke();
 
+      // ⚠ 몸통은 콜라이더 반경 그대로. 부풀리면 아슬아슬한 회피가 거짓말이 된다 (§⑧).
+      //   멀리서 보이게 하는 일은 반투명 후광이 맡는다 — 경계가 콜라이더로 읽히지 않는다.
+      const glow = view.px(2.5);
+      if (glow > shot.radius) {
+        ctx.fillStyle = 'rgba(255, 211, 92, 0.35)';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, glow, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.fillStyle = '#ffd35c';
       ctx.beginPath();
-      ctx.arc(p.x, p.y, Math.max(shot.radius, view.px(2.5)), 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, shot.radius, 0, Math.PI * 2);
       ctx.fill();
     }
     // 맞고 죽은 자리. 팽창하며 사라지는 고리 하나 — 글자 없이 "여기서 멈췄다"만 말한다.
@@ -1773,7 +1798,7 @@ class Harness {
     if (!items.length) return '';
 
     const rows = items.map((it) => {
-      const dir = ATTACH_ANGLES.find((a) => Math.abs(a.value - (it.angle ?? 0)) < 1e-6);
+      const dir = ATTACH_DIRECTIONS.find((a) => Math.abs(a.value - (it.angle ?? 0)) < 1e-6);
       const arm = it.kind === 'thruster' || it.kind === 'sail'
         // 그 힘이 만드는 토크의 팔길이 — 방향에 수직인 성분만 센다.
         ? Math.abs(it.x * Math.sin(it.angle) - it.y * Math.cos(it.angle))
