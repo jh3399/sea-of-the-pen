@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>도트 확인 — 흉상 + 펜 맞대기</title>
+<!--
+  브라우저 없이는 못 보는 것만 여기서 본다: 배경 위 대비, 펜 컷 애니메이션, 실제 표시 배율.
+  dev/bg-gallery.html 이 배경 전용이라면 이쪽은 캐릭터 전용이다.
+  로컬 서버로 열 것: npx http-server -p 5210 -c-1  →  /dev/dot-check.html
+-->
+<style>
+  body { margin: 0; background: #0b0e1c; color: #e8e4f0; font: 14px/1.6 system-ui, sans-serif; }
+  h2 { margin: 24px 16px 8px; font-size: 15px; font-weight: 600; letter-spacing: .04em; }
+  .band { display: flex; flex-wrap: wrap; gap: 18px; padding: 14px 16px; align-items: flex-end; }
+  .band + .band { border-top: 1px solid #ffffff14; }
+  figure { margin: 0; text-align: center; }
+  figcaption { margin-top: 6px; font-size: 11px; opacity: .65; }
+  canvas { image-rendering: pixelated; }
+  .lbl { padding: 4px 16px; font-size: 11px; opacity: .5; }
+</style>
+
+<h2>흉상 × 배경 대비</h2>
+<div id="busts"></div>
+
+<h2>펜 맞대기 (움직입니다)</h2>
+<div id="pens"></div>
+
+<script type="module">
+import { SPRITES, spriteCanvas } from '../../src/scene/sprites.js';
+import { penTouchCanvas } from '../src/penscene.js';
+
+// 실제 게임에서 캐릭터가 서는 배경들
+const BANDS = [
+  ['#101426', 'night_sea · 밤바다'],
+  ['#2a1230', 'crystal_forest · 유리 숲'],
+  ['#7c1f16', 'volcano · 화산'],
+  ['#c3d3d9', 'mirror_fog · 거울 안개'],
+  ['#b98f22', 'golden_isle · 황금섬'],
+];
+
+const bustsEl = document.querySelector('#busts');
+const pensEl = document.querySelector('#pens');
+
+for (const [bg, name] of BANDS) {
+  const lbl = document.createElement('div');
+  lbl.className = 'lbl';
+  lbl.textContent = name;
+  bustsEl.append(lbl);
+
+  const band = document.createElement('div');
+  band.className = 'band';
+  band.style.background = bg;
+  for (const key of Object.keys(SPRITES)) {
+    const fig = document.createElement('figure');
+    fig.append(spriteCanvas(key, 4));
+    const cap = document.createElement('figcaption');
+    cap.textContent = key;
+    fig.append(cap);
+    band.append(fig);
+  }
+  bustsEl.append(band);
+}
+
+for (const [bg, name] of BANDS) {
+  const band = document.createElement('div');
+  band.className = 'band';
+  band.style.background = bg;
+  for (const variant of ['seren', 'nail']) {
+    const fig = document.createElement('figure');
+    fig.append(penTouchCanvas(variant, 5));
+    const cap = document.createElement('figcaption');
+    cap.textContent = `${variant} · ${name}`;
+    fig.append(cap);
+    band.append(fig);
+  }
+  pensEl.append(band);
+}
+</script>

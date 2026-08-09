@@ -1,4 +1,7 @@
 node_modules/
+dist/
 *.png
 !assets/**/*.png
+# logo-cut.mjs / bg-snap.mjs 의 --preview 확인용 시트 (에셋이 아니라 눈으로 볼 중간물)
+assets/**/*.preview.png
 .DS_Store

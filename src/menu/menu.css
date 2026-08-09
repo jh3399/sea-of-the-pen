@@ -1,0 +1,285 @@
+/* 메인 메뉴 + 인트로 컷신 — 이 화면의 전부.
+   구 프로토타입의 루트 style.css 에서 필요한 것만 옮겨 적었다 (링크가 아니라 이식이다 —
+   그 파일은 archive/ 가 계속 쓰므로 공유하면 한쪽 수정이 다른 쪽을 깬다).
+
+   ⚠ 부채: @font-face 블록이 이걸로 네 벌째다 (harness.css · draw.css · sail.css · menu.css).
+   공용화하려면 화면 넷을 동시에 건드려야 해서 D4 이후로 미룬다. */
+
+@font-face {
+  font-family: 'NeoDunggeunmo';
+  src: url('../../assets/fonts/NeoDunggeunmo.woff') format('woff');
+  font-weight: normal;
+  font-display: swap;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* hidden 속성은 항상 이긴다.
+   (#id 선택자에 display 를 주면 브라우저 기본 [hidden]{display:none} 을 덮어써서
+   숨겨야 할 오버레이가 화면을 덮고 클릭을 다 먹어버린다 — 구 프로토타입이 실제로 겪은 버그다.
+   아래 #dialogue-layer 가 정확히 그 형태라 이 줄이 없으면 메뉴 버튼이 안 눌린다.) */
+[hidden] { display: none !important; }
+
+:root {
+  --ink: #1a1423;
+  --sand: #f5e6c8;
+  --accent: #ffb937;
+  --panel: rgba(9, 12, 34, 0.88);
+  --panel-border: #3b4a8c;
+}
+
+html, body {
+  height: 100%;
+  font-family: 'NeoDunggeunmo', 'Malgun Gothic', 'Courier New', monospace;
+  color: var(--sand);
+  background: #070a1e;
+  overflow: hidden;
+  touch-action: none;
+  image-rendering: pixelated;
+}
+
+/* 저해상도 캔버스를 CSS 로 확대하므로 이 규칙이 없으면 도트가 뭉갠다.
+   sprites.js 의 spriteCanvas() 가 초상화에 .pixel 을 자동으로 붙인다. */
+.pixel, .story-img {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+#bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+}
+
+/* CRT 스캔라인 */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .14) 0 1px, transparent 1px 3px);
+}
+
+#app { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; }
+
+.screen {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  min-height: 0;
+}
+.screen.active { display: flex; }
+
+/* ---- 버튼 ---- */
+.btn-primary {
+  padding: 14px 30px;
+  font-size: 18px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--accent);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink), inset -3px -3px 0 rgba(0, 0, 0, .22);
+  cursor: pointer;
+  letter-spacing: 1px;
+}
+.btn-primary:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--ink), inset -3px -3px 0 rgba(0, 0, 0, .22);
+}
+
+.btn-tool {
+  padding: 12px 20px;
+  font-size: 16px;
+  font-family: inherit;
+  background: var(--panel);
+  color: var(--sand);
+  border: 3px solid var(--panel-border);
+  box-shadow: 0 4px 0 var(--ink);
+  cursor: pointer;
+}
+.btn-tool:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
+
+/* ---- 타이틀 ---- */
+
+/* 타이틀 배경 그림 — assets/menu/title-bg.png (418×235 도트, 원본 격자 4.00px).
+   **이 섹션에만** 걸려 있는 것이 요점이다: ▶ 시작하기로 섹션이 닫히면 저절로 사라지고,
+   그 아래에서 계속 돌던 절차적 배경(#bg · scene/pixelbg.js)이 컷신을 그대로 이어받는다.
+   그래서 엔진을 건드릴 일이 없다.
+
+   pixelated 를 빼면 안 된다 — 보간되면 로고(니어리스트로 또렷)와 배경(뿌옇게)이 따로 논다. */
+#screen-title {
+  position: relative;                       /* 오버레이 캔버스(#title-fx)의 기준 */
+  background-image: url('../../assets/menu/title-bg.png');
+  background-size: cover;
+  background-position: center;
+  image-rendering: pixelated;
+}
+
+/* 그림 위에서 별과 달빛만 살아 움직인다 (screen.js 의 startTitleFx).
+   **object-fit: cover 가 핵심**이다 — 캔버스의 고유 크기를 배경과 같은 418×235 로 두고
+   같은 방식으로 잘라야, 창 비율이 바뀌어도 반짝임이 그림 속 달빛 기둥 위에 그대로 얹힌다.
+   width/height 로 늘이면 비율이 어긋나는 순간 반짝임만 옆으로 밀린다. */
+#title-fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+  pointer-events: none;
+  z-index: 0;
+}
+#screen-title > *:not(#title-fx) { position: relative; z-index: 1; }
+
+.title-wrap { text-align: center; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+
+.game-title {
+  line-height: 0;                        /* img 아래 baseline 여백을 없앤다 */
+  animation: title-bob 3s ease-in-out infinite;
+}
+@keyframes title-bob { 50% { transform: translateY(-6px); } }
+
+/* 로고는 134×88 도트 원본이다. 확대는 반드시 니어리스트로 — 브라우저 기본 보간을
+   타면 배경(절차적으로 또렷하게 찍힌다) 옆에서 혼자 흐려져 바로 티가 난다.
+
+   폭을 vw 가 아니라 **vh 로도 묶는 이유**: pixelbg.js 는 짧은 쪽을 항상 200 도트로
+   잡으므로(MIN_SIDE) 배경의 도트 크기가 화면 **높이**에 비례한다. 로고를 vw 로만
+   묶으면 세로가 긴 화면에서 배경 도트만 커져 두 그림의 눈금이 어긋난다.
+   vw 는 좁은 화면에서 넘치지 않게 막는 쪽으로만 쓴다. */
+.game-logo {
+  display: block;
+  width: clamp(200px, min(46vw, 56vh), 560px);
+  height: auto;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, .45));
+}
+
+/* 한글 제목 — 로고가 무게를 다 지고 있으므로 여기서는 받쳐주기만 한다 */
+.game-title-ko {
+  color: var(--accent);
+  letter-spacing: 8px;
+  font-size: clamp(18px, 3vw, 28px);
+  text-shadow: 3px 3px 0 var(--ink);
+}
+
+.game-desc { text-align: center; line-height: 1.8; text-shadow: 2px 2px 0 rgba(0, 0, 0, .6); }
+
+.btn-start { animation: start-blink 1.6s step-end infinite; }
+@keyframes start-blink { 50% { filter: brightness(1.25); } }
+
+.title-menu { display: flex; flex-direction: column; gap: 12px; align-items: center; min-width: 260px; }
+.title-menu .btn-primary, .title-menu .btn-tool { width: 100%; }
+
+.title-credit {
+  position: absolute;
+  bottom: 14px;
+  font-size: 12px;
+  letter-spacing: 3px;
+  opacity: .5;
+}
+
+.harness-link {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  font-size: 12px;
+  color: var(--sand);
+  opacity: .32;
+  text-decoration: none;
+  letter-spacing: 1px;
+}
+.harness-link:hover { opacity: .7; }
+
+/* ---- 건너뛰기 ---- */
+.skip-btn {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 60;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--sand);
+  background: var(--panel);
+  border: 2px solid var(--panel-border);
+  box-shadow: 0 0 0 2px var(--ink);
+  cursor: pointer;
+  opacity: .8;
+}
+.skip-btn:hover { opacity: 1; }
+
+/* ---- 대화 오버레이 (스타듀밸리식 하단 대화창) ---- */
+#dialogue-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 18px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dlg-visual {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(80px, 18vw, 150px);
+  pointer-events: none;
+}
+
+.dlg-box {
+  width: min(720px, 100%);
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  background: var(--panel);
+  border: 3px solid var(--panel-border);
+  box-shadow: 0 0 0 3px var(--ink), 6px 6px 0 rgba(0, 0, 0, .45);
+  padding: 14px 18px 10px;
+  min-height: 120px;
+}
+
+.dlg-portrait {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: rgba(9, 12, 34, .6);
+  border: 2px solid var(--panel-border);
+  box-shadow: 0 0 0 2px var(--ink);
+  align-self: center;
+}
+
+.dlg-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.dlg-name {
+  align-self: flex-start;
+  padding: 2px 10px;
+  margin-bottom: 8px;
+  background: var(--accent);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  font-size: 14px;
+}
+
+.dlg-text { min-height: 3em; line-height: 1.7; font-size: 17px; flex: 1; }
+
+.dlg-hint {
+  text-align: right;
+  font-size: 12px;
+  opacity: .55;
+  animation: hint-bounce 1.2s step-end infinite;
+}
+@keyframes hint-bounce { 50% { opacity: .15; } }

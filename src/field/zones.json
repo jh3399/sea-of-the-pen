@@ -1,0 +1,55 @@
+{
+  "$comment": "§6.1 테스트 존 — 맵은 필드 정의일 뿐이다. 여기에 코드는 없고, 있을 수도 없다 (원칙 1). D3 의 3맵이 같은 스키마를 쓴다.",
+  "version": 1,
+  "zones": {
+    "calm": {
+      "label": "잔잔한 바다",
+      "hint": "필드 없음 — 노와 부스터만으로 움직인다.",
+      "fields": {}
+    },
+    "following": {
+      "label": "순풍 해협",
+      "hint": "+X 로 부는 11 m/s 순풍. 돛을 앞으로 향하게 달면 노보다 빠르다 (천 + 바람 = 추력).",
+      "$note": "풍속이 §5.2 원칙 1 의 레버다 — '기본 장치는 강풍에서 역부족하도록' 산정한다. 8 m/s 에서는 기본 노(4.66 m/s)가 돛(3.67)을 이겨 1장 커리큘럼이 뒤집혔다. 11 m/s 면 돛 5.04 로 노를 넘는다.",
+      "fields": {
+        "wind": [{ "shape": "uniform", "x": 11, "y": 0 }]
+      }
+    },
+    "headwind": {
+      "label": "역풍 협곡",
+      "hint": "−X 로 부는 11 m/s 역풍. 1장의 정답(큰 돛)이 그대로 페널티가 된다.",
+      "fields": {
+        "wind": [{ "shape": "uniform", "x": -11, "y": 0 }]
+      }
+    },
+    "crosswind": {
+      "label": "횡풍 지대",
+      "hint": "+Y 로 부는 옆바람. 중심선을 벗어난 돛은 바람만으로 요잉을 만든다.",
+      "fields": {
+        "wind": [{ "shape": "uniform", "x": 0, "y": 9 }]
+      }
+    },
+    "volcanic": {
+      "label": "화염 화산대",
+      "hint": "x=40 부근이 380°. 그 앞 x=15 에 물웅덩이가 있다 — 젖은 나무배로 지날 수 있는가?",
+      "fields": {
+        "wind": [{ "shape": "uniform", "x": 3, "y": 0 }],
+        "moisture": [
+          { "shape": "disc", "x": 15, "y": 0, "radius": 10, "falloff": 0.3, "value": 1 }
+        ],
+        "temperature": [
+          { "shape": "disc", "x": 40, "y": 0, "radius": 11, "falloff": 0.35, "value": 380 }
+        ]
+      }
+    },
+    "furnace": {
+      "label": "화염 지대 (물웅덩이 없음)",
+      "hint": "대조군 — 나무배는 탄다. 철배는 멀쩡하다.",
+      "fields": {
+        "temperature": [
+          { "shape": "disc", "x": 0, "y": 0, "radius": 30, "falloff": 0.1, "value": 380 }
+        ]
+      }
+    }
+  }
+}

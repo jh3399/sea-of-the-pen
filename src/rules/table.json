@@ -1,0 +1,76 @@
+{
+  "$comment": "§6.3 규칙표 — 게임의 심장부. 재질 × (필드|상태) → 효과. 여기에 '맵'이라는 낱말이 나오면 원칙 1 위반이다.",
+  "version": 1,
+  "rules": [
+    {
+      "id": "cloth-wind-thrust",
+      "material": "cloth",
+      "when": { "field": "wind" },
+      "effect": { "enable": "sail" },
+      "note": "천 + 바람 = 추력. 힘 자체는 field/forces.js 의 2차형에서 나오고, 이 줄은 그 조합이 규칙표에 명시돼 있다는 선언이다."
+    },
+    {
+      "id": "wood-ignites",
+      "material": "wood",
+      "when": { "field": "temperature", "gte": 250 },
+      "effect": { "set": "burning" },
+      "note": "나무의 치명적 약점 (§3)."
+    },
+    {
+      "id": "cloth-ignites",
+      "material": "cloth",
+      "when": { "field": "temperature", "gte": 150 },
+      "effect": { "set": "burning" },
+      "note": "천은 더 낮은 온도에서 붙는다 — '즉시 연소'."
+    },
+    {
+      "id": "wood-burns-down",
+      "material": "wood",
+      "when": { "state": "burning", "elapsed": 4 },
+      "effect": { "destroy": true },
+      "note": "나무 + 불 = 연소 후 파괴. D3 의 carve 입력이 되는 이벤트를 발행한다."
+    },
+    {
+      "id": "cloth-burns-down",
+      "material": "cloth",
+      "when": { "state": "burning", "elapsed": 1.5 },
+      "effect": { "destroy": true },
+      "note": "돛은 순식간에 사라진다. 조향·추진 상실이 창발 이벤트가 된다 (§5.2 원칙 3)."
+    },
+    {
+      "id": "any-gets-wet",
+      "material": "*",
+      "when": { "field": "moisture", "gte": 0.5 },
+      "effect": { "set": "wet", "duration": 18 },
+      "note": "물웅덩이를 지나면 젖는다. 재질을 가리지 않는다."
+    },
+    {
+      "id": "wet-suppresses-fire",
+      "material": "*",
+      "when": { "state": "wet", "and": "burning" },
+      "effect": { "clear": "burning" },
+      "note": "★ 가설 C 의 핵심 상성. 이 한 줄이 '물웅덩이를 먼저 지나 젖은 나무배로 화염 지대를 통과'라는 비의도 해법을 만든다. 맵에는 아무 코드도 없다."
+    },
+    {
+      "id": "heat-dries",
+      "material": "*",
+      "when": { "state": "wet", "field": "temperature", "gte": 100 },
+      "effect": { "drain": "wet", "rate": 2 },
+      "note": "젖음은 화염 지대에서 두 배로 마른다. 비의도 해법이 공짜가 아니게 만드는 시간 제한 (원칙 2)."
+    },
+    {
+      "id": "wet-cloth-sags",
+      "material": "cloth",
+      "when": { "state": "wet" },
+      "effect": { "weaken": "sail" },
+      "note": "젖은 돛은 바람을 흘린다. 젖음 해법의 대가 — 재질마다 약점 하나 이상 (원칙 2)."
+    },
+    {
+      "id": "fire-spreads-to-cloth",
+      "material": "cloth",
+      "when": { "state": "burning", "on": "hull" },
+      "effect": { "set": "burning" },
+      "note": "선체가 타면 그 배에 달린 천 아이템으로 옮겨붙는다 (§6.2 접촉 전파). 아이템도 규칙표의 예외가 아니다 (§4.4)."
+    }
+  ]
+}

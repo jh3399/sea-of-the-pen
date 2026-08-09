@@ -1,326 +1,1825 @@
-import { DrawingCanvas } from './drawing.js';
-import { judge, calcDamage } from './judge.js';
-import { runDialogue } from './dialogue.js';
-import { spriteCanvas } from './sprites.js';
-import { startPixelBg, setScene } from './pixelbg.js';
+// D0/D1 하니스 — 설계 ↔ 항해 ↔ 파손을 한 화면에서 돌리며 계측한다.
+//
+// D0 은 "세 스파이크가 프레임 드랍 없이 도는가"를 물었고, D1 은 가설 A —
+// **"배를 그리는 것 자체가 재미있는가"** 를 묻는다. 그래서 이 화면의 주역이 바뀌었다:
+// 계측 HUD 옆에 **세 척 동시 주행**이 붙는다. 같은 입력을 세 척에 그대로 흘려보내고
+// 조작감 차이가 눈에 보이면 가설 A 가 선다.
+import './ui/harness.css';
+import { createWorld, FixedStepper, FIXED_DT, Vec2 } from './physics/world.js';
+import { applyHydroToWorld } from './physics/hydro.js';
+import { applyFieldsToWorld } from './physics/fields.js';
+import { createFields } from './field/field.js';
+import { createRuleEngine, loadRules } from './rules/engine.js';
+import ZONES from './field/zones.json';
+import RULE_TABLE from './rules/table.json';
+import {
+  applyDevices, STROKE_KEYMAP, strokeProgress, strokeGate, estimateOarTerminal, DEVICE_TUNING,
+} from './physics/devices.js';
+import { predictPath } from './physics/predict.js';
+import { createHullBody } from './physics/body.js';
+import { defaultDevices, sideAnchors } from './items/defaults.js';
+import { attachItem, nextBind, itemsExtraMass, canAttachAt } from './items/attach.js';
+import { ITEM_CATALOG, ATTACHABLE, bindLabel } from './items/catalog.js';
+import { strokeToHull, toHullLocal, HULL_DEFAULTS } from './hull/polygon.js';
+import { computeHullParams, MATERIALS } from './hull/params.js';
+import { StrokeCapture } from './hull/strokes.js';
+import { CORPUS, CORPUS_LABELS } from './hull/corpus.js';
+import { applyImpact } from './damage/apply.js';
+import { hottestOutlinePoint, nearestOutlinePoint, mostExposedPoint } from './damage/hotspot.js';
+import { burnRadius } from './damage/impact.js';
+import { installImpactListener, CONTACT_TUNING } from './damage/contact.js';
+import { spawnProjectile, cullProjectiles, installProjectileContacts } from './damage/projectile.js';
+import { createObstacle } from './physics/obstacle.js';
+import { createTurrets, TURRET_TUNING, MIN_PERIOD } from './game/turrets.js';
+import { CREW, crewWorldPoint, findCrewBody } from './game/crew.js';
+import { createGoal, goalDistance, goalReached } from './game/goal.js';
+import { fieldBehind } from './rules/provenance.js';
+import { View, drawSeaGrid, tracePolygon, traceOpenPath, fillPolygonWithHoles } from './render/view.js';
+import { Metrics } from './ui/metrics.js';
+import { rotate, translate, bounds } from './geom/poly.js';
 
-startPixelBg(document.querySelector('#bg-canvas'));
-// 배경 확인용 — 콘솔에서 __bg('volcano') 처럼 호출하면 그 씬으로 전환된다.
-window.__bg = setScene;
+const PPM = HULL_DEFAULTS.pixelsPerMeter;
+const IMPACT_RADIUS = 0.8;
+/** 포탄이 무언가에 맞은 자국이 보이는 시간 (s) 과 동시 상한. */
+const SPARK_LIFE = 0.35;
+const SPARK_MAX = 24;
 
-const $ = (sel) => document.querySelector(sel);
+/** 세 척 비교의 출연진. 같은 입력을 받고 형상만 다르다. */
+const COMPARE_CAST = [
+  { corpus: 'sloop', label: '길쭉한 배', color: '#f0c987' },
+  { corpus: 'round', label: '둥근 배', color: '#8ce99a' },
+  { corpus: 'lopsided', label: '비대칭 배', color: '#ff9f7f' },
+];
+/** 세 척을 세로로 벌려 놓는 간격 (m). */
+const COMPARE_SPACING = 14;
+/** 설계 중 실시간 오버레이 갱신 간격 (입력 점 수). 2000점 낙서가 17ms 라 매 프레임은 위험하다. */
+const LIVE_PREVIEW_EVERY = 15;
+/** 흘수 게이지의 만수위 기준 (m). 나무 단일 재질이면 0.30 m 근처가 정상이다. */
+const DRAFT_GAUGE_MAX = 1.0;
+/**
+ * 도착 지점 — **맵 JSON 이 들어오기 전까지의 임시 배치다** (`startTurretDrill` 과 같은 처지).
+ * 출항 지점에서 뱃머리(+X) 방향으로 이만큼 앞. 값이 아니라 **판정 주체**가 요점이다:
+ * 이 원에 들어와야 하는 것은 선체가 아니라 주인공이다 (`game/goal.js`).
+ */
+const DEMO_GOAL = { x: 60, y: 0, radius: 5, label: '도착' };
+/** 트리거로 쓰는 키 코드 — 부스터 바인딩 풀(A~H)과 키 조타(Q/E). T·C 는 하니스 단축키다. */
+const TRIGGER_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyQ', 'KeyE']);
+/**
+ * ★ 노 튜닝 슬라이더 (§5.2 "밸런싱 중 항상 정답이 나오면 약점을 추가한다").
+ *
+ * DEVICE_TUNING 을 직접 쓴다. 예측 궤적선도 벤치도 같은 객체를 읽으므로, 슬라이더를 돌리면
+ * 물리·예측·계측이 한꺼번에 따라온다 — 튜닝을 한 곳에 모아 둔 것의 배당금이다.
+ *
+ * "젓는 속도"는 봉투 길이가 아니라 **회/s** 로 노출한다. 쿨다운이 0 인 지금은 최대 케이던스가
+ * 곧 1/봉투길이라, 플레이어가 실제로 조절하고 싶은 양은 이쪽이다.
+ */
+const OAR_SLIDERS = [
+  {
+    key: 'rate', label: '젓는 속도', unit: '회/s', min: 1, max: 6, step: 0.1,
+    note: '빠를수록 짧고 촘촘하게 젓는다',
+    get: () => 1 / strokeGate(),
+    set: (v) => {
+      DEVICE_TUNING.oarStrokeDuration = Math.max(0.08, 1 / v - DEVICE_TUNING.oarStrokeCooldown);
+    },
+    fmt: (v) => v.toFixed(2),
+  },
+  {
+    key: 'peak', label: '젓는 힘', unit: 'N/m²', min: 100, max: 1600, step: 25,
+    note: '갑판 면적당 피크 추력 — 저속 가속을 지배한다',
+    get: () => DEVICE_TUNING.oarStrokePeak,
+    set: (v) => { DEVICE_TUNING.oarStrokePeak = v; },
+    fmt: (v) => v.toFixed(0),
+  },
+  {
+    key: 'max', label: '한계 속도', unit: 'm/s', min: 2, max: 12, step: 0.2,
+    note: '노깃의 스트로크 속도 — 여기 닿으면 추력이 0',
+    get: () => DEVICE_TUNING.oarMaxSpeed,
+    set: (v) => { DEVICE_TUNING.oarMaxSpeed = v; },
+    fmt: (v) => v.toFixed(1),
+  },
+];
 
-const DRAW_TIME = 20; // 전투 드로잉 제한 시간(초)
+/** 부착 시 고를 수 있는 방향 (§4.1 의 "방향"). 라디안, +X = 뱃머리. */
+const ATTACH_ANGLES = [
+  { label: '앞으로 ↑', value: 0 },
+  { label: '뒤로 ↓', value: Math.PI },
+  { label: '좌현 ←', value: Math.PI / 2 },
+  { label: '우현 →', value: -Math.PI / 2 },
+];
 
-const BOSS_GAR = {
-  name: '황금 재규어 가르',
-  sprite: 'gar',
-  maxHp: 300,
-  weaknesses: ['weapon'],
-  resists: [],
-  bg: 'jungle_gold',
-  drawPrompt: '⚔️ 무기를 그려라!',
-  introLog: '세렌: "저 재규어는 무기에 약해! 뭐든 무기를 그려봐!"',
-  attackName: '할퀴기',
-  attackMin: 12,
-  attackMax: 26,
-  situation: '보스전(황금 재규어) — 플레이어에게 무기를 그리라고 요청함',
-};
-
-const state = {
-  shipPng: null,
-  shipMaxHp: 150,
-  shipHp: 150,
-  bossHp: 0,
-  timer: DRAW_TIME,
-  timerId: null,
-  judging: false,
-  battleResolve: null,
-  shipResolve: null,
-  boss: BOSS_GAR,
-};
-
-const shipCanvas = new DrawingCanvas($('#ship-canvas'));
-const battleCanvas = new DrawingCanvas($('#draw-canvas'));
-
-function showScreen(id) {
-  document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
-  $(id).classList.add('active');
+/** 스트레스 테스트용 결정론적 난수 — 매 실행 같은 지점을 깎아야 수치를 비교할 수 있다. */
+function lcg(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
 }
 
-// ---------------- 배 그리기 씬 ----------------
+class Harness {
+  constructor() {
+    this.canvas = document.getElementById('stage');
+    this.view = new View(this.canvas);
+    this.metrics = new Metrics(document.getElementById('metrics'));
 
-function drawShip({ prompt, hint, button, judged, bg }) {
-  return new Promise((resolve) => {
-    if (bg) setScene(bg);
-    $('#ship-prompt').textContent = prompt;
-    $('#ship-log').textContent = hint;
-    $('#btn-ship-submit').textContent = button;
-    $('#btn-ship-submit').disabled = false;
-    shipCanvas.clear();
-    shipCanvas.enabled = true;
-    showScreen('#screen-ship');
-    shipCanvas._resize();
-    state.shipResolve = { resolve, judged };
-  });
-}
+    this.world = createWorld();
+    // 추력도 저항과 같이 **물리 스텝마다** 넣어야 한다. 렌더 프레임마다 넣으면 한 프레임이
+    // 2스텝을 돌 때 둘째 스텝은 힘이 0이 되고(planck 은 스텝 후 힘 누산기를 비운다), 반대로
+    // 스텝이 안 도는 프레임에서는 힘이 중복 누적된다. 조향이 전부 힘에서 나오는 게임이라
+    // 이게 틀리면 D1·D2 의 모든 조종감이 화면 주사율에 따라 달라진다.
+    // 규칙표는 **로드 시점에** 검증한다. 오타 하나로 규칙이 조용히 사라지면 밸런싱 중에
+    // 그것을 물리 버그로 착각하게 된다.
+    this.rules = loadRules(RULE_TABLE);
+    this.material = 'wood';
+    this.setZone('calm');
 
-async function onShipSubmit() {
-  if (!state.shipResolve) return;
-  if (shipCanvas.isEmpty()) {
-    $('#ship-log').textContent = '세렌: "빈 바다에 몸만 띄울 셈이야? 뭐라도 그려!"';
-    return;
+    /**
+     * ★ 시뮬레이션 시계. `performance.now()` 와 **섞으면 안 된다** — 이것은 실시간이 아니라
+     *   항해 누적 시간이고, 설계 모드에서는 `advance` 가 안 불려 저절로 멈춘다 (일시정지 0줄).
+     *
+     * ⚠ 누산(`+= FIXED_DT`)이 아니라 정수 곱이다. 크기 때문이 아니라 재현성 때문이다 —
+     *   같은 스텝 수를 돈 두 실행의 시각이 비트 일치해야 벤치가 허용 오차 없이 잴 수 있다.
+     *
+     * ⚠⚠ 이 시계가 0 에 고정되면 **배가 영구 무적이 된다.** `contact.js` 의 `drain()` 이
+     *     `lastCarveAt = 0` 을 찍고 `offCooldown` 이 `0 − 0 >= 0.2` → false 를 영원히 내서,
+     *     첫 충돌 이후 세션 내내 안 깎인다. 겉보기엔 "충돌 파손이 원래 안 되나 보다"로 읽힌다.
+     */
+    this.stepIndex = 0;
+    this.simTime = 0;
+    /** 포탄·장애물은 **선체 Set 과 따로** 산다 — `this.bodies` 순회는 전부 hull 을 전제한다. */
+    this.projectiles = new Set();
+    this.obstacles = new Set();
+    this.turrets = null;
+    /** 포탄이 맞고 죽은 자리 — 사라짐에 원인이 보이게 하는 유일한 장치다. */
+    this.sparks = [];
+    // 리스너는 여기서 **딱 한 번**. `world.on` 은 push 라 출항할 때마다 걸면 리스너가 쌓이고,
+    // world 는 생성자에서 한 번 만들어져 세션 내내 산다.
+    this.impacts = installImpactListener(this.world, { now: () => this.simTime });
+    installProjectileContacts(this.world);
+
+    this.stepper = new FixedStepper(this.world, {
+      onPreStep: (dt) => {
+        this.stepIndex += 1;
+        this.simTime = this.stepIndex * FIXED_DT;
+        // ⓪ 포탑. 시계도 발사도 **스텝 안**이다 — `onPreStep` 은 `world.step()` 밖이라
+        //    강체를 만들어도 안전하고(`isLocked()` 는 스텝 본문에서만 참), 스텝 밖에서
+        //    렌더 elapsed 로 굴리면 발사 주기가 모니터 주사율에 종속된다.
+        if (this.turrets) {
+          for (const req of this.turrets.step(this.simTime)) {
+            const shot = spawnProjectile(this.world, req);
+            if (shot) this.projectiles.add(shot);
+          }
+        }
+        this.applyControls(dt);
+        applyHydroToWorld(this.world, dt);
+        applyFieldsToWorld(this.world, this.fields, dt);
+        this.engine.tick(this.world, dt);
+      },
+    });
+
+    this.mode = 'design';
+    this.stroke = [];
+    this.design = null;
+    this.bodies = new Set();
+    this.keys = new Set();
+    /**
+     * ★ 노 입력은 **홀드**다. 누르고 있는 동안 매 물리 스텝 젓기를 요청하고, 회수가 끝나
+     * 게이트가 열리는 순간 `startStroke` 가 받아 준다 — 리듬을 맞추지 않아도 최대 케이던스가
+     * 저절로 나온다. 힘 모델은 그대로라 봉투·활공·타이밍 감쇠는 전부 살아 있다.
+     *
+     * 탭도 그대로 된다: 짧게 누르면 게이트가 한 번만 열려 한 번만 젓는다. 즉 홀드 방식은
+     * 엣지 방식의 상위 집합이라 두 조작을 다 지원한다.
+     */
+    this.heldStrokes = new Set();
+    /**
+     * 마지막 물리 스텝 이후 눌린 적이 있는 키. 물리 스텝 사이(<16ms)에 눌렀다 뗀 아주 짧은
+     * 탭이 통째로 사라지는 것을 막는다 — 홀드 Set 만 보면 그 입력은 존재한 적이 없게 된다.
+     */
+    this.tappedStrokes = new Set();
+    /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — 부스터·키가 읽는다 (§4.3). */
+    this.held = {};
+    /** 설계 단계에서 손으로 붙인 아이템들 (선체 로컬 좌표). launch() 가 기본 장치에 더한다. */
+    this.attached = [];
+    /** 부착 모드에서 선택된 카탈로그 타입. null 이면 그리기 모드. */
+    this.attachType = null;
+    this.attachAngle = 0;
+    this.compare = false;
+    this.showTrajectory = true;
+    /** 도착 지점 (맵 데이터). null 이면 클리어 조건이 없는 자유 항해다. */
+    this.goal = null;
+    this.cleared = false;
+    this.stress = { remaining: 0, rng: null, samples: [] };
+    this.lastFrame = performance.now();
+    this.status = '선체를 그리세요 — 폐곡선 하나면 됩니다.';
+
+    this.capture = new StrokeCapture(this.canvas, {
+      onStart: () => {
+        if (this.mode !== 'design') return;
+        this.stroke = [];
+        this.design = null;
+        this.liveMark = 0;
+      },
+      onUpdate: (pts) => {
+        if (this.mode !== 'design') return;
+        this.stroke = pts;
+        // 그리는 도중에도 오버레이(G · 저항 타원 · 흘수)를 갱신한다 — §2.3 이 요구하는
+        // "그리면서 보는" 피드백. 매 프레임 변환은 낙서에서 17ms 를 먹으므로 점 수로 throttle.
+        if (pts.length - this.liveMark >= LIVE_PREVIEW_EVERY) {
+          this.liveMark = pts.length;
+          this.buildFromStroke(pts, { live: true });
+        }
+      },
+      onComplete: (pts) => {
+        if (this.mode === 'design') this.buildFromStroke(pts);
+      },
+    });
+
+    this.bindUI();
+    window.addEventListener('resize', () => {
+      this.view.resize();
+      // 주인공은 설계 화면의 **화면 한가운데**에 산다. 창 크기가 바뀌면 그 자리도 옮겨가므로
+      // 카메라를 다시 잡고, 이미 그린 선체가 여전히 그를 태우고 있는지 다시 본다.
+      if (this.mode === 'design') {
+        this.view.snapTo({ x: this.view.width / 2 / PPM, y: -this.view.height / 2 / PPM });
+        if (this.design?.ok) this.syncSailButton();
+      }
+    });
+    window.addEventListener('keydown', (e) => this.onKey(e, true));
+    window.addEventListener('keyup', (e) => this.onKey(e, false));
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (this.mode === 'sail') this.strikeAt(e);
+      else if (this.attachType) this.attachAt(e);
+    });
+
+    this.enterDesign();
+    requestAnimationFrame((t) => this.loop(t));
   }
-  const { resolve, judged } = state.shipResolve;
-  const png = shipCanvas.toPngDataUrl();
-  const pixel = shipCanvas.toPixelDataUrl(); // 도트 스프라이트 버전 (게임 내 표시용)
 
-  if (!judged) {
-    state.shipResolve = null;
-    resolve({ png, pixel, result: null });
-    return;
+  // ---------------------------------------------------------------- UI
+
+  bindUI() {
+    const select = document.getElementById('corpus');
+    for (const [key, label] of Object.entries(CORPUS_LABELS)) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = label;
+      select.appendChild(opt);
+    }
+
+    // 아이템 부착 (§4.1) — 종류와 방향을 고르고 선체를 클릭하면 그 자리에 붙는다.
+    const itemSel = document.getElementById('item-type');
+    for (const type of ATTACHABLE) {
+      const opt = document.createElement('option');
+      opt.value = type;
+      opt.textContent = `${ITEM_CATALOG[type].name} (${ITEM_CATALOG[type].mass}kg)`;
+      itemSel.appendChild(opt);
+    }
+    const angleSel = document.getElementById('item-angle');
+    for (const a of ATTACH_ANGLES) {
+      const opt = document.createElement('option');
+      opt.value = String(a.value);
+      opt.textContent = a.label;
+      angleSel.appendChild(opt);
+    }
+    document.getElementById('btn-attach').onclick = () => this.toggleAttach(itemSel.value);
+    angleSel.onchange = () => { this.attachAngle = Number(angleSel.value); };
+    itemSel.onchange = () => {
+      if (this.attachType) this.toggleAttach(itemSel.value, true);
+    };
+    document.getElementById('btn-detach').onclick = () => this.clearAttached();
+
+    this.bindTuner();
+
+    // 환경 존 (§6.1) · 선체 재질 (§3) — 둘 다 데이터 선택일 뿐이다.
+    const zoneSel = document.getElementById('zone');
+    for (const [key, zone] of Object.entries(ZONES.zones)) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = zone.label;
+      zoneSel.appendChild(opt);
+    }
+    zoneSel.onchange = () => {
+      this.setZone(zoneSel.value);
+      this.setStatus(`${this.zone.label} — ${this.zone.hint}`, 'ok');
+    };
+    const matSel = document.getElementById('material');
+    for (const key of ['wood', 'iron']) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = MATERIALS[key].name;
+      matSel.appendChild(opt);
+    }
+    matSel.onchange = () => {
+      this.material = matSel.value;
+      this._previewFor = null;
+      this.renderParams(this.previewCache(), this.design);
+    };
+
+    document.getElementById('btn-load').onclick = () => this.loadCorpus(select.value);
+    document.getElementById('btn-reset').onclick = () => this.enterDesign();
+    document.getElementById('btn-sail').onclick = () => this.enterSail();
+    document.getElementById('btn-compare').onclick = () => this.enterCompare();
+    document.getElementById('btn-stress').onclick = () => this.startStress();
+    document.getElementById('btn-turret').onclick = () => this.startTurretDrill();
+    document.getElementById('btn-clear-worst').onclick = () => this.metrics.resetWorst();
   }
 
-  $('#btn-ship-submit').disabled = true;
-  shipCanvas.enabled = false;
-  $('#ship-log').textContent = '세렌: "어디 보자... (감정 중)"';
-  const result = await judge(
-    shipCanvas.stats(), png,
-    '배 그리기 — 배로서의 완성도(선체·돛·키가 갖춰졌는지)를 평가하라. 배가 아니면 낮은 점수.',
-  );
-  state.shipResolve = null;
-  resolve({ png, pixel, result });
-}
+  /** 노 튜닝 슬라이더를 세운다. 값은 DEVICE_TUNING 에 바로 쓴다 — 다음 물리 스텝부터 반영. */
+  bindTuner() {
+    // 기본값은 처음 한 번만 떠 둔다. 슬라이더가 원본을 덮어쓰기 전에 잡아야 한다.
+    this.tunerDefaults = OAR_SLIDERS.map((s) => s.get());
 
-// ---------------- 전투 씬 ----------------
+    const host = document.getElementById('tuner-rows');
+    this.tunerInputs = OAR_SLIDERS.map((spec, i) => {
+      const row = document.createElement('div');
+      row.className = 't-row';
+      row.innerHTML = `<div class="t-head"><span>${spec.label}</span>` +
+        `<b id="tuner-v-${spec.key}"></b></div>` +
+        `<div class="t-note">${spec.note}</div>`;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(spec.min);
+      input.max = String(spec.max);
+      input.step = String(spec.step);
+      input.value = String(this.tunerDefaults[i]);
+      input.oninput = () => {
+        spec.set(Number(input.value));
+        this.refreshTuner();
+      };
+      row.appendChild(input);
+      host.appendChild(row);
+      return input;
+    });
 
-function updateBars() {
-  const boss = state.boss;
-  $('#boss-hp').style.width = `${Math.max(0, state.bossHp / boss.maxHp) * 100}%`;
-  $('#ship-hp').style.width = `${Math.max(0, state.shipHp / state.shipMaxHp) * 100}%`;
-}
+    document.getElementById('btn-tuner-reset').onclick = () => {
+      OAR_SLIDERS.forEach((spec, i) => spec.set(this.tunerDefaults[i]));
+      this.syncTunerInputs();
+      this.refreshTuner();
+      this.setStatus('노 튜닝을 기본값으로 되돌렸습니다.', '');
+    };
 
-function log(msg) {
-  $('#battle-log').textContent = msg;
-}
+    this.syncTunerInputs();
+    this.refreshTuner();
+  }
 
-function renderTimer() {
-  const el = $('#draw-timer');
-  el.textContent = state.timer;
-  el.classList.toggle('low', state.timer <= 5);
-}
+  /** 슬라이더 손잡이를 현재 DEVICE_TUNING 값에 맞춘다 (리셋·외부 변경 후). */
+  syncTunerInputs() {
+    OAR_SLIDERS.forEach((spec, i) => { this.tunerInputs[i].value = String(spec.get()); });
+  }
 
-function startTimer() {
-  state.timer = DRAW_TIME;
-  renderTimer();
-  clearInterval(state.timerId);
-  state.timerId = setInterval(() => {
-    state.timer -= 1;
-    renderTimer();
-    if (state.timer <= 0) submitAttack(true);
-  }, 1000);
-}
+  /**
+   * 숫자 표시 갱신. **예상 종단 속도를 같이 띄우는 게 핵심**이다 — 60초 몰아보지 않고도
+   * "이 설정이면 얼마나 빠른가"를 알 수 있어야 노브를 감으로 돌릴 수 있다.
+   */
+  refreshTuner() {
+    for (const spec of OAR_SLIDERS) {
+      document.getElementById(`tuner-v-${spec.key}`).textContent =
+        `${spec.fmt(spec.get())} ${spec.unit}`;
+    }
+    document.getElementById('tuner-cadence').textContent =
+      `${(1 / strokeGate()).toFixed(2)} 회/s (봉투 ${DEVICE_TUNING.oarStrokeDuration.toFixed(2)}s)`;
 
-function popAnim(el, cls) {
-  el.classList.remove(cls);
-  void el.offsetWidth; // 애니메이션 재시작 트릭
-  el.classList.add(cls);
-}
+    const params = [...this.bodies][0]?.getUserData().hull.params ?? this.previewCache();
+    const v = params ? estimateOarTerminal(params) : 0;
+    document.getElementById('tuner-terminal').textContent = params
+      ? `${v.toFixed(2)} m/s` : '선체 없음';
 
-function runBattle(boss) {
-  return new Promise((resolve) => {
-    state.boss = boss;
-    state.bossHp = boss.maxHp;
-    state.shipHp = state.shipMaxHp;
-    state.judging = false;
-    state.battleResolve = resolve;
+    // 패널의 "종단 N m/s 이하" 문구도 같은 값을 봐야 한다.
+    if (this.design || this.bodies.size) this.renderParamsFromCurrent();
+  }
 
-    if (boss.bg) setScene(boss.bg);
-    $('#boss-name').textContent = boss.name;
-    const bossEl = $('#boss-sprite');
-    bossEl.innerHTML = '';
-    bossEl.appendChild(spriteCanvas(boss.sprite, 8));
-    $('#draw-prompt').textContent = boss.drawPrompt;
-    $('#battle-ship').src = state.shipPixel;
-    updateBars();
-    log(boss.introLog);
+  /** 지금 화면이 무엇이든 그에 맞는 파라미터로 패널을 다시 그린다. */
+  renderParamsFromCurrent() {
+    if (this.compare) return; // 비교 표는 자기 주기로 갱신된다
+    if (this.mode === 'sail') this.renderParamsFromBodies();
+    else this.renderParams(this.previewCache(), this.design);
+  }
 
-    battleCanvas.clear();
-    battleCanvas.enabled = true;
-    $('#btn-submit').disabled = false;
-    showScreen('#screen-battle');
-    battleCanvas._resize();
-    startTimer();
-  });
-}
-
-function endBattle(won) {
-  clearInterval(state.timerId);
-  const resolve = state.battleResolve;
-  state.battleResolve = null;
-  if (resolve) setTimeout(() => resolve(won), 900);
-}
-
-async function submitAttack(auto = false) {
-  if (state.judging || !state.battleResolve) return;
-
-  // 시간 초과인데 빈 캔버스면: 공격 실패, 보스만 반격
-  if (battleCanvas.isEmpty()) {
-    if (!auto) {
-      log('세렌: "아무것도 안 그렸잖아! 뭐라도 그려봐!"');
+  onKey(e, down) {
+    if (STROKE_KEYMAP[e.key]) {
+      e.preventDefault(); // 방향키는 스크롤을 유발한다
+      // 홀드 Set 이라 OS 자동 반복(e.repeat)은 그냥 무해하다 — 같은 키를 다시 넣을 뿐이다.
+      // 케이던스는 키보드 반복 속도가 아니라 `strokeGate()` 가 정한다.
+      if (down) {
+        if (this.mode !== 'sail') return;
+        this.heldStrokes.add(e.key);
+        this.tappedStrokes.add(e.key);
+      } else {
+        this.heldStrokes.delete(e.key);
+      }
       return;
     }
-    state.judging = true;
-    clearInterval(state.timerId);
-    log('세렌: "시간 초과야! 정신 차려!"');
-    setTimeout(() => bossCounterattack(), 700);
-    return;
+    if (e.key === ' ') {
+      e.preventDefault(); // Space 는 버튼 재활성화를 유발한다
+      if (down) this.keys.add(e.key);
+      else this.keys.delete(e.key);
+      return;
+    }
+    // 트리거 바인딩(§4.3) — 홀드다. 부스터는 누르는 동안 켜지고 키는 누르는 동안 꺾인다.
+    if (TRIGGER_KEYS.has(e.code)) {
+      if (down) this.held[e.code] = true;
+      else delete this.held[e.code];
+      return;
+    }
+    if (!down) return;
+    const k = e.key.toLowerCase();
+    if (k === 't') {
+      this.showTrajectory = !this.showTrajectory;
+      this.setStatus(`예측 궤적선 ${this.showTrajectory ? '켬' : '끔'} — 실제 경로와 겹치는지 보세요.`, 'ok');
+    } else if (k === 'c') {
+      this.enterCompare();
+    }
   }
 
-  state.judging = true;
-  clearInterval(state.timerId);
-  battleCanvas.enabled = false;
-  $('#btn-submit').disabled = true;
-  log('세렌: "어디 보자... (감정 중)"');
-
-  const result = await judge(battleCanvas.stats(), battleCanvas.toPngDataUrl(), state.boss.situation);
-  const damage = calcDamage(result, state.boss);
-
-  popAnim($('#boss-sprite'), 'hit');
-  const dmgEl = $('#damage-float');
-  dmgEl.textContent = damage > 0 ? `-${damage}` : 'MISS';
-  popAnim(dmgEl, 'show');
-
-  state.bossHp -= damage;
-  updateBars();
-  log(`세렌: "${result.comment}" (${result.label} · ${result.score}점 · ${damage} 데미지!)`);
-
-  if (state.bossHp <= 0) {
-    endBattle(true);
-    return;
+  setStatus(text, tone = '') {
+    this.status = text;
+    const el = document.getElementById('status');
+    el.textContent = text;
+    el.className = `status ${tone}`;
   }
-  setTimeout(() => bossCounterattack(), 1400);
-}
 
-function bossCounterattack() {
-  if (!state.battleResolve) return;
-  const boss = state.boss;
-  const dmg = boss.attackMin + Math.floor(Math.random() * (boss.attackMax - boss.attackMin + 1));
-  state.shipHp -= dmg;
-  popAnim($('#battle-ship'), 'ship-hit');
-  updateBars();
-  log(`${boss.name}의 ${boss.attackName}! 배가 ${dmg} 피해를 입었다!`);
+  // ------------------------------------------------------- 스파이크 ①
 
-  if (state.shipHp <= 0) {
-    endBattle(false);
-    return;
+  loadCorpus(key) {
+    this.enterDesign();
+    const pts = CORPUS[key](this.view.width / 2, this.view.height / 2);
+    this.stroke = pts;
+    this.buildFromStroke(pts);
   }
-  // 다음 턴
-  setTimeout(() => {
-    if (!state.battleResolve) return;
-    state.judging = false;
-    battleCanvas.clear();
-    battleCanvas.enabled = true;
-    $('#btn-submit').disabled = false;
-    log(state.boss.introLog);
-    startTimer();
-  }, 1200);
-}
 
-// ---------------- 스토리 진행 ----------------
+  /** @param {{live?: boolean}} options live 는 그리는 도중의 미리보기 — 확정 문구를 쓰지 않는다. */
+  buildFromStroke(points, options = {}) {
+    const result = strokeToHull(points, { pixelsPerMeter: PPM });
+    if (!options.live) this.metrics.push('hull', result.diagnostics.ms);
+    this.design = result;
 
-const INTRO = [
-  { speaker: '', bg: 'harbor', text: '이 세계에서, 진심을 담아 그린 그림은 실체가 된다.' },
-  { speaker: '시험관', sprite: 'examiner', text: '지금부터 항해사 시험의 최종 과제를 시작한다.' },
-  { speaker: '시험관', sprite: 'examiner', text: '과제는 단 하나. 너의 배를 그려 바다에 띄우고 — 전설의 황금섬, 그 단서를 가져와라.' },
-  { speaker: '루', sprite: 'ru', text: '(그림엔 자신 없지만... 해보자. 나의 배다!)' },
-];
+    if (!result.ok) {
+      // 미리보기 단계에서는 "아직 면적이 안 나왔다" 정도라 실패를 붉게 띄우지 않는다.
+      if (options.live) this.setStatus('그리는 중…', '');
+      else this.setStatus(`변환 실패 — ${result.message} (${result.reason})`, 'bad');
+      document.getElementById('btn-sail').disabled = true;
+      this.renderParams(null, options.live ? null : result);
+      return;
+    }
 
-const nailAttack = (shipPixel) => [
-  { speaker: '', bg: 'sea_day', image: shipPixel, text: '출항! 순조로운 항해... 였는데.' },
-  { speaker: '', bg: 'fog_black', text: '갑자기 검은 안개가 바다를 뒤덮는다.' },
-  { speaker: '???', sprite: 'nail', text: '크크크... 그 낡은 배로 어딜 가시겠다?' },
-  { speaker: '검은 함장 네일', sprite: 'nail', text: '황금섬으로 가는 바다는 전부 내 것이다. 그 배, 부숴주지!' },
-  { speaker: '', image: shipPixel, imageCls: 'broken', text: '콰지직—!! 네일의 포격에 배가 산산조각 났다...' },
-  { speaker: '루', sprite: 'ru', text: '(가라앉는다... 여기까지인가...)' },
-];
+    const warn = result.warnings.length ? ` · 경고: ${result.warnings.join(', ')}` : '';
+    // ★ 주인공을 태웠는가. 자기교차와 **같은 급의** 확정 조건이라 같은 자리에서 같은 즉시성으로
+    //   알린다 — 손이 아직 움직이는 동안 알아야 그리는 김에 고친다 (§2.3).
+    const aboard = this.syncSailButton();
+    if (!aboard) {
+      this.setStatus(options.live
+        ? `그리는 중 — 아직 주인공이 배 밖입니다 (면적 ${result.diagnostics.area.toFixed(1)} m²)`
+        : '주인공이 배 밖입니다 — 화면 한가운데의 그를 감싸도록 그려야 출항할 수 있습니다.',
+        'warn');
+      this.renderParams(this.previewCache(), result);
+      this.refreshTuner();
+      return;
+    }
 
-const PIGGY_MEET = [
-  { speaker: '???', bg: 'dawn_wreck', text: '이봐! 정신 차려! 일어나라고!' },
-  { speaker: '세렌', sprite: 'seren', text: '나는 세렌. 전설의 배 "바람호"의 뱃머리... 였던 몸이지. 지금은 보다시피 통나무 신세지만.' },
-  { speaker: '세렌', sprite: 'seren', text: '네가 그린 배, 봤어. 솜씨는 솔직히 엉망인데... 이상하게 진심이 담겨 있더라.' },
-  { speaker: '세렌', sprite: 'seren', text: '"손이 아니라 마음으로 그리는 자가 나타나면, 바람호는 다시 떠오른다" — 모루 영감의 예언이야. 어쩌면 너일지도.' },
-  { speaker: '세렌', sprite: 'seren', text: '배를 다시 그려봐. 이번엔 진심을 담아서 — 선체, 돛, 키까지 제대로!' },
-];
+    // §2.3 — 자기교차는 그리는 즉시 알려야 손이 아직 움직이는 동안 고칠 수 있다.
+    this.setStatus(options.live
+      ? `그리는 중 — 면적 ${result.diagnostics.area.toFixed(1)} m²${warn}`
+      : `선체 확정 — 정점 ${result.diagnostics.verts}개 · 주인공 승선${warn}`,
+      warn ? 'warn' : 'ok');
+    this.renderParams(this.previewCache(), result);
+    this.refreshTuner();
+  }
 
-const sailLines = (result, shipPixel) => [
-  { speaker: '세렌', sprite: 'seren', text: `오오...! ${result ? `"${result.comment}"` : '좋아, 이 정도면 바다에 띄울 만해!'}` },
-  { speaker: '', bg: 'sea_day', image: shipPixel, text: '좋아, 출항이다! 첫 목적지는 황금 수풀섬 — 도안 조각의 기운이 느껴져!' },
-  { speaker: '세렌', sprite: 'seren', bg: 'jungle_gold', text: '조심해. 섬의 수호자 가르가 네일의 저주로 폭주하고 있어. 무기를 그려서 정신 차리게 해주자!' },
-];
+  // ------------------------------------------------------- 필드 · 규칙 (§6)
 
-const DEFEAT = [
-  { speaker: '세렌', sprite: 'seren', bg: 'dawn_wreck', text: '배가 버티질 못해! 일단 후퇴다!' },
-  { speaker: '세렌', sprite: 'seren', text: '괜찮아. 우리에겐 펜이 있잖아? 다시 그리면 돼 — 이번엔 더 튼튼하게!' },
-];
+  /**
+   * 테스트 존 전환. **맵을 바꾸는 코드는 이 세 줄이 전부다** — 필드 정의(JSON)를 갈아 끼우고
+   * 규칙 엔진을 그 위에 새로 세운다. 존마다 다른 처리는 없고, 있을 수도 없다 (원칙 1).
+   */
+  setZone(key) {
+    const zone = ZONES.zones[key] ?? ZONES.zones.calm;
+    this.zoneKey = key;
+    this.zone = zone;
+    this.fields = createFields(zone.fields ?? {});
+    this.engine = createRuleEngine(this.rules, this.fields);
+    for (const body of this.bodies ?? []) {
+      const hull = body.getUserData().hull;
+      hull.status = {};
+      for (const it of hull.items) it.status = {};
+    }
+  }
 
-async function gameFlow() {
-  await runDialogue(INTRO);
+  /**
+   * 규칙 엔진이 낸 이벤트를 **스텝 밖에서** 소비한다. 스텝 도중에 강체를 부수면 planck 의
+   * 내부 순회가 깨지고, 파라미터 재계산은 어차피 이벤트 시점에만 해야 한다.
+   */
+  consumeRuleEvents() {
+    for (const ev of this.engine.drain()) {
+      if (ev.type === 'destroyed') {
+        // 연소 파괴는 **가장 뜨거운 외곽선 위**를 도려낸다 — D3 의 carve 입력이 이 경로다.
+        this.metrics.note('규칙 이벤트', `${ev.target.params.material.name} 연소 파괴`);
+        const spot = this.burnSpot(ev);
+        // 반경은 **출항 면적** 기준이다 (현재 면적이면 지수 감쇠라 배가 영영 안 죽는다).
+        this.carveBody(ev.body, spot.world, burnRadius(ev.target.launchArea ?? ev.target.params.area));
+        this.setStatus(`${ev.target.params.material.name} 선체의 ${spot.where}이(가) 타서 ` +
+          `무너졌습니다 — ${this.zone.label}의 온도와 재질만으로. 맵에는 코드가 없습니다.`, 'bad');
+      } else if (ev.type === 'itemLost') {
+        this.setStatus(`${ev.item.name}(${ev.item.material})이(가) 불타 사라졌습니다 — ` +
+          `장치 상실이 곧 창발 이벤트입니다 (§5.2 원칙 3).`, 'warn');
+        this.renderParamsFromBodies();
+      } else if (ev.type === 'state') {
+        this.metrics.note('규칙 이벤트', `${ev.ruleId} → ${ev.state}`);
+      }
+    }
+  }
 
-  // 1) 첫 배 그리기 (판정 없음 — 어차피 부서질 운명)
-  const first = await drawShip({
-    prompt: '🚢 너의 배를 자유롭게 그려라!',
-    hint: '어떤 배든 좋다. 너만의 배를 그려서 출항하자!',
-    button: '출항!',
-    judged: false,
-    bg: 'harbor',
-  });
-  state.shipPng = first.png;
-  state.shipPixel = first.pixel;
+  /**
+   * 연소 파괴가 **어디를** 도려낼 것인가 (§7.3.1).
+   *
+   * 무게중심을 깎으면 clipper 결과가 구멍이 되어 outline 이 그대로 남고, 저항 타원도
+   * 무게중심도 안 움직인다 — "어느 쪽이 탔는가"라는 정보를 통째로 버리는 셈이라 원칙 3
+   * 위반이다. 열원 쪽 외곽선을 깎으면 배가 저절로 편향하고, 그 편향이 곧 피해 표시다.
+   *
+   * 필드 이름은 **규칙표에서** 온다 (`fieldBehind`). 여기에 'temperature' 를 쓰면
+   * 규칙표 밖에 규칙이 하나 생긴다.
+   */
+  burnSpot(ev) {
+    const hull = ev.target;
+    const body = ev.body;
+    const field = fieldBehind(this.rules, ev.ruleId);
 
-  // 2) 네일의 습격 → 세렌 등장
-  await runDialogue(nailAttack(first.pixel));
-  await runDialogue(PIGGY_MEET);
+    const local = (() => {
+      if (field) {
+        const hot = hottestOutlinePoint(
+          hull.outline,
+          (x, y) => body.getWorldPoint(new Vec2(x, y)),
+          (x, y) => this.fields.sampleScalar(field, x, y),
+        );
+        // 구배가 없으면 어느 쪽이 더 탔는지 말할 근거가 없다 — 폴백으로 넘어간다.
+        if (hot && hot.spread > 1e-3) return hot.local;
+      }
+      // 균일한 지대에서는 직전 화점에서 번진다. "가장 먼 점"을 반복하면 배가 원이 된다.
+      return nearestOutlinePoint(hull.outline, hull.burnAt)
+        ?? mostExposedPoint(hull.outline)
+        ?? { x: 0, y: 0 };
+    })();
 
-  // 3) 배 다시 그리기 (판정 O — 점수가 배의 내구도가 된다)
-  const second = await drawShip({
-    prompt: '⛵ 이번엔 진심을 담아 — 선체·돛·키를 갖춰 그려라!',
-    hint: '잘 그린 배일수록 튼튼하다. (판정 점수 = 배의 내구도)',
-    button: '다시 출항!',
-    judged: true,
-    bg: 'dawn_wreck',
-  });
-  state.shipPng = second.png;
-  state.shipPixel = second.pixel;
-  state.shipMaxHp = 100 + (second.result?.score ?? 50);
+    // 다음 사이클이 여기서 이어 붙는다. 조각으로 쪼개져도 승계된다 (body.js).
+    hull.burnAt = { x: local.x, y: local.y };
+    const w = body.getWorldPoint(new Vec2(local.x, local.y));
+    return { world: { x: w.x, y: w.y }, where: sideName(local) };
+  }
 
-  await runDialogue(sailLines(second.result, second.pixel));
+  // ------------------------------------------------------- 아이템 부착 (§4.1)
 
-  // 4) 보스전 — 질 때마다 배를 다시 그리고 재도전
-  let won = await runBattle(BOSS_GAR);
-  while (!won) {
-    await runDialogue(DEFEAT);
-    const retry = await drawShip({
-      prompt: '⛵ 더 튼튼하게! 배를 다시 그려라!',
-      hint: '잘 그린 배일수록 튼튼하다. (판정 점수 = 배의 내구도)',
-      button: '재출항!',
-      judged: true,
-      bg: 'dawn_wreck',
+  /**
+   * 부착 모드 토글. 켜져 있는 동안은 그리기를 멈추고 캔버스 클릭이 부착이 된다.
+   * 별도의 모드를 만들지 않는 이유는 설계와 부착이 §4.3 이 말하는 **같은 한 작업**이기
+   * 때문이다 — "언제 무엇을 작동시킬지까지가 설계의 일부".
+   */
+  toggleAttach(type, force = false) {
+    if (!this.design?.ok) {
+      this.setStatus('선체를 먼저 확정하세요 — 아이템은 선체 로컬에 붙습니다.', 'warn');
+      return;
+    }
+    this.attachType = (!force && this.attachType === type) ? null : type;
+    this.capture.enabled = !this.attachType;
+    document.getElementById('btn-attach').classList.toggle('primary', !!this.attachType);
+    this.setStatus(this.attachType
+      ? `부착 모드 — ${ITEM_CATALOG[this.attachType].name} 을(를) 놓을 자리를 선체 위에서 클릭하세요.`
+      : '부착 모드 해제 — 다시 그릴 수 있습니다.', this.attachType ? 'ok' : '');
+    this.renderParams(this.previewCache(), this.design);
+  }
+
+  /** 캔버스 클릭 지점을 선체 로컬 좌표로 되돌려 아이템을 붙인다. */
+  attachAt(event) {
+    if (!this.design?.ok) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const w = this.view.screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+
+    // 설계 화면은 선체를 원래 그린 자리(origin, angle)에 되돌려 그린다 — 그 변환의 역.
+    const local = toHullLocal(this.design, w);
+
+    // ★ 선체 밖에는 못 붙인다. §7.5 소속 폴리곤 판정이 "아이템은 선체 안에 있다"를 전제해서,
+    //   밖에 붙은 것은 첫 파손에 그대로 탈락한다 (그 전까지는 팔길이만 늘어난 치트가 된다).
+    if (!canAttachAt(this.design.outline, this.design.holes, local)) {
+      this.setStatus('선체 안을 클릭하세요 — 밖에 붙은 아이템은 첫 파손에 떨어져 나갑니다 (§7.5).',
+        'warn');
+      return;
+    }
+
+    const hull = { items: this.attached };
+    const item = attachItem(hull, this.attachType, {
+      x: local.x, y: local.y, angle: this.attachAngle,
+      bind: ITEM_CATALOG[this.attachType].bind === null ? null : nextBind(this.attached),
     });
-    state.shipPng = retry.png;
-    state.shipPixel = retry.pixel;
-    state.shipMaxHp = 100 + (retry.result?.score ?? 50);
-    won = await runBattle(BOSS_GAR);
+    if (!item) return;
+
+    this._previewFor = null; // 흘수·관성이 바뀐다 — 미리보기 캐시 무효화
+    this.setStatus(`${item.name} 부착 — (${item.x.toFixed(2)}, ${item.y.toFixed(2)}) · ` +
+      `트리거 ${bindLabel(item.bind)} · 무게중심에서 팔길이 ${Math.hypot(item.x, item.y).toFixed(2)} m`, 'ok');
+    this.renderParams(this.previewCache(), this.design);
   }
 
-  showScreen('#screen-victory');
+  clearAttached() {
+    this.attached = [];
+    this._previewFor = null;
+    this.setStatus('부착 아이템을 모두 떼었습니다.', '');
+    this.renderParams(this.previewCache(), this.design);
+  }
+
+  // ------------------------------------------------------- 주인공 (game/crew.js)
+
+  /**
+   * 설계 화면의 주인공 위치 — **언제나 화면 한가운데**다.
+   *
+   * 설계 모드의 카메라는 캔버스 좌상단을 원점으로 고정해 두므로(`enterDesign`), 화면 중앙의
+   * 월드 좌표는 곧 `view.center` 다. 배를 그 위에 그리는 것이지 그를 배 위로 옮기는 게 아니다 —
+   * 자리가 고정돼 있어야 "어디를 감쌀 것인가"가 형상 설계의 제약이 된다.
+   */
+  crewWorld() {
+    return { x: this.view.center.x, y: this.view.center.y };
+  }
+
+  /** 지금 확정된 선체 기준으로 본 주인공의 로컬 좌표. 선체가 없으면 null. */
+  crewLocal() {
+    return this.design?.ok ? toHullLocal(this.design, this.crewWorld()) : null;
+  }
+
+  /**
+   * 주인공이 갑판 위에 있는가.
+   *
+   * 판정은 `canAttachAt` 을 그대로 쓴다 — 아이템에 쓰는 것과 같은 함수여야 하는 이유가 있다.
+   * §7.5 의 소속 폴리곤 판정이 `pointInPolygon` 이므로, 선체 **밖**에 선 주인공은 첫 파손에
+   * 무조건 사라진다. 아이템에는 그것이 "떨어져 나갔다"지만 주인공에게는 "그 배는 처음부터
+   * 아무도 태우지 않았다"가 된다.
+   */
+  crewAboard() {
+    const local = this.crewLocal();
+    return !!local && canAttachAt(this.design.outline, [], local);
+  }
+
+  /** 출항 버튼은 **주인공을 태운 배에만** 열린다. */
+  syncSailButton() {
+    const ok = !!this.design?.ok && this.crewAboard();
+    document.getElementById('btn-sail').disabled = !ok;
+    return ok;
+  }
+
+  // ------------------------------------------------------- 모드 전환
+
+  enterDesign() {
+    this.clearBodies();
+    this.stroke = [];
+    this.design = null;
+    this.mode = 'design';
+    this.compare = false;
+    this.goal = null;
+    this.cleared = false;
+    this.liveMark = 0;
+    this.stress.remaining = 0;
+    this.attached = [];
+    this.attachType = null;
+    this._previewFor = null;
+    document.getElementById('btn-attach').classList.remove('primary');
+    this.capture.enabled = true;
+    this.capture.clear();
+    this.view.ppm = PPM;
+    this.view.snapTo({ x: this.view.width / 2 / PPM, y: -this.view.height / 2 / PPM });
+    document.getElementById('btn-sail').disabled = true;
+    document.body.dataset.mode = 'design';
+    this.setStatus('선체를 그리세요 — 화면 한가운데의 주인공을 감싸는 폐곡선 하나면 됩니다. ' +
+      '(또는 코퍼스 불러오기 / C = 세 척 비교)');
+    this.renderParams(null, null);
+  }
+
+  clearBodies() {
+    // ⚠ 이걸 빼면 유령 포탑이 남는다. world 는 생성자에서 한 번만 만들어지므로 다시 그리기 →
+    //   출항 을 하면 이전 시험의 포탑이 계속 쏘고, `enterCompare()` 도 여기를 지나므로
+    //   세 척 비교가 사격장이 된다.
+    this.clearProps();
+    for (const body of this.bodies) this.world.destroyBody(body);
+    this.bodies.clear();
+    // 모드를 옮기는 순간이다. 누르고 있던 키를 남겨 두면 새 배가 태어나자마자 저절로 젓는다.
+    this.heldStrokes.clear();
+    this.tappedStrokes.clear();
+  }
+
+  /** 선체 로컬 폴리곤 하나를 기본 장치 + 부착 아이템을 얹은 강체로 만든다. */
+  launch(outline, placement = {}) {
+    // ★ 여기가 §5.1 "선체 확정 시 자동 장착". 장치 질량은 extraMass 로 흘수에 반영된다.
+    // 손으로 붙인 아이템(§4.1)은 같은 배열에 그대로 얹힌다 — 기본 장치와 아무 차이가 없다.
+    const items = defaultDevices(outline)
+      .concat((placement.attached ?? []).map((it) => ({ ...it })));
+    const body = createHullBody(
+      this.world,
+      // 주인공은 items 에 넣지 않는다 — 형식은 같아도 잃었을 때의 뜻이 다르다 (game/crew.js).
+      { outline, holes: [], items, crew: placement.crew ?? null, tag: placement.tag ?? null },
+      {
+        position: placement.position ?? { x: 0, y: 0 },
+        angle: placement.angle ?? 0,
+        material: placement.material ?? this.material ?? 'wood',
+        extraMass: itemsExtraMass(items),
+      },
+    );
+    if (body) this.bodies.add(body);
+    return body;
+  }
+
+  enterSail() {
+    if (!this.design?.ok) return;
+    // 주인공을 태우지 못한 배는 출항할 수 없다. 버튼은 이미 잠겨 있지만, 창 크기 변경처럼
+    // 버튼과 판정 사이에 시간이 흐를 수 있는 경로가 있으므로 여기서도 한 번 더 본다.
+    const crew = this.crewLocal();
+    if (!this.crewAboard()) {
+      this.setStatus('주인공이 배 밖입니다 — 화면 한가운데의 그를 감싸도록 그려 주세요.', 'warn');
+      return;
+    }
+
+    // 정규화된 선체를 원점에 세운다. 뱃머리가 +X 를 향한다.
+    this.clearBodies();
+    const body = this.launch(this.design.outline, { attached: this.attached, crew });
+    if (!body) {
+      this.setStatus('강체 생성 실패 — 분해 결과가 비었습니다.', 'bad');
+      return;
+    }
+
+    this.initialItemCount = body.getUserData().hull.items.length;
+    this.compare = false;
+    this.mode = 'sail';
+    this.capture.enabled = false;
+    // 도착 지점은 출항 지점(원점) 기준이다. 맵 JSON 이 생기면 이 한 줄이 맵 데이터를 읽는다.
+    this.goal = createGoal(DEMO_GOAL);
+    this.cleared = false;
+    this.view.ppm = PPM * 0.7;
+    this.view.snapTo({ x: 0, y: 0 });
+    document.body.dataset.mode = 'sail';
+    this.setStatus('↑ 꾹 눌러 젓기 · ← → 한쪽 노만(선회) · ↓ 역젓기 · Space 닻 · ' +
+      'T 궤적선 · 선체 클릭 = 그 지점 차감 — 도착 판정은 주인공이 합니다.', 'ok');
+    this.renderParams(body.getUserData().hull.params, this.design);
+    this.refreshTuner(); // 예상 종단은 선체 저항에 달렸다 — 배가 바뀌면 다시 잰다
+  }
+
+  /**
+   * ★ 가설 A 판정 장치 — 세 척을 나란히 띄우고 **같은 입력**을 흘려보낸다.
+   * 조작감 차이를 말로 설명할 수 있으면 D1 통과다.
+   */
+  enterCompare() {
+    this.clearBodies();
+    const spawned = [];
+    for (const [i, cast] of COMPARE_CAST.entries()) {
+      const result = strokeToHull(CORPUS[cast.corpus](0, 0), { pixelsPerMeter: PPM });
+      if (!result.ok) continue;
+      const body = this.launch(result.outline, {
+        position: { x: 0, y: (1 - i) * COMPARE_SPACING },
+        tag: { label: cast.label, color: cast.color },
+      });
+      if (body) spawned.push(body);
+    }
+
+    if (spawned.length === 0) {
+      this.setStatus('비교 선체 생성 실패.', 'bad');
+      return;
+    }
+
+    this.design = null;
+    this.initialItemCount = spawned.reduce((s, b) => s + b.getUserData().hull.items.length, 0);
+    // 비교 주행은 형상 셋을 나란히 재는 계측 장치라 주인공도 도착 지점도 없다 — 카메라는
+    // 사람이 아니라 세 척 전부를 담는다(`fitTo`).
+    this.goal = null;
+    this.cleared = false;
+    this.compare = true;
+    this.mode = 'sail';
+    this.capture.enabled = false;
+    // 설계 화면의 카메라(캔버스 좌상단 기준)에서 곧장 fitTo 로 넘어가면 첫 1초가 흔들린다.
+    this.view.snapTo({ x: 0, y: 0 });
+    this.view.ppm = PPM * 0.4;
+    document.body.dataset.mode = 'sail';
+    this.setStatus(`세 척 동시 주행 — 같은 입력, 다른 형상. ↑ 를 꾹 눌러 가속 차이를, ` +
+      `그다음 ← 로 선회 반경 차를 보세요.`, 'ok');
+    this.refreshTuner();
+  }
+
+  // ------------------------------------------------------- 장치 · 저항
+
+  applyControls(dt) {
+    // 눌려 있는 키 + 이번 스텝 사이에 스쳐 간 탭 → 이번 스텝의 젓기 요청.
+    // 매 스텝 요청해도 회수가 안 끝난 노는 `startStroke` 가 거절하므로, 홀드가 곧
+    // "게이트가 열릴 때마다 자동으로 한 번 더"가 된다.
+    const strokes = [];
+    for (const key of this.heldStrokes) strokes.push(...STROKE_KEYMAP[key]);
+    for (const key of this.tappedStrokes) {
+      if (!this.heldStrokes.has(key)) strokes.push(...STROKE_KEYMAP[key]);
+    }
+    this.tappedStrokes.clear();
+
+    // 요청 배열은 세 척이 **공유**한다. 수락/거절은 배마다 따로 판단하므로, 비교 주행에서
+    // 무거운 배만 젓기를 놓치는 일은 생기지 않는다.
+    const input = { strokes, held: this.held, anchor: this.keys.has(' ') };
+    for (const body of this.bodies) applyDevices(body, input, dt);
+  }
+
+  // ------------------------------------------------------- 스파이크 ②
+
+  strikeAt(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    const world = this.view.screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+    this.carve(world, IMPACT_RADIUS);
+  }
+
+  /**
+   * 마우스 클릭 파손 — 어느 강체를 맞혔는지 **추정**해야 하는 유일한 경로다.
+   * 규칙·충돌·피탄은 강체를 직접 알려주므로 `carveBody` 를 바로 부른다.
+   */
+  carve(worldPoint, radius) {
+    const target = this.bodyNear(worldPoint);
+    if (target) this.carveBody(target, worldPoint, radius);
+  }
+
+  /**
+   * 지목된 강체를 깎는다.
+   *
+   * ★ `bodyNear` 를 다시 타면 안 된다. 조각이 겹쳐 있을 때 **엉뚱한 조각**이 잡히고,
+   *   호출자(규칙 엔진·접촉 리스너)는 이미 정확한 강체를 손에 쥐고 있다.
+   */
+  carveBody(target, worldPoint, radius) {
+    if (!target || !this.bodies.has(target)) return;
+
+    const outcome = applyImpact(this.world, target, worldPoint, radius);
+    if (!outcome) return;
+
+    this.metrics.push('carve', outcome.result.ms + (outcome.result.rebuildMs ?? 0));
+    this.bodies.delete(target);
+    for (const body of outcome.bodies) this.bodies.add(body);
+
+    if (outcome.result.destroyed) {
+      this.setStatus('선체 전손 — 남은 조각이 없습니다.', 'bad');
+    } else if (outcome.result.split) {
+      this.setStatus(`절단! ${outcome.result.pieces.length}조각으로 분리 — 각각 독립 강체입니다. ` +
+        '주인공이 탄 쪽이 당신의 배입니다.', 'ok');
+    }
+    // ★ 주인공 상실은 절단·전손보다 **더 구체적인 사실**이라 마지막에 덮어쓴다. 배가 두
+    //   동강 나도 사람이 살아 있으면 항해는 계속되고, 남아 있어도 사람이 없으면 끝난다 —
+    //   그 둘을 가르는 것이 §7.5 소속 폴리곤 판정 하나다.
+    if (outcome.result.crewLost) {
+      this.setStatus('주인공이 물에 빠졌습니다 — 발밑이 잘려 나갔습니다. ' +
+        '남은 조각이 도착 지점에 들어가도 클리어가 아닙니다.', 'bad');
+    }
+    this.metrics.note('강체/조각', `${this.bodies.size}개 · 탈락 아이템 ${this.droppedItemCount()}`);
+    this.renderParamsFromBodies();
+  }
+
+  /**
+   * 충돌·피탄 큐를 소비한다. **암초인지 포탄인지 여기서 구분하지 않는다** — 큐 소비자가
+   * 출처를 모르는 것이 §2 와 §3 의 파손이 한 코드 경로로 합쳐진다는 설계의 요점이다.
+   */
+  consumeImpacts() {
+    // ★ 튕긴 탄을 **먼저** 알린다. 같은 프레임에 실제 차감도 있었다면 아래 루프가 상태줄을
+    //   덮어쓰는 것이 맞다 — 뚫린 사실이 튕긴 사실보다 급하다.
+    for (const g of this.impacts.drainGlances()) {
+      const kJ = (g.energy / 1000).toFixed(1);
+      const deg = g.incidence != null ? `${(g.incidence * 180 / Math.PI).toFixed(0)}°` : null;
+      const how = deg ? `입사 ${deg}로 빗맞아 ` : '';
+      this.metrics.note('튕김', `${deg ? `입사 ${deg} · ` : ''}${kJ} kJ`);
+      this.setStatus(g.reason === 'deflected'
+        ? `튕겨 나감 — ${how}${g.material.name}에 ${kJ} kJ 만 실렸습니다 ` +
+          `(임계 ${(g.material.impactThreshold / 1000).toFixed(1)} kJ).`
+        : `긁힘 — ${how}${kJ} kJ 가 실렸지만 자국이 ${g.radius.toFixed(2)} m 라 ` +
+          `${g.material.name}엔 흠집도 안 났습니다.`, 'warn');
+    }
+
+    for (const im of this.impacts.drain()) {
+      if (!this.bodies.has(im.body)) continue;      // 이미 파괴된 강체 (댕글링)
+      // 임무를 마친 탄은 다음 컬링에서 사라진다. `begin-contact` 가 이미 찍었지만,
+      // 큐를 통해 들어온 것도 여기서 한 번 더 못 박아 둔다.
+      if (im.projectile) im.projectile.getUserData().projectile.spent = true;
+
+      const kJ = (im.energy / 1000).toFixed(1);
+      // 비스듬히 맞고도 뚫린 경우에만 각도를 말한다 — 정타에 각도를 붙이면 잡음이 된다.
+      // 이 한 줄이 "빗맞아도 뚫리는 나무"와 "빗맞으면 튕기는 철"을 같은 문장 형식으로 잇는다.
+      const deg = im.incidence != null && im.incidence > 0.44
+        ? `입사 ${(im.incidence * 180 / Math.PI).toFixed(0)}°로 빗맞고도 ` : '';
+      this.metrics.note('피격', `${im.source} ${kJ} kJ`);
+      // ⚠ 일반 메시지를 **먼저** 쓴다. `carveBody` 가 절단·전손처럼 더 구체적인 사실을
+      //   알면 그것이 덮어써야 한다 — 순서를 뒤집으면 배가 두 동강 났는데 "피탄"만 뜬다.
+      this.setStatus(im.source === 'shot'
+        ? `피탄 — ${deg}${kJ} kJ 가 반경 ${im.radius.toFixed(2)} m 를 뜯었습니다.`
+        : `충돌 — ${kJ} kJ 가 반경 ${im.radius.toFixed(2)} m 를 뜯었습니다.`, 'bad');
+      this.carveBody(im.body, im.at, im.radius);
+    }
+  }
+
+  /** 시험용 소품(암초·포탑·포탄) 정리. 선체와 수명이 다르므로 따로 둔다. */
+  clearProps() {
+    for (const body of this.projectiles) this.world.destroyBody(body);
+    for (const body of this.obstacles) this.world.destroyBody(body);
+    this.projectiles.clear();
+    this.obstacles.clear();
+    this.sparks.length = 0;
+    this.turrets = null;
+  }
+
+  /**
+   * 포탑·암초 시험장을 **현재 뱃머리 기준**으로 깔아 준다.
+   *
+   * 절대 좌표로 놓으면 안 된다 — 버튼을 누르는 시점에 배는 이미 원점을 떠나 있다.
+   * S4 의 `session.js` 가 이 배치를 맵 데이터에서 읽게 되면 이 메서드는 사라진다.
+   */
+  startTurretDrill() {
+    if (this.mode !== 'sail' || this.bodies.size === 0) {
+      this.setStatus('출항한 뒤에 눌러 주세요.', 'warn');
+      return;
+    }
+    this.clearProps();
+
+    const primary = [...this.bodies][0];
+    const p = primary.getWorldCenter();
+    const th = primary.getAngle();
+    const u = { x: Math.cos(th), y: Math.sin(th) };      // 뱃머리
+    const v = { x: -Math.sin(th), y: Math.cos(th) };     // 좌현
+    const at = (a, b) => ({ x: p.x + u.x * a + v.x * b, y: p.y + u.y * a + v.y * b });
+    const deg = (rad) => rad * 180 / Math.PI;
+
+    // ★ 이격은 무장 거리(armDelay × speed = 5.5 m)의 두 배 이상이어야 한다. 그 안쪽은 탄이
+    //   배를 맞고도 안 깎는 사각지대다.
+    const arm = CONTACT_TUNING.armDelay * TURRET_TUNING.speed;
+    const lane = Math.max(12, arm * 2);
+
+    // ★★ 주기를 배 속도에서 **유도한다.** 고정 주기로 두면 배가 사선 사이로 그냥 빠져나간다 —
+    //    실측: 3.34 m/s 로 1.5 s 주기면 탄 간격이 5.0 m 인데 둥근 배 길이는 4.6 m 라, 20발을
+    //    쏘는 동안 한 발도 안 맞았다. **탄 간격(속도 × 주기) < 선체 길이**가 사선이 실제로
+    //    장벽이 되기 위한 조건이고, S4 에서 3장 포탑 주기를 정할 때도 같은 부등식을 쓴다.
+    const speed = Math.max(primary.getLinearVelocity().length(), 1);
+    const hullLength = primary.getUserData().hull.params.length;
+    const period = Math.max(MIN_PERIOD, (hullLength * 0.5) / speed);
+
+    this.turrets = createTurrets([
+      // 좌현 포탑 — 항로를 가로지르는 빔이라 조준 0줄로 명중이 보장된다.
+      { ...at(18, lane), angle: deg(th - Math.PI / 2), period },
+      // 우현 포탑 — 아래 암초에 막힌다. 엄폐가 규칙이 아니라 기하에서 나오는 것을 보여 준다.
+      { ...at(30, -lane), angle: deg(th + Math.PI / 2), period },
+    ], this.simTime);
+    for (const t of this.turrets.list) this.placeObstacle(t.bodySpec);
+
+    this.placeObstacle({ shape: 'circle', ...at(30, -lane * 0.5), radius: 2.5, material: 'rock' });
+    this.placeObstacle({ shape: 'circle', ...at(46, 0), radius: 3, material: 'rock' });
+
+    // 지금 항해 줌(PPM × 0.7)은 화면 반폭이 ~17 m 라 18 m 앞 포탑이 화면 밖이다.
+    this.view.ppm = PPM * 0.4;
+    this.setStatus('좌현 포탑은 그대로 때리고, 우현 포탑은 암초에 막힙니다 — ' +
+      '엄폐가 코드가 아니라 기하에서 나옵니다. 정면 암초는 들이받아 보세요.', 'warn');
+  }
+
+  placeObstacle(spec) {
+    const body = createObstacle(this.world, spec);
+    if (body) this.obstacles.add(body);
+    return body;
+  }
+
+  bodyNear(worldPoint) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const body of this.bodies) {
+      const local = body.getLocalPoint(new Vec2(worldPoint.x, worldPoint.y));
+      const bb = bounds(body.getUserData().hull.outline);
+      // bbox 를 조금 넓혀 스치는 타격도 허용 — 빗맞으면 carve 가 형상 변화 0으로 되돌린다.
+      const pad = IMPACT_RADIUS;
+      if (local.x < bb.minX - pad || local.x > bb.maxX + pad) continue;
+      if (local.y < bb.minY - pad || local.y > bb.maxY + pad) continue;
+      const d = Math.hypot(local.x, local.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = body;
+      }
+    }
+    return best;
+  }
+
+  droppedItemCount() {
+    let alive = 0;
+    for (const body of this.bodies) alive += body.getUserData().hull.items.length;
+    return Math.max(0, (this.initialItemCount ?? 0) - alive);
+  }
+
+  startStress() {
+    if (this.mode !== 'sail' || this.bodies.size === 0) {
+      this.setStatus('스트레스 테스트는 출항 후에 실행하세요.', 'warn');
+      return;
+    }
+    this.stress = { remaining: 20, rng: lcg(20260805), samples: [] };
+    this.metrics.resetWorst();
+    this.setStatus('연속 차감 20회 진행 중…', 'warn');
+  }
+
+  stepStress() {
+    if (this.stress.remaining <= 0 || this.bodies.size === 0) return;
+    const bodies = [...this.bodies];
+    const body = bodies[Math.floor(this.stress.rng() * bodies.length)];
+    const outline = body.getUserData().hull.outline;
+    const vertex = outline[Math.floor(this.stress.rng() * outline.length)];
+    const worldPoint = body.getWorldPoint(new Vec2(vertex.x, vertex.y));
+
+    const before = performance.now();
+    this.carve({ x: worldPoint.x, y: worldPoint.y }, 0.45);
+    this.stress.samples.push(performance.now() - before);
+
+    this.stress.remaining--;
+    if (this.stress.remaining === 0) {
+      const s = this.stress.samples;
+      const avg = s.reduce((a, b) => a + b, 0) / s.length;
+      const max = Math.max(...s);
+      this.setStatus(
+        `연속 차감 20회 완료 — 평균 ${avg.toFixed(2)}ms / 최대 ${max.toFixed(2)}ms · 남은 조각 ${this.bodies.size}`,
+        max <= 8 ? 'ok' : 'warn',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------- 루프
+
+  loop(now) {
+    const frameStart = performance.now();
+    this.metrics.beat(now);
+    const elapsed = Math.min((now - this.lastFrame) / 1000, 0.25);
+    this.lastFrame = now;
+
+    if (this.mode === 'sail') {
+      const { ms } = this.stepper.advance(elapsed);
+      this.metrics.push('physics', ms);
+      // ── 스텝 밖 ── 강체가 나고 죽는 유일한 자리 (포탄만 예외 — ⓪ 에서 태어난다).
+      this.consumeRuleEvents();     // ① 연소 → 차감 지점 → carveBody
+      this.consumeImpacts();        // ②③ 충돌·피탄 큐 → carveBody
+      // ⚠ `consumeImpacts` 보다 뒤여야 한다. `carveBody` 가 `this.bodies` 를 갈아치우므로
+      //    순서를 바꾸면 물리에서 온 충격이 멤버십 가드에 걸려 조용히 버려진다.
+      this.stepStress();
+      // ⑤ 포탄 소멸은 큐 소비 **뒤**다 — Impact 가 포탄 강체 참조를 들고 있다.
+      for (const dead of cullProjectiles(this.world, this.simTime)) {
+        this.projectiles.delete(dead);
+        // ★ 무언가에 맞아 죽은 탄은 **자국을 남긴다.** 그냥 사라지면 "선체를 맞혔는데 아무
+        //   일도 안 일어났다"와 "암초에 막혔다"와 "수명이 다했다"가 화면에서 전부 같아 보인다.
+        //   상태줄로 알리면 암초 흡수만 30초에 47건이라 도배가 되므로, 글자가 아니라 자국으로 낸다.
+        const shot = dead.getUserData().projectile;
+        if (!shot.spent) continue;                    // 수명·경계로 죽은 것은 그냥 날아간 것이다
+        const p = dead.getPosition();
+        this.sparks.push({ x: p.x, y: p.y, at: this.simTime, radius: shot.radius });
+      }
+      if (this.sparks.length > SPARK_MAX) this.sparks.splice(0, this.sparks.length - SPARK_MAX);
+      this.checkGoal();
+      this.updateCamera();
+      // 패널은 계측 HUD 와 같은 이유로 초당 몇 번이면 충분하다 — 매 프레임 innerHTML 을
+      // 새로 쓰면 비교 화면이 재려는 그 프레임 예산을 패널이 갉아먹는다.
+      if (this.compare && now - (this._lastTable ?? 0) > 150) {
+        this._lastTable = now;
+        this.renderCompareTable();
+      }
+    }
+
+    this.render();
+    this.metrics.push('frame', performance.now() - frameStart);
+    this.metrics.render(now);
+    requestAnimationFrame((t) => this.loop(t));
+  }
+
+  /**
+   * 도착 판정 (§8 클리어 조건).
+   *
+   * ★ 재는 것은 **주인공의 점 하나뿐**이다. 선체 외곽선과 골의 겹침으로 재면 뱃머리만 밀어
+   *   넣어도, 잘려 나간 파편이 표류해 들어가도 클리어가 된다 — 근거는 `game/goal.js` 머리말.
+   *   그래서 여기에는 폴리곤이 등장하지 않는다.
+   */
+  checkGoal() {
+    if (!this.goal || this.cleared) return;
+    const at = crewWorldPoint(findCrewBody(this.bodies));
+    if (!at || !goalReached(this.goal, at)) return;
+
+    this.cleared = true;
+    const alive = [...this.bodies].reduce((s, b) => s + b.getUserData().hull.params.area, 0);
+    this.metrics.note('도착', `${this.goal.label} · 남은 선체 ${alive.toFixed(1)} m²`);
+    this.setStatus(`도착 — 주인공이 ${this.goal.label} 지점에 들어섰습니다. ` +
+      `남은 선체 ${alive.toFixed(1)} m² · 조각 ${this.bodies.size}개.`, 'ok');
+  }
+
+  /** 비교 모드는 세 척을 모두 담도록 줌만 조절하고, 단독 항해는 **주인공**을 추적한다. */
+  updateCamera() {
+    if (this.bodies.size === 0) return;
+    if (!this.compare) {
+      // ★ 카메라 중심은 배가 아니라 사람이다. 절단(§7.5)으로 배가 쪼개지면 화면이 주인공이
+      //   탄 조각을 따라가므로, "내가 어느 쪽에 타고 있는가"가 질문이 되기 전에 화면 그 자체가
+      //   답이 된다. 주인공을 잃은 뒤에는 남은 잔해라도 비춘다 (검은 화면은 정보가 아니다).
+      const primary = findCrewBody(this.bodies) ?? [...this.bodies][0];
+      if (primary) this.view.follow(crewWorldPoint(primary) ?? primary.getPosition());
+      return;
+    }
+    const points = [];
+    for (const body of this.bodies) {
+      const c = body.getWorldCenter();
+      const r = body.getUserData().hull.params.length * 0.6;
+      points.push({ x: c.x - r, y: c.y - r }, { x: c.x + r, y: c.y + r });
+    }
+    this.view.fitTo(points, { padding: 120 });
+  }
+
+  render() {
+    const { ctx, view } = { ctx: this.view.ctx, view: this.view };
+    view.begin();
+    drawSeaGrid(ctx, view);
+    this.drawFields(ctx, view);
+
+    if (this.mode === 'design') {
+      this.renderDesign(ctx, view);
+      // 주인공은 **선체보다 위**에 그린다. 카메라 중심이자 도착 판정의 주체라 어떤 형상에도
+      // 가려지면 안 되고, 설계 화면에서는 그가 곧 "여기를 감싸라"는 지시문이기도 하다.
+      this.drawCrew(ctx, view, this.crewWorld(), this.design?.ok ? this.crewAboard() : null);
+    } else {
+      this.renderSail(ctx, view);
+    }
+  }
+
+  /**
+   * 주인공.
+   *
+   * @param {{x,y}} at 월드 좌표
+   * @param {boolean|null} aboard 갑판 위인가 (null = 아직 판정할 선체가 없다)
+   */
+  drawCrew(ctx, view, at, aboard = true) {
+    if (!at) return;
+    // 줌이 빠져도 사라지면 안 된다 — 화면 고정 하한을 둔다. 포탄과 달리 콜라이더가 아니라서
+    // 보이는 크기와 실제 크기가 갈라져도 게임플레이가 거짓말을 하지 않는다.
+    const r = Math.max(CREW.radius, view.px(5));
+    const color = aboard === false ? '#ff6b6b' : '#fff6d8';
+
+    ctx.save();
+    // 바깥 고리 — 배 밖이면 붉게 깜박이지 않고 그냥 붉다. 상태는 색 하나로 충분하다.
+    ctx.strokeStyle = color;
+    ctx.lineWidth = view.px(1.6);
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, r * 2.2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 십자 눈금 — 설계 화면에서 "여기가 화면 한가운데"를 못 박는다.
+    if (aboard === null || aboard === false) {
+      const t = r * 3.4;
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(at.x - t, at.y);
+      ctx.lineTo(at.x - r * 2.6, at.y);
+      ctx.moveTo(at.x + r * 2.6, at.y);
+      ctx.lineTo(at.x + t, at.y);
+      ctx.moveTo(at.x, at.y - t);
+      ctx.lineTo(at.x, at.y - r * 2.6);
+      ctx.moveTo(at.x, at.y + r * 2.6);
+      ctx.lineTo(at.x, at.y + t);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * 도착 지점. 반경이 선체 길이보다 작아 **배는 걸쳤는데 사람은 밖**인 상태가 실제로 생기고,
+   * 그 상태에서 클리어가 안 되는 것이 이 원의 존재 이유다 (`game/goal.js`).
+   */
+  drawGoal(ctx, view) {
+    if (!this.goal) return;
+    const g = this.goal;
+    const done = this.cleared;
+
+    ctx.save();
+    ctx.fillStyle = done ? 'rgba(140, 233, 154, 0.18)' : 'rgba(255, 211, 92, 0.10)';
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = done ? '#8ce99a' : '#ffd35c';
+    ctx.lineWidth = view.px(2.5);
+    ctx.setLineDash([view.px(8), view.px(6)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    const at = crewWorldPoint(findCrewBody(this.bodies));
+    const left = goalDistance(g, at);
+    const label = done ? `${g.label} — 클리어`
+      : Number.isFinite(left) ? `${g.label} · 주인공까지 ${left.toFixed(0)} m`
+        : `${g.label} · 주인공 없음`;
+    const screen = view.worldToScreen({ x: g.x, y: g.y + g.radius });
+    view.screenSpace((c) => {
+      c.font = "13px 'NeoDunggeunmo', monospace";
+      c.textAlign = 'center';
+      const w = c.measureText(label).width + 14;
+      c.fillStyle = 'rgba(8, 20, 32, 0.75)';
+      c.fillRect(screen.x - w / 2, screen.y - 26, w, 20);
+      c.fillStyle = done ? '#8ce99a' : '#ffd35c';
+      c.fillText(label, screen.x, screen.y - 11);
+    });
+  }
+
+  /**
+   * 환경 필드 오버레이 (§6.1). 필드는 눈에 보이지 않으면 배울 수가 없다 — 왜 배가 밀리는지,
+   * 어디가 뜨거운지가 보여야 플레이어가 규칙표를 추론할 수 있다.
+   *
+   * 화면에 보이는 영역만 격자로 샘플한다. 존마다 다른 그리기 코드는 없다 — 같은 샘플러를
+   * 같은 방식으로 훑을 뿐이라, 새 필드 정의를 넣어도 이 함수는 그대로다.
+   */
+  drawFields(ctx, view) {
+    if (this.fields.isEmpty) return;
+    const min = view.screenToWorld(0, view.height);
+    const max = view.screenToWorld(view.width, 0);
+    const stepM = Math.max(4, Math.round((max.x - min.x) / 26));
+
+    for (let x = Math.floor(min.x / stepM) * stepM; x <= max.x; x += stepM) {
+      for (let y = Math.floor(min.y / stepM) * stepM; y <= max.y; y += stepM) {
+        // 스칼라장 — 온도는 붉게, 습기는 푸르게.
+        const temp = this.fields.sampleScalar('temperature', x, y);
+        const wet = this.fields.sampleScalar('moisture', x, y);
+        if (temp > 25) {
+          ctx.fillStyle = `rgba(255, 90, 50, ${Math.min((temp - 20) / 500, 0.35)})`;
+          ctx.fillRect(x - stepM / 2, y - stepM / 2, stepM, stepM);
+        }
+        if (wet > 0.02) {
+          ctx.fillStyle = `rgba(90, 180, 255, ${Math.min(wet * 0.3, 0.3)})`;
+          ctx.fillRect(x - stepM / 2, y - stepM / 2, stepM, stepM);
+        }
+
+        // 벡터장 — 바람 화살표.
+        const wind = this.fields.sampleVector('wind', x, y);
+        const mag = Math.hypot(wind.x, wind.y);
+        if (mag < 0.05) continue;
+        const len = Math.min(mag * 0.22, stepM * 0.42);
+        const ux = wind.x / mag;
+        const uy = wind.y / mag;
+        ctx.strokeStyle = 'rgba(200, 230, 255, 0.35)';
+        ctx.lineWidth = view.px(1.2);
+        ctx.beginPath();
+        ctx.moveTo(x - ux * len, y - uy * len);
+        ctx.lineTo(x + ux * len, y + uy * len);
+        ctx.lineTo(x + ux * len - (ux + uy) * len * 0.35, y + uy * len - (uy - ux) * len * 0.35);
+        ctx.stroke();
+      }
+    }
+  }
+
+  renderDesign(ctx, view) {
+    // 원본 스트로크 (px → m, Y 뒤집기: polygon.js 와 같은 변환)
+    if (this.stroke.length > 1) {
+      const metric = this.stroke.map((p) => ({ x: p.x / PPM, y: -p.y / PPM }));
+      ctx.lineWidth = view.px(2);
+      ctx.strokeStyle = 'rgba(245, 230, 200, 0.5)';
+      traceOpenPath(ctx, metric);
+      ctx.stroke();
+    }
+
+    if (!this.design?.ok) return;
+
+    // 변환 결과를 원래 그린 자리에 되돌려 겹쳐 그린다 — 스파이크 ①의 육안 검증.
+    const world = translate(rotate(this.design.outline, this.design.angle),
+      this.design.origin.x, this.design.origin.y);
+
+    fillPolygonWithHoles(ctx, world, [], 'rgba(168, 118, 62, 0.35)');
+    ctx.lineWidth = view.px(2.5);
+    ctx.strokeStyle = '#f0c987';
+    tracePolygon(ctx, world);
+    ctx.stroke();
+
+    const params = this.previewCache();
+    // 설계 화면에서도 아이템을 항해 화면과 **같은 코드로** 그린다. 부착점과 방향이 곧
+    // 조향 특성이므로 (§4.1), 출항 전에 그 배치를 보고 거동을 예상할 수 있어야 한다.
+    if (this.attached.length) {
+      this.drawDevices(ctx, view,
+        { items: this.attached, control: { held: this.held }, params, anchorJoint: null },
+        this.design.origin, this.design.angle);
+    }
+    this.drawOverlays(ctx, view, this.design.origin, this.design.angle, params);
+    this.drawVertices(ctx, view, world);
+    this.drawDraftGauge(view, params);
+  }
+
+  /**
+   * 흘수 게이지 (§2.3 오버레이 요구사항). 값은 패널에도 있지만, 숫자보다 "물에 얼마나
+   * 잠겼는가"가 눈에 먼저 들어와야 재질·장치 질량의 대가가 체감된다.
+   */
+  drawDraftGauge(view, params) {
+    if (!params) return;
+    const ratio = Math.min(params.draft / DRAFT_GAUGE_MAX, 1);
+    const H = 150;
+    const W = 22;
+    const x = 20;
+    const y = Math.max((view.height - H) / 2, 90);
+
+    view.screenSpace((c) => {
+      c.fillStyle = 'rgba(8, 20, 32, 0.8)';
+      c.fillRect(x, y, W, H);
+      c.fillStyle = 'rgba(127, 227, 255, 0.45)';
+      c.fillRect(x, y + H * (1 - ratio), W, H * ratio);
+      c.strokeStyle = ratio >= 1 ? '#ff6b6b' : 'rgba(240, 201, 135, 0.6)';
+      c.lineWidth = 2;
+      c.strokeRect(x, y, W, H);
+
+      c.font = "12px 'NeoDunggeunmo', monospace";
+      c.textAlign = 'center';
+      c.fillStyle = '#f5e6c8';
+      c.fillText('흘수', x + W / 2, y - 8);
+      c.fillText(`${params.draft.toFixed(2)}`, x + W / 2, y + H + 15);
+      c.fillText('m', x + W / 2, y + H + 28);
+    });
+  }
+
+  /** 암초·포탑 몸체. 선체와 **같은 관용구**(재질색 + 외곽선)를 쓴다. */
+  drawObstacles(ctx, view) {
+    for (const body of this.obstacles) {
+      const { spec, material } = body.getUserData().obstacle;
+      const pos = body.getPosition();
+      ctx.fillStyle = `${material.color}aa`;
+      ctx.beginPath();
+      if (spec.shape === 'circle') {
+        ctx.arc(pos.x, pos.y, spec.radius, 0, Math.PI * 2);
+      } else {
+        tracePolygon(ctx, translate(spec.points.map(([x, y]) => ({ x, y })), pos.x, pos.y));
+      }
+      ctx.fill();
+      ctx.lineWidth = view.px(2);
+      ctx.strokeStyle = '#7d848c';
+      ctx.stroke();
+    }
+    if (!this.turrets) return;
+
+    // ★ 포신 + 충전 표시. **가장 중요한 가독성 장치다** — 조준이 없는 대신 플레이어가 할 일은
+    //   "타이밍을 읽고 지나가기"뿐이라, 충전이 안 보이면 포탑은 퍼즐이 아니라 무작위 피해가
+    //   된다. 부스터 불꽃(`drawDevices`)과 같은 규약으로 충전율에 따라 길이·굵기·색이 자란다.
+    for (const [i, t] of this.turrets.list.entries()) {
+      const ch = this.turrets.charge(i, this.simTime);
+      const len = t.bodySpec.radius * (1.2 + ch * 0.9);
+      ctx.lineWidth = view.px(3 + ch * 4);
+      ctx.strokeStyle = ch > 0.92 ? '#ff9f7f' : `rgba(255, 159, 127, ${0.35 + ch * 0.4})`;
+      ctx.beginPath();
+      ctx.moveTo(t.at.x, t.at.y);
+      ctx.lineTo(t.at.x + t.dir.x * len, t.at.y + t.dir.y * len);
+      ctx.stroke();
+    }
+  }
+
+  /**
+   * 포탄.
+   *
+   * ⚠ `view.px()` 로 그리면 안 된다. 하니스의 다른 원 그리기는 전부 화면 고정 크기지만,
+   *   포탄만은 **콜라이더 크기가 곧 게임플레이 정보**다 — 보이는 크기와 실제 크기가 줌에
+   *   따라 갈라지면 아슬아슬한 회피가 거짓말이 된다. 월드 단위를 쓰되 최소 가시성만 보장한다.
+   */
+  drawProjectiles(ctx, view) {
+    for (const body of this.projectiles) {
+      const shot = body.getUserData().projectile;
+      const p = body.getPosition();
+      const v = body.getLinearVelocity();
+
+      ctx.strokeStyle = 'rgba(255, 211, 92, 0.55)';    // 진행 방향 잔상 = 속도감
+      ctx.lineWidth = view.px(2);
+      ctx.beginPath();
+      ctx.moveTo(p.x - v.x * 0.05, p.y - v.y * 0.05);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffd35c';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(shot.radius, view.px(2.5)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 맞고 죽은 자리. 팽창하며 사라지는 고리 하나 — 글자 없이 "여기서 멈췄다"만 말한다.
+    //
+    // ⚠ 고리를 포탄 반경(0.15 m)에서 출발시키면 안 된다. 줌 16 px/m 에서 2.4 px 라
+    //   **가장 밝을 때 가장 안 보인다.** 처음부터 선체 폭에 견줄 크기로 띄우고 커지며 사라진다.
+    for (const s of this.sparks) {
+      const age = (this.simTime - s.at) / SPARK_LIFE;
+      if (age < 0 || age > 1) continue;
+      const fade = 1 - age;
+      ctx.strokeStyle = '#ffd35c';
+      ctx.globalAlpha = fade;
+      ctx.lineWidth = view.px(1 + 3 * fade);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 0.45 + age * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+      // 터진 순간의 심지 — 첫 몇 프레임만 하얗게 남아 "여기다"를 찍어 준다.
+      ctx.globalAlpha = fade * fade;
+      ctx.fillStyle = '#fff6d8';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, Math.max(s.radius * 1.6, view.px(2)), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    if (this.turrets) {
+      this.metrics.note('포탄', `${this.projectiles.size}발 · 발사 ${this.turrets.fired}`);
+    }
+  }
+
+  renderSail(ctx, view) {
+    // 스트로크는 넘기지 않는다 — "지금 더 젓지 않으면 어디로 가는가"가 정직한 질문이다
+    // (predict.js 머리말). 반면 트리거 홀드는 유지 가정이 정의되므로 그대로 넘긴다.
+    const input = { held: this.held };
+    const labels = [];
+
+    this.drawGoal(ctx, view);
+    this.drawObstacles(ctx, view);
+
+    for (const body of this.bodies) {
+      const hull = body.getUserData().hull;
+      const pos = body.getPosition();
+      const angle = body.getAngle();
+      const accent = hull.tag?.color ?? '#f0c987';
+
+      if (this.showTrajectory) this.drawTrajectory(ctx, view, body, input, accent);
+
+      const world = translate(rotate(hull.outline, angle), pos.x, pos.y);
+      const worldHoles = hull.holes.map((h) => translate(rotate(h, angle), pos.x, pos.y));
+
+      fillPolygonWithHoles(ctx, world, worldHoles, hull.params.material.color + 'aa');
+      ctx.lineWidth = view.px(2);
+      ctx.strokeStyle = accent;
+      tracePolygon(ctx, world);
+      ctx.stroke();
+      for (const hole of worldHoles) {
+        tracePolygon(ctx, hole);
+        ctx.stroke();
+      }
+
+      // 볼록 분해 결과 (fixture 경계)
+      ctx.lineWidth = view.px(0.7);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      for (const part of hull.parts) {
+        tracePolygon(ctx, translate(rotate(part, angle), pos.x, pos.y));
+        ctx.stroke();
+      }
+
+      this.drawDevices(ctx, view, hull, pos, angle);
+      // 주인공을 태운 조각에만 그가 있다. 절단 뒤 두 조각을 나란히 보면 이 점 하나가
+      // "어느 쪽이 내 배인가"의 유일한 답이다.
+      this.drawCrew(ctx, view, crewWorldPoint(body));
+
+      const com = body.getWorldCenter();
+      this.drawOverlays(ctx, view, { x: com.x, y: com.y }, angle, hull.params);
+
+      // 속도 벡터
+      const v = body.getLinearVelocity();
+      if (v.length() > 0.05) {
+        ctx.lineWidth = view.px(2);
+        ctx.strokeStyle = '#7fe3ff';
+        ctx.beginPath();
+        ctx.moveTo(com.x, com.y);
+        ctx.lineTo(com.x + v.x * 0.4, com.y + v.y * 0.4);
+        ctx.stroke();
+      }
+
+      if (hull.tag) {
+        labels.push({
+          at: view.worldToScreen({ x: com.x, y: com.y + hull.params.beam * 0.5 + 1.2 }),
+          color: accent,
+          text: `${hull.tag.label}  ${v.length().toFixed(2)} m/s  ` +
+            `${(body.getAngularVelocity() * 180 / Math.PI).toFixed(0)}°/s`,
+        });
+      }
+    }
+
+    this.drawProjectiles(ctx, view);
+
+    if (labels.length) {
+      view.screenSpace((c) => {
+        c.font = "13px 'NeoDunggeunmo', monospace";
+        c.textAlign = 'center';
+        for (const l of labels) {
+          c.fillStyle = 'rgba(8, 20, 32, 0.75)';
+          const w = c.measureText(l.text).width + 12;
+          c.fillRect(l.at.x - w / 2, l.at.y - 15, w, 19);
+          c.fillStyle = l.color;
+          c.fillText(l.text, l.at.x, l.at.y);
+        }
+      });
+    }
+  }
+
+  /**
+   * 예측 궤적선 — predict.js 가 hydro·devices 의 순수 함수로 적분한 경로를 그대로 그린다.
+   * 실제 항적과 어긋나 보이면 그것은 UI 버그가 아니라 예측이 거짓말을 하고 있다는 뜻이다.
+   */
+  drawTrajectory(ctx, view, body, input, color) {
+    const path = predictPath(body, input, { fields: this.fields });
+    if (path.length < 2) return;
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = view.px(1.6);
+    ctx.strokeStyle = color;
+    ctx.setLineDash([view.px(5), view.px(5)]);
+    traceOpenPath(ctx, path);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 끝점 — 2.5초 뒤 무게중심이 있을 자리
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(path.at(-1).x, path.at(-1).y, view.px(3), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * 기본 장치. 노는 **젓는 동안 부풀고 물 밖으로 뻗는다** — 스트로크 모델은 리듬이 눈에
+   * 보이지 않으면 조작감이 잡히지 않는다. 키(아이템)는 실제 타각만큼 꺾여 그려진다.
+   */
+  drawDevices(ctx, view, hull, pos, angle) {
+    const rudderAngle = hull.control?.rudder ?? 0;
+    for (const item of hull.items) {
+      const w = translate(rotate([item], angle), pos.x, pos.y)[0];
+      const anchored = item.type === 'anchor' && hull.anchorJoint != null;
+
+      if (item.type === 'rudder') {
+        // 타판을 선분으로 — 길이는 팔길이가 아니라 보기용 고정값.
+        const len = Math.max(hull.params.length * 0.12, 0.3);
+        const a = angle + Math.PI + rudderAngle;
+        ctx.lineWidth = view.px(3);
+        ctx.strokeStyle = '#ffd35c';
+        ctx.beginPath();
+        ctx.moveTo(w.x, w.y);
+        ctx.lineTo(w.x + Math.cos(a) * len, w.y + Math.sin(a) * len);
+        ctx.stroke();
+      }
+
+      if (item.type === 'booster') {
+        // 추력 방향으로 화살촉 — 켜져 있으면 불꽃이 길어진다. §4.1 의 "방향"이 눈에 보여야
+        // "왜 이 배가 도는가"를 부착점만 보고 설명할 수 있다.
+        const on = !!hull.control?.held?.[item.bind];
+        const a = angle + item.angle;
+        const len = Math.max(hull.params.length * 0.18, 0.5) * (on ? 1.6 : 0.8);
+        ctx.lineWidth = view.px(on ? 5 : 3);
+        ctx.strokeStyle = on ? '#ff9f7f' : 'rgba(255,159,127,0.55)';
+        ctx.beginPath();
+        ctx.moveTo(w.x - Math.cos(a) * len * 0.3, w.y - Math.sin(a) * len * 0.3);
+        ctx.lineTo(w.x + Math.cos(a) * len * 0.7, w.y + Math.sin(a) * len * 0.7);
+        ctx.stroke();
+      }
+
+      if (item.type === 'sail') {
+        // 돛은 법선이 item.angle 이므로 **돛폭은 그 수직 방향**으로 그린다.
+        const a = angle + item.angle + Math.PI / 2;
+        const len = Math.sqrt(item.area ?? 6) * 0.6;
+        ctx.lineWidth = view.px(4);
+        ctx.strokeStyle = '#e8dcc0';
+        ctx.beginPath();
+        ctx.moveTo(w.x - Math.cos(a) * len, w.y - Math.sin(a) * len);
+        ctx.lineTo(w.x + Math.cos(a) * len, w.y + Math.sin(a) * len);
+        ctx.stroke();
+      }
+
+      let env = 0;
+      if (item.type === 'oar') {
+        env = strokeProgress(hull.control, item.side);
+        // 노깃을 현측 바깥으로 — 봉투가 클수록 길게 뻗는다.
+        const out = Math.sign(item.y || 1);
+        const len = Math.max(hull.params.beam * 0.35, 0.4) * (0.35 + env * 0.65);
+        const a = angle + (out > 0 ? Math.PI / 2 : -Math.PI / 2);
+        ctx.lineWidth = view.px(2 + env * 3);
+        ctx.strokeStyle = env > 0 ? '#ffd35c' : 'rgba(127,227,255,0.5)';
+        ctx.beginPath();
+        ctx.moveTo(w.x, w.y);
+        ctx.lineTo(w.x + Math.cos(a) * len, w.y + Math.sin(a) * len);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = anchored ? '#ff6b6b'
+        : env > 0 ? '#ffd35c'
+          : item.kind === 'mass' ? '#8892a0'
+            : item.type ? '#7fe3ff' : 'rgba(127,227,255,0.5)';
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, view.px((anchored ? 6 : 4) + env * 3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** 무게중심 G · 저항 타원 · 헤딩 인디케이터 (설계 문서 §2.3 오버레이 요구사항). */
+  drawOverlays(ctx, view, center, angle, params) {
+    if (!params) return;
+
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(angle);
+
+    // 저항 타원
+    ctx.lineWidth = view.px(1.5);
+    ctx.strokeStyle = 'rgba(127, 227, 255, 0.75)';
+    ctx.setLineDash([view.px(6), view.px(4)]);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, params.dragEllipse.rx, params.dragEllipse.ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 헤딩 (뱃머리 = +X)
+    ctx.strokeStyle = '#ffd35c';
+    ctx.lineWidth = view.px(2);
+    const reach = params.length * 0.62;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(reach, 0);
+    ctx.lineTo(reach - view.px(9), view.px(6));
+    ctx.moveTo(reach, 0);
+    ctx.lineTo(reach - view.px(9), -view.px(6));
+    ctx.stroke();
+    ctx.restore();
+
+    // 무게중심 G
+    ctx.fillStyle = '#ff6b6b';
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, view.px(5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawVertices(ctx, view, pts) {
+    ctx.fillStyle = 'rgba(240, 201, 135, 0.9)';
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, view.px(2.2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ---------------------------------------------------------------- 패널
+
+  previewCache() {
+    if (!this.design?.ok) return null;
+    if (this._previewFor !== this.design) {
+      // 설계 화면의 흘수도 **장치와 부착 아이템을 얹은 뒤**의 값이어야 정직하다.
+      // 밸러스트를 붙이면 여기서 곧바로 흘수 게이지가 내려간다 — 대가가 즉시 보인다.
+      this._previewParams = computeHullParams(this.design.outline, {
+        material: this.material ?? 'wood',
+        extraMass: itemsExtraMass(defaultDevices(this.design.outline)) + itemsExtraMass(this.attached),
+      });
+      this._previewFor = this.design;
+    }
+    return this._previewParams;
+  }
+
+  renderParamsFromBodies() {
+    const primary = [...this.bodies][0];
+    this.renderParams(primary?.getUserData().hull.params ?? null, this.design);
+  }
+
+  /** 세 척 비교 패널 — 같은 입력 아래 세 배가 지금 어떻게 다른지를 한 표에 놓는다. */
+  renderCompareTable() {
+    const rows = [...this.bodies]
+      .filter((b) => b.getUserData().hull.tag)
+      .map((b) => {
+        const hull = b.getUserData().hull;
+        const v = b.getLinearVelocity();
+        const drift = Math.abs(b.getLocalVector(v).y); // 뱃머리와 진행 방향의 어긋남
+        return `
+          <div class="p-sep" style="color:${hull.tag.color}">${hull.tag.label}
+            <span style="opacity:.6">· 세장비 ${hull.params.slenderness.toFixed(2)}</span></div>
+          <div class="p-row"><span>속도</span><b>${v.length().toFixed(2)} m/s</b></div>
+          <div class="p-row"><span>선회율</span><b>${(b.getAngularVelocity() * 180 / Math.PI).toFixed(1)} °/s</b></div>
+          <div class="p-row"><span>옆밀림</span><b>${drift.toFixed(2)} m/s</b></div>
+          <div class="p-row"><span>노 (좌/우)</span><b>${strokeBar(hull.control, 'port')} ${strokeBar(hull.control, 'starboard')}</b></div>`;
+      });
+
+    document.getElementById('params').innerHTML = rows.join('')
+      || '<div class="p-row dim">배가 없습니다</div>';
+  }
+
+  renderParams(params, result) {
+    const el = document.getElementById('params');
+    if (!params) {
+      el.innerHTML = result && !result.ok
+        ? `<div class="p-row bad">변환 실패 — ${result.message}</div>${diagRows(result)}`
+        : '<div class="p-row dim">선체 없음</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div class="p-row"><span>면적</span><b>${params.area.toFixed(2)} m²</b></div>
+      <div class="p-row"><span>길이 × 선폭</span><b>${params.length.toFixed(2)} × ${params.beam.toFixed(2)} m</b></div>
+      <div class="p-row"><span>세장비</span><b>${params.slenderness.toFixed(2)}</b></div>
+      <div class="p-row"><span>질량</span><b>${(params.mass / 1000).toFixed(2)} t
+        <span style="opacity:.55">(장치 ${params.extraMass.toFixed(0)} kg)</span></b></div>
+      <div class="p-row"><span>관성 모멘트</span><b>${params.inertia.toFixed(0)} kg·m²</b></div>
+      <div class="p-row"><span>흘수</span><b>${params.draft.toFixed(3)} m</b></div>
+      <div class="p-row hl"><span>저항 전/후</span><b>${params.drag.x.toFixed(0)}</b></div>
+      <div class="p-row hl"><span>저항 좌/우</span><b>${params.drag.y.toFixed(0)}</b></div>
+      <div class="p-row hl"><span>이방성 비</span><b>${(params.drag.y / Math.max(params.drag.x, 1e-6)).toFixed(1)} : 1</b></div>
+      ${this.crewRow()}
+      ${this.deviceRows()}
+      ${this.attachedRows()}
+      ${result ? diagRows(result) : ''}`;
+  }
+
+  /**
+   * 주인공이 갑판 어디에 서 있는가 (선체 로컬).
+   *
+   * 숫자보다 **§7.5 의 노출도**가 요점이다. 아이템은 팔길이가 클수록 잘 듣고 잘 떨어지지만,
+   * 주인공에게 걸린 것은 효율이 아니라 항해 그 자체다 — 무게중심에서 먼 곳에 태우는 배는
+   * 작은 피탄 한 발에 발밑을 잃는다. 그를 어디에 두는지는 형상이 정하므로 선택도 형상이다.
+   */
+  crewRow() {
+    // 항해 중에는 **주인공을 태운 조각**을 봐야 한다 — 절단 뒤 `bodies[0]` 은 그가 없는
+    // 쪽일 수 있고, 그 경우 이 행은 조용히 사라지는 것이 맞다 (그는 이미 물에 빠졌다).
+    const crew = this.mode === 'sail'
+      ? findCrewBody(this.bodies)?.getUserData().hull.crew
+      : this.crewLocal();
+    if (!crew) return '';
+    const aboard = this.mode === 'sail' || this.crewAboard();
+    return `<div class="p-sep">주인공 — 카메라 중심이자 도착 판정의 주체</div>` +
+      `<div class="p-row ${aboard ? 'hl' : 'bad'}"><span>갑판 위 자리</span>` +
+      `<b>${aboard ? `(${crew.x.toFixed(2)}, ${crew.y.toFixed(2)}) · G 에서 ` +
+        `${Math.hypot(crew.x, crew.y).toFixed(2)} m` : '배 밖 — 출항 불가'}</b></div>`;
+  }
+
+  /**
+   * 기본 장치(§5.1)와 그 부착점. 좌우 노가 만드는 두 수치가 조향의 전부다:
+   *  - **반폭** = 한쪽만 저을 때의 팔길이 → 넓은 배가 잘 돈다
+   *  - **중점 y** = 양쪽을 저어도 남는 토크 → 비대칭 배가 저절로 돈다
+   * 둘 다 형상에서 바로 나오므로, 조향 코드가 0줄이라는 사실이 패널에서 확인된다.
+   */
+  deviceRows() {
+    const outline = this.design?.ok
+      ? this.design.outline
+      : [...this.bodies][0]?.getUserData().hull.outline;
+    if (!outline) return '';
+
+    const devices = defaultDevices(outline);
+    const oars = devices.filter((d) => d.type === 'oar');
+    const rows = devices.map((d) =>
+      `<div class="p-row"><span>${d.name} <span style="opacity:.5">${d.bind}</span></span>` +
+      `<b>(${d.x.toFixed(2)}, ${d.y.toFixed(2)}) · ${d.mass} kg</b></div>`).join('');
+
+    const span = oars.length === 2 ? sideAnchors(outline, oars[0].x) : null;
+    const offset = span ? Math.abs(span.center) : 0;
+    const emergent = span
+      ? `<div class="p-row hl"><span>노 반폭 (한쪽 젓기)</span><b>${span.halfBeam.toFixed(2)} m</b></div>` +
+        (offset > 0.02
+          ? `<div class="p-row hl"><span>노 중점 어긋남</span><b>${offset.toFixed(3)} m → 양쪽 저어도 선회</b></div>`
+          : '<div class="p-row"><span>노 중점 어긋남</span><b>0 — 대칭, 직진</b></div>')
+      : '';
+
+    const params = this.mode === 'sail'
+      ? [...this.bodies][0]?.getUserData().hull.params
+      : this.previewCache();
+    const terminal = params ? estimateOarTerminal(params) : 0;
+    return `<div class="p-sep">기본 장치 (§5.1) · ${(1 / strokeGate()).toFixed(1)}회/s · ` +
+      `종단 ${terminal.toFixed(2)} / 한계 ${DEVICE_TUNING.oarMaxSpeed.toFixed(1)} m/s</div>` +
+      `${rows}${emergent}`;
+  }
+
+  /**
+   * 손으로 붙인 아이템 (§4.1). **팔길이 y 와 방향이 곧 조향 특성**이라, 출항 전에 이 표만
+   * 보고 "이 배가 어느 쪽으로 돌지"를 말할 수 있어야 한다. 그게 가설 B 의 통과 조건이다.
+   */
+  attachedRows() {
+    const items = this.mode === 'sail'
+      ? ([...this.bodies][0]?.getUserData().hull.items ?? []).filter((it) => it.kind && it.kind !== 'oar')
+      : this.attached;
+    if (!items.length) return '';
+
+    const rows = items.map((it) => {
+      const dir = ATTACH_ANGLES.find((a) => Math.abs(a.value - (it.angle ?? 0)) < 1e-6);
+      const arm = it.kind === 'thruster' || it.kind === 'sail'
+        // 그 힘이 만드는 토크의 팔길이 — 방향에 수직인 성분만 센다.
+        ? Math.abs(it.x * Math.sin(it.angle) - it.y * Math.cos(it.angle))
+        : Math.hypot(it.x, it.y);
+      return `<div class="p-row"><span>${it.name} ` +
+        `<span style="opacity:.5">${bindLabel(it.bind)} ${dir ? dir.label.slice(-1) : ''}</span></span>` +
+        `<b>(${it.x.toFixed(1)}, ${it.y.toFixed(1)}) · 팔 ${arm.toFixed(2)} m</b></div>`;
+    }).join('');
+
+    return `<div class="p-sep">부착 아이템 (§4.1) · 팔길이 0 이면 직진, 크면 선회</div>${rows}`;
+  }
 }
 
-// ---------------- 이벤트 바인딩 ----------------
+/** 노 한 자루의 상태를 세 칸 막대로 — 젓는 중 ▓ / 회수 중 ▒ / 물 밖 ░. */
+/**
+ * 선체 로컬 좌표 → 부위 이름. 좌현이 +Y 인 것은 `defaults.js` 의 `sideAnchors` 규약이다.
+ * 표시용일 뿐이고 물리에는 영향이 없다.
+ */
+function sideName(local) {
+  if (Math.abs(local.x) >= Math.abs(local.y)) return local.x >= 0 ? '뱃머리' : '선미';
+  return local.y >= 0 ? '좌현' : '우현';
+}
 
-$('#btn-start').addEventListener('click', gameFlow);
-$('#btn-restart').addEventListener('click', gameFlow);
-$('#btn-ship-clear').addEventListener('click', () => shipCanvas.clear());
-$('#btn-ship-submit').addEventListener('click', onShipSubmit);
-$('#btn-clear').addEventListener('click', () => battleCanvas.clear());
-$('#btn-submit').addEventListener('click', () => submitAttack(false));
+function strokeBar(control, side) {
+  const s = control?.stroke;
+  if (!s || !Number.isFinite(s.t) || !s[side]) return '░░░';
+  const env = strokeProgress(control, side);
+  if (env > 0) {
+    const filled = Math.max(1, Math.round(env * 3));
+    return `<span style="color:#ffd35c">${'▓'.repeat(filled)}</span>${'░'.repeat(3 - filled)}`;
+  }
+  const span = DEVICE_TUNING.oarStrokeDuration + DEVICE_TUNING.oarStrokeCooldown;
+  return s.t < span ? '<span style="opacity:.45">▒▒▒</span>' : '░░░';
+}
+
+function diagRows(result) {
+  const d = result.diagnostics;
+  if (!d) return '';
+  return `
+    <div class="p-sep">스파이크 ① 진단</div>
+    <div class="p-row"><span>입력 점</span><b>${d.rawPoints} → ${d.dedupedPoints ?? '-'}</b></div>
+    <div class="p-row"><span>Union 링</span><b>외곽 ${d.ringsAfterUnion ?? '-'} · 구멍 ${d.holesDropped ?? 0}</b></div>
+    <div class="p-row"><span>단순화</span><b>${d.vertsBeforeSimplify ?? '-'} → ${d.verts ?? '-'} (ε ${(d.epsilonUsed ?? 0).toFixed(3)})</b></div>
+    <div class="p-row"><span>폐곡선 간극</span><b>${(d.closeGap ?? 0).toFixed(2)} m</b></div>
+    <div class="p-row"><span>변환 시간</span><b>${(d.ms ?? 0).toFixed(2)} ms</b></div>`;
+}
+
+// 디버그 핸들 — 콘솔·자동화 테스트에서 물리 상태를 직접 들여다보기 위한 것.
+window.shipwright = new Harness();

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="assets/logo/favicon.png" />
+  <title>그리는 자의 바다 — 항해</title>
+</head>
+<body>
+  <div class="sail-stage">
+    <canvas id="sea"></canvas>
+
+    <div class="hud">
+      <div class="hud-clock">
+        <span class="hud-clock-icon" aria-hidden="true">⏱</span>
+        <span class="hud-label">시간</span>
+        <span class="hud-clock-value" id="hud-clock">00:00</span>
+      </div>
+
+      <div class="hud-distance">
+        <span class="hud-label">목표까지 거리</span>
+        <div class="hud-bar-track">
+          <div class="hud-bar-fill" id="hud-bar-fill"></div>
+          <span class="hud-bar-flag" aria-hidden="true">🏁</span>
+        </div>
+        <span class="hud-distance-value" id="hud-distance">-- km</span>
+      </div>
+    </div>
+
+    <div class="hud-banner hidden" id="hud-banner">도착!</div>
+  </div>
+
+  <script type="module" src="/src/sail/screen.js"></script>
+</body>
+</html>

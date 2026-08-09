@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "game",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", "-p", "5210", "-c-1"],
-      "port": 5210
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5210,
+      "url": "http://localhost:5210"
     }
   ]
 }
