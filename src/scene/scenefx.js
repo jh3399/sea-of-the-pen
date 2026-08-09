@@ -20,6 +20,12 @@ const FX = {
   bulgasari_feed: {
     suck: { cx: 820, cy: 400, count: 120, radius: 900, period: 3.4 },
   },
+  // "반짝이는" 것이 정지 그림이면 그 낱말이 거짓말이 된다. 병에서 새어 나오는 빛이
+  // 숨 쉬듯 커졌다 작아지고, 물속이라 기포가 올라간다.
+  essence: {
+    glow: { cx: 890, cy: 560, r: 420, period: 2.6 },
+    bubbles: { count: 26, period: 5.2, x0: 620, x1: 1160, y0: 780, y1: 60 },
+  },
 };
 
 /** 나무(벽·침대틀·걸상). 이불·고양이·베개는 전부 여기서 빠지므로 플러드 필이 벽에 막힌다. */
@@ -97,6 +103,22 @@ function buildMotes(cfg) {
   return out;
 }
 
+/** 올라가는 기포. 위상을 흩어야 한 줄로 몰려 올라가지 않는다. */
+function buildBubbles(cfg) {
+  const out = [];
+  for (let i = 0; i < cfg.count; i++) {
+    const h1 = Math.sin(i * 21.71) * 33417.1234;
+    const h2 = Math.sin(i * 55.09) * 19876.5432;
+    out.push({
+      x: cfg.x0 + (h1 - Math.floor(h1)) * (cfg.x1 - cfg.x0),
+      phase: h2 - Math.floor(h2),
+      size: 1 + Math.floor((h1 - Math.floor(h1)) * 3),
+      sway: 6 + (h2 - Math.floor(h2)) * 14,
+    });
+  }
+  return out;
+}
+
 let raf = 0;
 let state = null;
 // 그림 로드는 비동기라 씬을 빨리 넘기면 **이미 지나간 씬의 setup 이 나중에 도착**한다.
@@ -140,6 +162,7 @@ export function startSceneFx(canvas, key, src) {
     const breathLayer = cfg.breath ? buildBreathLayer(img, cfg.breath) : null;
     const sparks = cfg.sea ? buildSparks(img, cfg.sea) : [];
     const motes = cfg.suck ? buildMotes(cfg.suck) : [];
+    const bubbles = cfg.bubbles ? buildBubbles(cfg.bubbles) : [];
     state = { canvas, ctx };
 
     const frame = (t) => {
@@ -178,6 +201,33 @@ export function startSceneFx(canvas, key, src) {
           ctx.globalAlpha = 0.55 * Math.min(1, t * 4) * (1 - t);
           ctx.fillStyle = '#9fd4f2';
           ctx.fillRect(Math.round(x), Math.round(y), m.size, m.size);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // 병에서 새어 나오는 빛의 맥박. 원본 그림에 이미 헤일로가 있으므로 여기서는
+      // **덧그리기만** 한다 — 지웠다 다시 그리면 원본의 결이 같이 지워진다.
+      if (cfg.glow) {
+        const g = cfg.glow;
+        const puls = 0.5 + 0.5 * Math.sin((sec / g.period) * Math.PI * 2);
+        const grad = ctx.createRadialGradient(g.cx, g.cy, 0, g.cx, g.cy, g.r);
+        grad.addColorStop(0, `rgba(80,220,255,${0.16 * puls + 0.04})`);
+        grad.addColorStop(0.5, `rgba(50,180,230,${0.07 * puls + 0.02})`);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(g.cx - g.r, g.cy - g.r, g.r * 2, g.r * 2);
+      }
+
+      // 기포 — 물속이라는 표시. 위로 갈수록 옅어진다.
+      if (cfg.bubbles) {
+        const b = cfg.bubbles;
+        for (const p of bubbles) {
+          const t = ((sec / b.period) + p.phase) % 1;
+          const y = b.y0 + (b.y1 - b.y0) * t;
+          const x = p.x + Math.sin(t * Math.PI * 4 + p.phase * 9) * p.sway;
+          ctx.globalAlpha = 0.4 * (1 - t) * Math.min(1, t * 6);
+          ctx.fillStyle = '#a8e8fb';
+          ctx.fillRect(Math.round(x), Math.round(y), p.size, p.size);
         }
         ctx.globalAlpha = 1;
       }

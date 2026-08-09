@@ -15,6 +15,7 @@ import sickroom from '../../assets/scene/sickroom.png';
 import mioDrawing from '../../assets/scene/mio-drawing.png';
 import livingRoom from '../../assets/scene/living-room.png';
 import bulgasariDeep from '../../assets/scene/bulgasari-deep.png';
+import essence from '../../assets/scene/essence.png';
 
 export const BG_PHOTOS = {
   sickroom,
@@ -24,4 +25,5 @@ export const BG_PHOTOS = {
   //   "누워 있다" → "빨아들인다" 로 넘어가는 두 줄에 그림을 두 장 그리지 않기 위해서다.
   bulgasari_deep: bulgasariDeep,
   bulgasari_feed: bulgasariDeep,
+  essence,
 };

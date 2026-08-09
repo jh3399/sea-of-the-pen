@@ -927,6 +927,26 @@ function bulgasariDeepBase(ctx, { w, h, sec }) {
 const bulgasari_deep = bulgasariDeepBase;
 const bulgasari_feed = bulgasariDeepBase;
 
+// ---------------- essence — S-02 정수 (빛나는 유리병) ----------------
+// 화면에 뜨는 것은 assets/scene/essence.png 다 (bgphotos.js). 아래는 그 받침.
+function essence(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#01040c');
+  const cx = R(w * 0.53), cy = R(h * 0.58);
+  const puls = 0.85 + 0.15 * Math.sin(sec * 1.6);
+  for (let i = 5; i > 0; i--) {                     // 병에서 새어 나오는 빛
+    ctx.globalAlpha = 0.05 * puls;
+    blob(ctx, cx, cy, R(w * 0.05 * i), R(h * 0.07 * i), '#2aa6c8');
+  }
+  ctx.globalAlpha = 1;
+  fill(ctx, cx - R(w * 0.03), cy - R(h * 0.12), R(w * 0.06), R(h * 0.26), '#124a5e');  // 병
+  fill(ctx, cx - R(w * 0.025), cy - R(h * 0.02), R(w * 0.05), R(h * 0.15), '#3fe0ff'); // 액체
+  fill(ctx, cx - R(w * 0.012), cy - R(h * 0.18), R(w * 0.024), R(h * 0.06), '#5a4a33'); // 코르크
+  particles(ctx, w, h, sec, {
+    count: 22, color: '#7fd8ee', speed: 6, dir: -1, sway: 3, alpha: 0.3, seed: 403,
+  });
+  vignette(ctx, w, h, 0.4, 12);
+}
+
 // ---------------- bulgasari_name — S-02 不可殺伊 (이름 풀이) ----------------
 // 이름 자체가 이 괴물의 성격이라 화면이 이름만 보여준다.
 //
@@ -1131,6 +1151,7 @@ export const SCENES = {
   bulgasari_deep,
   bulgasari_feed,
   bulgasari_name,
+  essence,
   world_end,
   golden_isle,
 };

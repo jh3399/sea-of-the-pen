@@ -63,9 +63,12 @@ export const SCRIPT = {
     // 빨려든다 (scenefx `bulgasari_feed`). 가만히 있다가 빨아들이기 시작하는 것이
     // 대사의 순서이고, 그림을 두 장 그리지 않아도 그게 된다.
     { speaker: '포포', sprite: 'examiner', bg: 'bulgasari_feed', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
-    { speaker: '포포', sprite: 'examiner', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 하는구나.' },
+    // 삼킨 것들이 맺혀 정수가 되는 자리. 빛나는 병 한 병으로 넘어간다 —
+    // 이 두 줄이 이 게임의 목적을 정하므로 화면도 그것만 보여야 한다.
+    { speaker: '포포', sprite: 'examiner', bg: 'essence', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 하는구나.' },
     { speaker: '포포', sprite: 'examiner', text: '그 정수 한 모금이면 어떤 병도 낫는다고, 오래전부터 이 바다에 전해 오는 이야기란다.' },
-    { speaker: '루', sprite: 'ru', text: '그 괴물이 어디 있는지 아시나요.' },
+    // 전설이 끝났다. 거실로 돌아와야 다음 줄이 "지금 여기서 하는 대화"로 읽힌다.
+    { speaker: '루', sprite: 'ru', bg: 'living_room', text: '그 괴물이 어디 있는지 아시나요.' },
 
     // 바다 셋 = 실제 3맵. 각 줄이 그 맵에서 플레이어를 죽이는 것을 하나씩 말한다.
     { speaker: '포포', sprite: 'examiner', text: '바다를 셋 건너야 하지.' },
