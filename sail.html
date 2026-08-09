@@ -27,6 +27,14 @@
       </div>
     </div>
 
+    <!-- 조작 안내 — 연습 해역에서만 뜬다 (game/progress.js 의 STAGES[].hints).
+         읽는 목록이 아니라 **해 보면 켜지는 판**이다. 직접 해 본 줄만 불이 들어오고,
+         셋을 다 해 보면 판이 저절로 사라진다. 「키」 줄은 배에 키가 달렸을 때만 나온다. -->
+    <div class="sail-hints" id="sail-hints" hidden aria-live="polite">
+      <p class="sail-hints-title">조작</p>
+      <ul class="sail-hints-list" id="sail-hints-list"></ul>
+    </div>
+
     <div class="clear-overlay hidden" id="clear-overlay" role="dialog" aria-modal="true" aria-labelledby="clear-title">
       <div class="clear-panel">
         <p class="clear-kicker">목표 도착</p>

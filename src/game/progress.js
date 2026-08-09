@@ -17,10 +17,13 @@ const STAGE_KEY = 'shipwright:stage';
  * `interlude` 는 **그 바다를 클리어한 뒤** 재생할 대사 비트다 (`story/script.js` 의 키).
  * null 이면 곧바로 다음 바다로 넘어간다. 대사가 스테이지 데이터에 붙어 있어야
  * "연습 다음에 섬 이야기"라는 순서가 코드가 아니라 데이터로 남는다.
+ *
+ * `hints` 는 항해 화면에 조작 안내판을 띄울지다. **연습 해역에만 켠다** — D4 통과 질문이
+ * "튜토리얼 텍스트 없이 1장을 클리어하는가"라, 1장부터는 화면이 설명하지 않아야 한다.
  */
 export const STAGES = [
-  { id: 'practice', label: '연습 해역', interlude: 'FIRST_ISLAND' },
-  { id: 'reef', label: '바위 협곡', interlude: null },
+  { id: 'practice', label: '연습 해역', interlude: 'FIRST_ISLAND', hints: true },
+  { id: 'reef', label: '바위 협곡', interlude: null, hints: false },
 ];
 
 /** 지금 스테이지의 인덱스. 저장값이 깨졌거나 범위를 벗어나면 처음으로 되돌린다. */

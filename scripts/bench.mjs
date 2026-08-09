@@ -2704,6 +2704,21 @@ console.log(`  직선 최소 ${straightSeconds.toFixed(1)}초 · 3별 기준 ${p
 check('★ 연습 해역의 3별 기준이 넉넉하다 (헤매도 3별 — 연습에서 1별은 배움이 아니라 벌이다)',
   slack > 3, `직선 시간의 ${slack.toFixed(1)}배`);
 
+// ⚠ 처음엔 골이 53 m 였는데 **너무 가까웠다** — 출발하자마자 도착 표시가 화면에 들어와서
+//   익히는 구간이 아니라 짧은 심부름이 됐다. 아래위로 가둔다: 짧으면 못 배우고, 길면
+//   배우는 시간이 아니라 그냥 젓는 시간이 된다.
+check('★ 연습 해역이 너무 짧지 않다 (직진으로도 15초는 든다)', straightSeconds > 15,
+  `직선 ${straightSeconds.toFixed(1)}초`);
+check('그렇다고 1장보다 길지도 않다 (연습이 본편보다 멀면 안 된다)',
+  goalDist < Math.hypot(DEMO_MAP.goal.x, DEMO_MAP.goal.y),
+  `연습 ${goalDist.toFixed(0)} m vs 1장 ${Math.hypot(DEMO_MAP.goal.x, DEMO_MAP.goal.y).toFixed(0)} m`);
+
+// 조작 안내는 **연습 해역에만** 켠다 — D4 통과 질문이 "튜토리얼 텍스트 없이 1장을
+// 클리어하는가"라, 1장부터는 화면이 설명하면 안 된다.
+check('★ 조작 안내가 연습 해역에만 켜져 있다', STAGES[0].hints === true
+  && STAGES.slice(1).every((st) => !st.hints),
+  STAGES.map((st) => `${st.id}:${st.hints ? 'on' : 'off'}`).join(' · '));
+
 check('연습 해역도 출항·도착이 암초에 묻히지 않았다',
   Math.min(...pm.obstacles.map((o) => Math.hypot(o.x, o.y) - o.radius)) > 5
   && Math.min(...pm.obstacles.map((o) => Math.hypot(o.x - pm.goal.x, o.y - pm.goal.y) - o.radius)) > pm.goal.radius,
@@ -2712,7 +2727,7 @@ check('연습 해역의 골이 해역 안에 있다',
   pm.goal.x + pm.goal.radius < pb.maxX && pm.goal.y + pm.goal.radius < pb.maxY,
   `골 (${pm.goal.x}, ${pm.goal.y}) · 해역 x≤${pb.maxX} y≤${pb.maxY}`);
 check('연습 해역이 1장보다 좁다 (넓은 바다에서 길을 잃는 것 자체가 초반 좌절이다)',
-  (pb.maxX - pb.minX) * (pb.maxY - pb.minY) < (sea.maxX - sea.minX) * (sea.maxY - sea.minY) * 0.5,
+  (pb.maxX - pb.minX) * (pb.maxY - pb.minY) < (sea.maxX - sea.minX) * (sea.maxY - sea.minY) * 0.7,
   `연습 ${(pb.maxX - pb.minX)}×${(pb.maxY - pb.minY)} vs 1장 ${(sea.maxX - sea.minX)}×${(sea.maxY - sea.minY)}`);
 
 // ★ 진행 표와 맵 표가 어긋나면 화면이 빈 바다를 띄운다 (MAPS[id] 가 undefined).

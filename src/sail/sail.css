@@ -265,3 +265,74 @@ html, body {
   .clear-actions { grid-template-columns: 1fr; }
   .clear-record { margin-bottom: 16px; }
 }
+
+/* ── 조작 안내 (연습 해역 전용) ──────────────────────────────────
+   HUD 와 같은 톤이되 아래에 둔다 — 위는 시간·거리가 쓰고, 눈이 배를 따라가는 동안
+   시야 가장자리에 걸리는 자리다. pointer-events 를 끄는 것이 중요하다: 안내판이
+   클릭을 먹으면 그 아래 바다를 못 만진다. */
+
+.sail-hints {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 10px 14px 8px;
+  color: var(--ink);
+  background: rgba(8, 20, 34, 0.82);
+  border: 2px solid rgba(140, 190, 230, 0.35);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transition: opacity 700ms ease;
+}
+
+/* 셋을 다 해 보면 사라진다. display 를 건드리지 않고 opacity 만 내리는 이유는
+   전환이 뚝 끊기지 않게 하기 위해서다 — 다 배운 사람에게 판이 툭 없어지면 놀란다. */
+.sail-hints.done { opacity: 0; }
+
+.sail-hints-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  letter-spacing: 2px;
+  opacity: 0.6;
+}
+
+.sail-hints-list {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sail-hints-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 17px;
+  /* 아직 안 해 본 줄은 눌러 둔다. 대비가 곧 "남은 것"의 표시다. */
+  opacity: 0.5;
+  transition: opacity 260ms ease, color 260ms ease;
+}
+
+.sail-hints-list li.on {
+  opacity: 1;
+  color: var(--accent, #f0c987);
+}
+
+.sail-hints-key {
+  padding: 2px 7px;
+  color: #0b1c2c;
+  background: var(--ink, #f5e6c8);
+  border: 2px solid rgba(0, 0, 0, 0.4);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.sail-hints-list li.on .sail-hints-key {
+  background: var(--accent, #f0c987);
+}
+
+@media (max-width: 760px) {
+  .sail-hints { left: 8px; right: 8px; bottom: 10px; transform: none; }
+  .sail-hints-list { flex-wrap: wrap; gap: 10px 14px; }
+}
