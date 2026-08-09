@@ -51,6 +51,22 @@ const FX = {
     glow: { cx: 890, cy: 560, r: 420, period: 2.6 },
     bubbles: { count: 26, period: 5.2, x0: 620, x1: 1160, y0: 780, y1: 60 },
   },
+  // 별의섬 — "수백 개가 조용히 빛났다"가 정지 그림이면 그 줄이 거짓말이 된다.
+  //
+  // ★ 자리를 **그림에서 찾는다.** 좌표를 손으로 적으면 수백 개를 다 적어야 하고, 그림을
+  //   다시 뽑는 순간 전부 어긋난다. 밝은 주황·빨강·파랑 화소를 훑어 덩어리로 모으면
+  //   원본이 바뀌어도 따라온다 (`buildStarGlints`).
+  // ★ **덧그리기만 한다.** 원본 별에 이미 하이라이트가 있으므로 지웠다 그리면 결이 날아간다
+  //   (essence 의 glow 와 같은 수법).
+  // ⚠ 주기를 개체마다 어긋내지 않으면 수백 개가 한 몸처럼 뛴다 — 타이틀 등불 둘에서 이미
+  //   겪은 것이고, 여기서는 개수가 많아 더 티가 난다.
+  star_isle: {
+    // 실측: 이 그림에서 별이 1039개 잡힌다. 380 이면 바위 전체에 고루 퍼지면서
+    // 프레임당 fillRect 가 760 회 — 60fps 에서 여유가 있다. 전부 쓰면 화면이 자글거린다.
+    glints: { count: 380, yFrom: 0.46, minPeriod: 1.6, maxPeriod: 4.2 },
+    // 물 위로 아주 느리게 오르는 미세한 빛 — 바다 밑이라는 표시.
+    bubbles: { count: 18, period: 7.4, x0: 60, x1: 1600, y0: 930, y1: 380 },
+  },
 };
 
 /** 나무(벽·침대틀·걸상). 이불·고양이·베개는 전부 여기서 빠지므로 플러드 필이 벽에 막힌다. */
@@ -106,6 +122,74 @@ function buildSparks(img, sea) {
     out.push({ x, y, len, speed: 4 + ((n % 5) * 3), phase: n * 0.7 });
   }
   return out;
+}
+
+/**
+ * 바위에 붙은 별들의 자리 — **그림에서 직접 찾는다.**
+ *
+ * ★ 좌표를 손으로 적지 않는 이유: 수백 개다. 그리고 그림을 다시 뽑는 순간 전부 어긋난다.
+ *   밝은 화소를 훑어 자리만 모으면 원본이 바뀌어도 따라온다 (`living_room` 의 눈 좌표를
+ *   초록 화소 클러스터로 찾은 것과 같은 방식이다).
+ *
+ * ⚠ **하늘은 제외한다** (`yFrom` 아래만 본다). 하늘 별까지 잡으면 "바위에 붙어 있다"는
+ *   이 그림의 요점이 흐려지고, 화면 전체가 깜빡여 밤하늘 배경처럼 보인다.
+ * ⚠ 한 별에 화소가 여럿이라 **격자로 눌러 하나만 남긴다.** 안 그러면 같은 별 위에 점이
+ *   열 개씩 겹쳐 맥동이 뭉쳐 보이고 그릴 것도 열 배가 된다.
+ */
+function buildStarGlints(img, cfg) {
+  const W = img.naturalWidth;
+  const H = img.naturalHeight;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const y0 = Math.floor(H * (cfg.yFrom ?? 0.46));
+  const d = ctx.getImageData(0, y0, W, H - y0).data;
+  const w = W;
+
+  // 격자 한 칸에 하나만. 별 하나가 대략 10~20 px 이라 12 로 잡는다.
+  const CELL = 12;
+  const taken = new Set();
+  const out = [];
+  const step = 3;   // 화소를 전부 훑을 필요는 없다 — 별이 그보다 크다
+  for (let y = 0; y < H - y0; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const i = (y * w + x) * 4;
+      const r = d[i]; const g = d[i + 1]; const b = d[i + 2];
+      // 별은 바위(어두운 회보라)보다 확실히 밝고 채도가 있다. 셋 중 하나에 해당한다.
+      const lum = r + g + b;
+      if (lum < 210) continue;
+      const warm = r > 150 && r > b + 50;          // 주황·빨강
+      const cool = b > 150 && b > r + 40;          // 파랑
+      if (!warm && !cool) continue;
+      const key = `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+      if (taken.has(key)) continue;
+      taken.add(key);
+      out.push({ x, y: y + y0, warm });
+    }
+  }
+
+  // ⚠ **개수를 채우는 순간 끊으면 안 된다.** 위에서 아래로 훑으므로 상한에서 return 하면
+  //   화면 위쪽 별만 잡히고 **아래쪽(제일 촘촘한 곳)이 통째로 빠진다** — 실제로 1039개 중
+  //   위쪽 220개만 반짝였다. 다 모은 다음 **고르게 솎아야** 바위 전체가 산다.
+  const want = cfg.count ?? 220;
+  const stride = out.length > want ? out.length / want : 1;
+  const picked = [];
+  for (let i = 0; picked.length < Math.min(want, out.length); i += stride) {
+    const s = out[Math.floor(i)];
+    if (!s) break;
+    const n = picked.length;
+    const h = Math.sin(n * 12.9898) * 43758.5453;
+    const frac = h - Math.floor(h);
+    picked.push({
+      ...s,
+      // 주기·위상을 개체마다 흩뿌린다. 같으면 수백 개가 한 몸으로 뛴다.
+      period: (cfg.minPeriod ?? 1.6) + frac * ((cfg.maxPeriod ?? 4.2) - (cfg.minPeriod ?? 1.6)),
+      phase: frac * 6.283,
+      size: 2 + (n % 3),
+    });
+  }
+  return picked;
 }
 
 /**
@@ -221,6 +305,7 @@ export function startSceneFx(canvas, key, src) {
     const motes = cfg.suck ? buildMotes(cfg.suck) : [];
     const bubbles = cfg.bubbles ? buildBubbles(cfg.bubbles) : [];
     const dust = cfg.dust ? buildDust(cfg.dust) : [];
+    const glints = cfg.glints ? buildStarGlints(img, cfg.glints) : [];
     state = { canvas, ctx };
 
     const frame = (t) => {
@@ -318,6 +403,24 @@ export function startSceneFx(canvas, key, src) {
           ctx.fillStyle = B.lid;
           ctx.fillRect(bx + 2, by + Math.round(bh * 0.62), bw - 4, lh);
         }
+      }
+
+      // 바위에 붙은 별들의 맥박 — **덧그리기만** 한다 (원본 하이라이트를 지우지 않는다).
+      // `lighter` 로 얹어야 빛이 더해지는 것으로 보인다. 보통 합성이면 점을 찍은 것처럼 뜬다.
+      if (cfg.glints) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (const s of glints) {
+          const puls = 0.5 + 0.5 * Math.sin((sec / s.period) * Math.PI * 2 + s.phase);
+          ctx.globalAlpha = 0.10 + 0.34 * puls;
+          ctx.fillStyle = s.warm ? '#ffd8a0' : '#bcd8ff';
+          ctx.fillRect(s.x - s.size, s.y - s.size, s.size * 2, s.size * 2);
+          // 한가운데 흰 심 — 별의 흰 점을 살짝 밀어 준다.
+          ctx.globalAlpha = 0.18 + 0.5 * puls;
+          ctx.fillStyle = '#fff6e0';
+          ctx.fillRect(s.x - 1, s.y - 1, 2, 2);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
       }
 
       // 기포 — 물속이라는 표시. 위로 갈수록 옅어진다.
