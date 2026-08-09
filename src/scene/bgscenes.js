@@ -56,6 +56,40 @@ function harbor(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.04);
 }
 
+// ---------------- harbor_dusk — S-03 해질녘 부두 ----------------
+//
+// ★ harbor 와 **같은 그림이다.** 수평선 높이·언덕·구름·정박선·등대·부두의 좌표와 seed 를
+//   하나도 바꾸지 않았다 (seed 11·12·13·14·15·16·17 이 전부 그대로다). 바뀐 것은
+//   팔레트와 해의 높이뿐이라, 크로스페이드하면 같은 자리에 해만 내려앉는다.
+//   ⚠ seed 를 하나라도 건드리면 언덕선과 구름이 다른 데서 다시 나서 "다른 부두"가 된다.
+// ★ 등대에 불이 들어오는 것이 낮과 다른 유일한 사건이다. 아무도 말하지 않지만
+//   시간이 흘렀다는 표시가 되고, S-03 의 "해가 지고 있었다"를 그림이 대신 받는다.
+
+function harbor_dusk(ctx, { w, h, sec }) {
+  const hz = R(h * 0.62);
+  skyGradient(ctx, w, 0, hz, ['#2b1e4a', '#5b2f5e', '#9c4a5a', '#d1734f', '#f0a862']);
+  // 해는 harbor 와 같은 x(0.2w). 높이만 hz*0.24 → hz*0.82 로 내려앉는다.
+  sun(ctx, w * 0.2, hz * 0.82, 9, sec, { core: '#fff0c0', rim: '#ffbe6a', glow: '#ff7f4c' });
+  clouds(ctx, w, sec, { y: hz * 0.22, color: '#7a4a6b', alpha: 0.7, count: 5, speed: 2.2, scale: 1.4, seed: 11 });
+  clouds(ctx, w, sec, { y: hz * 0.48, color: '#e08a63', alpha: 0.5, count: 4, speed: 4, scale: 1, seed: 12 });
+  hills(ctx, w, hz + 1, '#3a2b46', { amp: 14, freq: 1.1, seed: 13, from: 0, to: 0.45 });
+  hills(ctx, w, hz + 1, '#4a3554', { amp: 9, freq: 1.7, seed: 14, from: 0.55, to: 1 });
+  const bands = seaBands(ctx, w, h, hz, ['#8a5a6e', '#6f4761', '#5a3a55', '#472e48', '#36243a', '#281b2d']);
+  glitter(ctx, w * 0.2, hz, h, sec, '#ffcf8a', { alpha: 0.55, count: 110, seed: 15 });
+  waves(ctx, w, bands, sec, '#c07a72', { alpha: 0.38, speed: 7, seed: 16 });
+
+  // 중간 레이어 — 배치는 harbor 와 완전히 같고 팔레트만 저녁이다.
+  lighthouse(ctx, R(w * 0.84), hz + 2, sec, { body: '#9a8b84', stripe: '#8e3630', dark: '#1a1220', light: '#ffe9a8' });
+  const dockPal = { hull: '#251a10', deck: '#3a2b1a', sail: '#c9ab8a', mast: '#1a1209', flag: '#8e3630' };
+  tallShip(ctx, w * 0.1, hz + 6 + Math.sin(sec * 1.1) * 1.2, 1, dockPal);
+  tallShip(ctx, w * 0.42, hz + 10 + Math.sin(sec * 1.1 + 1.4) * 1.4, 1.2, dockPal);
+  tallShip(ctx, w * 0.66, hz + 4 + Math.sin(sec * 1.1 + 2.6) * 1.1, 0.8, dockPal);
+
+  gulls(ctx, w, sec, { y: hz * 0.35, count: 5, speed: 10, seed: 17, color: '#e8c2a4', alpha: 0.7 });
+  pier(ctx, w, h, { wood: '#241a12', dark: '#140d09', top: '#33241a' });
+  vignette(ctx, w, h, 0.1);
+}
+
 // ---------------- sea_day — S-02 맑은 낮 바다 ----------------
 
 function sea_day(ctx, { w, h, sec }) {
@@ -1129,6 +1163,7 @@ function golden_isle(ctx, { w, h, sec }) {
 export const SCENES = {
   night_sea,
   harbor,
+  harbor_dusk,
   sea_day,
   rock_strait,
   fog_black,
