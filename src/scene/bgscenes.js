@@ -7,6 +7,8 @@ import {
   seaBands, waves, glitter, tallShip, lighthouse, pier, gulls, particles, rain, fogBands,
   lightning, wreckage, blight, crystal, goldCrack, fountainPen, BLIGHT,
 } from './bgkit.js';
+import { drawVoyageMap } from './voyagemap.js';
+import { ROUTE, routeIndex } from '../game/progress.js';
 
 const R = Math.round;
 
@@ -88,6 +90,18 @@ function harbor_dusk(ctx, { w, h, sec }) {
   gulls(ctx, w, sec, { y: hz * 0.35, count: 5, speed: 10, seed: 17, color: '#e8c2a4', alpha: 0.7 });
   pier(ctx, w, h, { wood: '#241a12', dark: '#140d09', top: '#33241a' });
   vignette(ctx, w, h, 0.1);
+}
+
+// ---------------- voyage_map — S-06 세렌이 주는 해도 ----------------
+//
+// ★ 씬이 게임 상태를 읽는 유일한 자리다 (`ROUTE` · `routeIndex`). 배경이 데이터를 모르는
+//   편이 낫지만, 씬 함수의 인자는 `{w, h, sec}` 뿐이라 다른 길이 없다. 그림 자체는
+//   `scene/voyagemap.js` 에 있고 여기서는 **어느 지점에 있는지만** 넘긴다.
+// ★ 같은 그림이 항해 중 Tab 장비창에도 뜬다 — 컷과 UI 가 같은 물건이어야 "세렌이 준
+//   그 해도"가 성립한다.
+
+function voyage_map(ctx, { w, h, sec }) {
+  drawVoyageMap(ctx, { w, h, route: ROUTE, at: routeIndex(), sec });
 }
 
 // ---------------- the_pen — S-04 모루가 꺼내는 펜 ----------------
@@ -1223,6 +1237,7 @@ export const SCENES = {
   harbor,
   harbor_dusk,
   the_pen,
+  voyage_map,
   sea_day,
   rock_strait,
   fog_black,

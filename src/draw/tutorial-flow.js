@@ -1,4 +1,11 @@
-export const TUTORIAL_STEPS = [
+import { unlockedItems } from '../game/progress.js';
+
+/**
+ * 단계 전문. 실제로 쓰이는 것은 아래 `TUTORIAL_STEPS` 이고, **그 바다에서 의미 없는 단계는
+ * 빠진다** — 첫 배는 노만 달아서 아이템 칸 자체가 숨어 있는데, 없는 칸을 가리키며
+ * "아이템을 붙이세요" 하면 화면에 빈 테두리만 뜬다.
+ */
+const ALL_STEPS = [
   {
     id: 'draw-hull',
     target: '#ink',
@@ -69,6 +76,17 @@ export const TUTORIAL_STEPS = [
     actionHint: '완성하기 버튼을 누르면 튜토리얼도 끝납니다.',
   },
 ];
+
+/**
+ * 이번 화면에서 실제로 도는 단계.
+ *
+ * ⚠ 이 모듈은 순수한 편이 좋지만 여기서만 진행도를 읽는다 — 단계 목록이 화면 구성과
+ *   어긋나면 튜토리얼이 없는 것을 가리키기 때문이다. `unlockedItems()` 는 sessionStorage 가
+ *   없는 환경(node 검사)에서 "처음부터"로 읽으므로 헤드리스에서도 안전하다.
+ */
+export const TUTORIAL_STEPS = ALL_STEPS.filter(
+  (step) => step.id !== 'items' || unlockedItems().size > 0,
+);
 
 export function createTutorialState() {
   return { status: 'active', index: 0 };

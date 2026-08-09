@@ -32,7 +32,8 @@ import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
 import { rateTravelTime } from '../src/game/scoring.js';
-import { DEMO_MAP, boundaryWalls } from '../src/sail/map.js';
+import { DEMO_MAP, PRACTICE_MAP, MAPS, boundaryWalls } from '../src/sail/map.js';
+import { STAGES } from '../src/game/progress.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
@@ -2658,6 +2659,83 @@ check('도착 지점이 해역 안에 있다 (경계 벽이 골을 삼키지 않
   DEMO_MAP.goal.x + DEMO_MAP.goal.radius < sea.maxX
   && Math.abs(DEMO_MAP.goal.y) + DEMO_MAP.goal.radius < sea.maxY,
   `골 x=${DEMO_MAP.goal.x} · 해역 x≤${sea.maxX}`);
+
+// ── 0장 「연습 해역」 ─────────────────────────────────────────────
+// 앞의 암초밭과 정반대의 것을 잰다. 여기는 **가르치는 바다**라 벌을 주면 안 되고, 대신
+// 한 가지만은 반드시 강요해야 한다 — 돌지 않으면 못 간다는 것.
+console.log('\n\x1b[36m▌0장 — 연습 해역 (조작을 가르치는 바다)\x1b[0m\n');
+
+const pm = PRACTICE_MAP;
+const pb = pm.bounds;
+
+// ★ 이 맵의 전부. 출항(원점)에서 뱃머리(+X)로 직진하면 지나는 선은 y=0 이므로, 골까지의
+//   최단 거리는 |goal.y| 다. 그것이 골 반지름보다 크면 ↑ 만 눌러서는 **영원히 못 닿는다.**
+//   조작을 글로 설명하는 대신 지형이 강요하게 만든 것이고, 이 값이 무너지면 연습 해역이
+//   그냥 짧은 직진 구간이 된다.
+const straightMiss = Math.abs(pm.goal.y) - pm.goal.radius;
+const goalDist = Math.hypot(pm.goal.x, pm.goal.y);
+const goalBearing = Math.abs(Math.atan2(pm.goal.y, pm.goal.x)) * 180 / Math.PI;
+console.log(`  골 ${goalDist.toFixed(1)} m · 뱃머리에서 ${goalBearing.toFixed(0)}° 옆 · ` +
+  `직진 시 최단 거리 ${straightMiss.toFixed(1)} m`);
+check('★ 직진(↑ 만)으로는 골에 닿을 수 없다 — 반드시 돌아야 한다',
+  straightMiss > 0, `직진 최단 거리가 골 원 밖으로 ${straightMiss.toFixed(1)} m`);
+check('그렇다고 뒤에 있지도 않다 (뱃머리 기준 90° 안)', goalBearing < 90,
+  `${goalBearing.toFixed(0)}°`);
+
+// 가는 길은 뚫려 있어야 한다. 출항 → 골 직선에서 암초까지의 여유를 잰다.
+const segClear = (o) => {
+  const dx = pm.goal.x, dy = pm.goal.y;
+  const t = Math.max(0, Math.min(1, (o.x * dx + o.y * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(o.x - dx * t, o.y - dy * t) - o.radius;
+};
+const laneClear = Math.min(...pm.obstacles.map(segClear));
+console.log(`  암초 ${pm.obstacles.length}개 · 항로 최소 여유 ${laneClear.toFixed(1)} m`);
+check('★ 연습 해역은 항로를 막지 않는다 (부딪히려면 일부러 가야 한다)', laneClear > 8,
+  `최소 여유 ${laneClear.toFixed(1)} m`);
+check('암초 수가 1장보다 훨씬 적다 (가르치는 바다지 시험이 아니다)',
+  pm.obstacles.length * 3 < DEMO_MAP.obstacles.length,
+  `연습 ${pm.obstacles.length}개 vs 1장 ${DEMO_MAP.obstacles.length}개`);
+
+// 별 기준은 넉넉해야 한다 — 노만 단 배의 종단이 4.66 m/s 다. 직선으로도 goalDist/4.66 초가
+// 드는데, 돌면서 가느라 실제로는 훨씬 더 든다. 3별 기준이 그 직선 시간의 몇 배인지를 본다.
+const straightSeconds = goalDist / 4.66;
+const slack = pm.scoring.threeStarMaxSeconds / straightSeconds;
+console.log(`  직선 최소 ${straightSeconds.toFixed(1)}초 · 3별 기준 ${pm.scoring.threeStarMaxSeconds}초 (${slack.toFixed(1)}배)`);
+check('★ 연습 해역의 3별 기준이 넉넉하다 (헤매도 3별 — 연습에서 1별은 배움이 아니라 벌이다)',
+  slack > 3, `직선 시간의 ${slack.toFixed(1)}배`);
+
+// ⚠ 처음엔 골이 53 m 였는데 **너무 가까웠다** — 출발하자마자 도착 표시가 화면에 들어와서
+//   익히는 구간이 아니라 짧은 심부름이 됐다. 아래위로 가둔다: 짧으면 못 배우고, 길면
+//   배우는 시간이 아니라 그냥 젓는 시간이 된다.
+check('★ 연습 해역이 너무 짧지 않다 (직진으로도 15초는 든다)', straightSeconds > 15,
+  `직선 ${straightSeconds.toFixed(1)}초`);
+check('그렇다고 1장보다 길지도 않다 (연습이 본편보다 멀면 안 된다)',
+  goalDist < Math.hypot(DEMO_MAP.goal.x, DEMO_MAP.goal.y),
+  `연습 ${goalDist.toFixed(0)} m vs 1장 ${Math.hypot(DEMO_MAP.goal.x, DEMO_MAP.goal.y).toFixed(0)} m`);
+
+// 조작 안내는 **연습 해역에만** 켠다 — D4 통과 질문이 "튜토리얼 텍스트 없이 1장을
+// 클리어하는가"라, 1장부터는 화면이 설명하면 안 된다.
+check('★ 조작 안내가 연습 해역에만 켜져 있다', STAGES[0].hints === true
+  && STAGES.slice(1).every((st) => !st.hints),
+  STAGES.map((st) => `${st.id}:${st.hints ? 'on' : 'off'}`).join(' · '));
+
+check('연습 해역도 출항·도착이 암초에 묻히지 않았다',
+  Math.min(...pm.obstacles.map((o) => Math.hypot(o.x, o.y) - o.radius)) > 5
+  && Math.min(...pm.obstacles.map((o) => Math.hypot(o.x - pm.goal.x, o.y - pm.goal.y) - o.radius)) > pm.goal.radius,
+  '출항·도착 모두 여유 있음');
+check('연습 해역의 골이 해역 안에 있다',
+  pm.goal.x + pm.goal.radius < pb.maxX && pm.goal.y + pm.goal.radius < pb.maxY,
+  `골 (${pm.goal.x}, ${pm.goal.y}) · 해역 x≤${pb.maxX} y≤${pb.maxY}`);
+check('연습 해역이 1장보다 좁다 (넓은 바다에서 길을 잃는 것 자체가 초반 좌절이다)',
+  (pb.maxX - pb.minX) * (pb.maxY - pb.minY) < (sea.maxX - sea.minX) * (sea.maxY - sea.minY) * 0.7,
+  `연습 ${(pb.maxX - pb.minX)}×${(pb.maxY - pb.minY)} vs 1장 ${(sea.maxX - sea.minX)}×${(sea.maxY - sea.minY)}`);
+
+// ★ 진행 표와 맵 표가 어긋나면 화면이 빈 바다를 띄운다 (MAPS[id] 가 undefined).
+//   둘을 따로 고칠 수 있게 나눠 놓았으므로 여기서 붙여 둔다.
+check('★ STAGES 의 모든 id 에 맵이 있다 (진행 표와 맵 표가 1:1)',
+  STAGES.every((st) => Boolean(MAPS[st.id])),
+  STAGES.map((st) => `${st.id}${MAPS[st.id] ? '✓' : '✗'}`).join(' · '));
+check('연습 해역이 첫 스테이지다', STAGES[0].id === 'practice', STAGES.map((s) => s.id).join(' → '));
 
 // 경계 벽 — 배를 계속 밀어붙여도 넘어가지 못한다. 벽을 빼면 그대로 나가 버리는 것이 대조군이다.
 const seaWalls = boundaryWalls(sea);
