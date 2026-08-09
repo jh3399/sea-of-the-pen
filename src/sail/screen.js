@@ -393,7 +393,8 @@ class SailScreen {
       this.audioReady = true;
       initAudio();
       this.applyVolumes();
-      playBgm('sail');
+      // 어느 곡인지는 **맵이 들고 있다** (`map.bgm`). 이 화면은 바다 이름을 모른다.
+      playBgm(this.map.bgm ?? 'sail');
     };
     window.addEventListener('pointerdown', wake, { once: true });
     window.addEventListener('keydown', wake, { once: true });

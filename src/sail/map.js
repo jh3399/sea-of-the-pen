@@ -151,6 +151,9 @@ export const STORM_MAP = {
   id: 'storm',
   number: 2,
   label: '역풍 협곡',
+  // ★ BGM 도 맵 데이터다. 항해 화면은 `map.bgm` 을 틀 뿐 어느 바다인지 모른다 —
+  //   `if (stage === 'storm')` 를 쓰고 싶어지는 순간이 원칙 1 이 새는 자리다.
+  bgm: 'storm',
   goal: { x: 150, y: -8, radius: 7, label: '등대' },
   scoring: { threeStarMaxSeconds: 75, twoStarMaxSeconds: 110 },
   bounds: SEA_BOUNDS,

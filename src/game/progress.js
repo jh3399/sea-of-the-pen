@@ -43,7 +43,7 @@ export const STAGES = [
   {
     id: 'reef',
     label: '바위 협곡',
-    interlude: null,
+    interlude: 'ROCK_ISLE',
     hints: false,
     gear: true,
     items: ['rudder', 'sail'],
