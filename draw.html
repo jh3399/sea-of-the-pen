@@ -26,7 +26,10 @@
     </div>
 
     <aside class="side">
-      <button id="btn-menu" class="menu-btn" type="button">← 메뉴</button>
+      <div class="side-top-controls">
+        <button id="btn-menu" class="menu-btn" type="button">← 메뉴</button>
+        <button id="btn-tutorial" class="tutorial-replay-btn" type="button">? 튜토리얼</button>
+      </div>
       <div class="panel-card">
         <div class="panel-card-title">기본 장치</div>
         <div id="device-list" class="item-list"></div>
@@ -41,6 +44,26 @@
       </div>
       <button id="btn-finish" class="finish-btn" type="button" disabled>완성하기</button>
     </aside>
+  </div>
+
+  <div id="draw-tutorial" class="draw-tutorial" hidden>
+    <div class="tutorial-mask" data-tutorial-mask aria-hidden="true"></div>
+    <div class="tutorial-mask" data-tutorial-mask aria-hidden="true"></div>
+    <div class="tutorial-mask" data-tutorial-mask aria-hidden="true"></div>
+    <div class="tutorial-mask" data-tutorial-mask aria-hidden="true"></div>
+    <div id="tutorial-ring" class="tutorial-ring" aria-hidden="true"></div>
+    <div id="tutorial-shield" class="tutorial-shield" aria-hidden="true"></div>
+    <section id="tutorial-card" class="tutorial-card" role="dialog" aria-modal="false"
+      aria-labelledby="tutorial-title" aria-describedby="tutorial-body">
+      <div id="tutorial-step" class="tutorial-step" aria-live="polite"></div>
+      <h2 id="tutorial-title"></h2>
+      <p id="tutorial-body"></p>
+      <p id="tutorial-hint" class="tutorial-hint"></p>
+      <div class="tutorial-actions">
+        <button id="tutorial-skip" class="tutorial-skip" type="button">건너뛰기 <span>(Esc)</span></button>
+        <button id="tutorial-next" class="tutorial-next" type="button">다음</button>
+      </div>
+    </section>
   </div>
 
   <script type="module" src="/src/draw/screen.js"></script>

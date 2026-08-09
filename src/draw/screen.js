@@ -12,6 +12,7 @@ import { ITEM_CATALOG } from '../items/catalog.js';
 import { oarAnchorsAt } from '../items/defaults.js';
 import { MATERIALS } from '../hull/params.js';
 import { TEMPLATES, TEMPLATE_LABELS, TEMPLATE_ORDER } from './templates.js';
+import { DrawTutorial } from './tutorial.js';
 import {
   itemIconSVG, templateThumbSVG, drawItemMarker, drawCrewSprite,
   markerAngleToward, itemMarkerSize, OAR_PUSH,
@@ -49,6 +50,7 @@ class DrawScreen {
     this.clearBtn = document.getElementById('btn-clear');
     this.finishBtn = document.getElementById('btn-finish');
     this.menuBtn = document.getElementById('btn-menu');
+    this.tutorialBtn = document.getElementById('btn-tutorial');
 
     this.material = 'wood';
     this.template = null;
@@ -76,10 +78,23 @@ class DrawScreen {
     this.buildMaterialList();
     this.buildBlueprintPanel();
     this.bindTopControls();
+    this.tutorial = new DrawTutorial({
+      getSnapshot: () => this.tutorialSnapshot(),
+      replayButton: this.tutorialBtn,
+    });
 
     this.resize = this.resize.bind(this);
     window.addEventListener('resize', this.resize);
     this.resize();
+    requestAnimationFrame(() => this.tutorial.startIfNeeded());
+  }
+
+  tutorialSnapshot() {
+    return {
+      hasValidHull: Boolean(this.design?.ok),
+      hasOar: this.oarX !== null,
+      canFinish: !this.finishBtn.disabled,
+    };
   }
 
   // ── 레이아웃 ──────────────────────────────────────────────
@@ -130,6 +145,7 @@ class DrawScreen {
     this.updateAboard();
     this.syncFinishButton();
     this.render();
+    if (result.ok) this.tutorial.handle('HULL_CONFIRMED');
   }
 
   failMessage(result) {
@@ -218,6 +234,7 @@ class DrawScreen {
     this.buildDeviceList();
     this.syncFinishButton();
     this.setStatus(`노를 달았습니다. 노 간격 ${(at.halfBeam * 2).toFixed(2)} m.`, 'ok');
+    this.tutorial.handle('OAR_PLACED');
   }
 
   // ── 아이템 팔레트 ─────────────────────────────────────────
@@ -347,6 +364,7 @@ class DrawScreen {
     this.buildBlueprintPanel();
     this.syncFinishButton();
     this.render();
+    this.tutorial.handle('DESIGN_RESET');
   }
 
   finish() {
@@ -369,6 +387,7 @@ class DrawScreen {
     this.buildItemList();
     this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
+    this.tutorial.complete();
     // 항해 화면(sail.html)이 이어받는다 — 같은 폴더의 상대 경로라 dev/build 양쪽에서 그대로 동작.
     sessionStorage.setItem('shipwright:handoff', JSON.stringify(this.finishedDesign));
     location.href = 'sail.html';

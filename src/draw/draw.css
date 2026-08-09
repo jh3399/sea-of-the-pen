@@ -296,7 +296,169 @@ html, body {
 .menu-btn:hover { background: #fff8e8; }
 .menu-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 rgba(0, 0, 0, 0.3); }
 
+/* ── 그리기 튜토리얼 ────────────────────────────────────────── */
+
+.side-top-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tutorial-replay-btn,
+.tutorial-next,
+.tutorial-skip {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tutorial-replay-btn {
+  font-size: 17px;
+  padding: 7px 12px;
+  color: var(--wood-dark);
+  background: #fbf3de;
+  border: 2px solid var(--wood-dark);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.tutorial-replay-btn:hover { background: #fff8e8; }
+.tutorial-replay-btn:active { transform: translate(2px, 2px); box-shadow: none; }
+
+.draw-tutorial {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.draw-tutorial[hidden] { display: none; }
+
+.tutorial-mask,
+.tutorial-ring,
+.tutorial-shield,
+.tutorial-card {
+  position: fixed;
+}
+
+.tutorial-mask {
+  background: rgba(5, 13, 22, 0.72);
+  pointer-events: auto;
+}
+
+.tutorial-ring {
+  border: 4px solid var(--accent);
+  outline: 2px solid #fffdf7;
+  box-shadow: 0 0 0 3px rgba(11, 28, 44, 0.8), 0 0 22px rgba(240, 201, 135, 0.9);
+  animation: tutorial-pulse 1.25s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.tutorial-shield { background: transparent; }
+
+.tutorial-card {
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 18px 19px 16px;
+  color: var(--wood-dark);
+  background:
+    repeating-linear-gradient(0deg, rgba(105, 88, 58, 0.08) 0 1px, transparent 1px 28px),
+    #fffaf0;
+  border: 3px solid var(--wood-dark);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.38);
+  pointer-events: auto;
+}
+
+.tutorial-step {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 3px 8px;
+  color: #fff;
+  background: var(--banner);
+  font-size: 16px;
+  letter-spacing: 1px;
+}
+
+.tutorial-card h2 {
+  margin: 0 0 10px;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.tutorial-card p {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.55;
+}
+
+.tutorial-card .tutorial-hint {
+  margin-top: 12px;
+  padding: 8px 10px;
+  color: #244b66;
+  background: rgba(127, 227, 255, 0.18);
+  border-left: 3px solid var(--banner);
+  font-size: 16px;
+}
+
+.tutorial-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.tutorial-next,
+.tutorial-skip {
+  min-height: 42px;
+  padding: 8px 14px;
+  border: 2px solid var(--wood-dark);
+  font-size: 17px;
+}
+
+.tutorial-next {
+  margin-left: auto;
+  color: #4a2f10;
+  background: linear-gradient(180deg, #ffe3a3, var(--accent));
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+
+.tutorial-skip {
+  color: var(--wood-dark);
+  background: #fbf3de;
+}
+
+.tutorial-skip span { opacity: 0.65; font-size: 14px; }
+.tutorial-next:hover, .tutorial-skip:hover { filter: brightness(1.05); }
+.tutorial-next:active, .tutorial-skip:active { transform: translate(1px, 1px); }
+
+.tutorial-replay-btn:focus-visible,
+.tutorial-next:focus-visible,
+.tutorial-skip:focus-visible {
+  outline: 3px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+@keyframes tutorial-pulse {
+  from { filter: brightness(0.95); }
+  to { filter: brightness(1.25); }
+}
+
 @media (max-width: 760px) {
   .side { width: 260px; }
   .item-row, .material-row { font-size: 17px; }
+  .tutorial-replay-btn, .menu-btn { font-size: 15px; padding-inline: 9px; }
+  .tutorial-card h2 { font-size: 21px; }
+  .tutorial-card p { font-size: 16px; }
+}
+
+@media (max-height: 560px) {
+  .tutorial-card { padding: 12px 14px; }
+  .tutorial-card h2 { font-size: 20px; margin-bottom: 6px; }
+  .tutorial-card p { font-size: 15px; line-height: 1.4; }
+  .tutorial-actions { margin-top: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-ring { animation: none; }
 }
