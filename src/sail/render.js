@@ -4,7 +4,7 @@
 // 기존 픽셀 아이콘 헬퍼를 그대로 재사용한다.
 import { bounds, pointInPolygon } from '../geom/poly.js';
 import { MATERIALS } from '../hull/params.js';
-import { drawItemMarker, drawCrewSprite } from '../draw/icons.js';
+import { drawItemMarker, drawCrewSprite, drawPixelGrid } from '../draw/icons.js';
 
 /** 선체 폴리곤을 몇 칸 그리드로 래스터화할 것인가 (긴 변 기준). */
 const HULL_PIXEL_COLS = 28;
@@ -23,6 +23,35 @@ const CREW_PIXEL = 0.05;
 const WATER_BASE = '#1c4fae';
 const WATER_DEEP = 'rgba(6, 22, 64, 0.28)';
 const SHOAL_RING = 'rgba(214, 244, 240, 0.5)';
+
+/** 도착 지점 색 — 하니스(`main.js#drawGoal`)와 같은 두 톤을 쓴다 (도착 전 금색 / 클리어 초록). */
+const GOAL_GOLD = '#ffd35c';
+const GOAL_CLEAR = '#8ce99a';
+const GOAL_INK = '#2a1f14';
+/** 도착 부표 — 깃대(K) + 깃발·부표 몸체(G). G 는 상태에 따라 금색/초록으로 갈아 끼운다. */
+const GOAL_GRID = [
+  '.....KGGGG..',
+  '.....KGGGG..',
+  '.....KGG....',
+  '.....K......',
+  '.....K......',
+  '....GGGG....',
+  '...GGKKGG...',
+  '...GKKKKG...',
+  '...GGKKGG...',
+  '....GGGG....',
+  '............',
+  '............',
+];
+/** 화면 밖 도착 지점을 가리키는 화살표가 가장자리에서 떨어져 있을 거리 (CSS px). */
+const COMPASS_MARGIN = 56;
+/** 화살표 몸통 — 회전 중심에서 화살촉 끝(+)과 꽁무니(−)까지 (CSS px). 라벨은 꽁무니 뒤로 물러난다. */
+const ARROW_TIP = 16;
+const ARROW_BACK = 9;
+/** 거리 라벨 판의 좌우 여백 · 반높이 · 화살표와의 간격 (CSS px). */
+const LABEL_PAD = 7;
+const LABEL_HALF_H = 11;
+const LABEL_GAP = 8;
 
 /** 결정론적 의사난수 (0..1) — 좌표를 시드로 쓰므로 프레임마다 깜빡이지 않는다. */
 function hash2(x, y) {
@@ -45,6 +74,12 @@ function shade(hex, amt) {
   const gg = clamp(f(g), 0, 255);
   const bb = clamp(f(b), 0, 255);
   return `#${((1 << 24) + (rr << 16) + (gg << 8) + bb).toString(16).slice(1)}`;
+}
+
+/** #rrggbb + 알파 → rgba(). */
+function rgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a.toFixed(3)})`;
 }
 
 function at(grid, cols, rows, r, c) {
@@ -160,6 +195,135 @@ export function drawRock(ctx, spec) {
       }
     }
   }
+}
+
+/**
+ * 도착 지점 — 판정 반경 그대로의 고리 + 한가운데 부표.
+ *
+ * 고리를 **판정 반경 그대로** 그리는 것이 핵심이다. `game/goal.js` 의 판정은 주인공 점 하나가
+ * 이 원에 들어왔는지만 보므로, 원을 크게/작게 그리면 "배는 걸쳤는데 클리어가 안 된다"가
+ * 화면과 어긋나 보인다 — 눈에 보이는 원이 곧 판정선이어야 한다.
+ *
+ * 점묘·깜빡임은 `drawWater` 와 같은 방식이다: 자리는 월드 좌표 해시로 **고정**하고 알파만
+ * 시간의 함수로 둔다. 자리를 흔들면 물결과 구분이 안 되는 노이즈가 된다.
+ *
+ * @param {{x:number,y:number,radius:number}} goal `createGoal` 결과
+ * @param {{cleared?:boolean, sec?:number}} opts sec 은 물리 시각(`simTime`) — 벽시계로 두면
+ *        일시정지·프레임 드랍에서 표식만 따로 흐른다 (drawWater 와 같은 이유).
+ */
+export function drawGoal(ctx, view, goal, { cleared = false, sec = 0 } = {}) {
+  if (!goal) return;
+  const { x, y, radius } = goal;
+  const tone = cleared ? GOAL_CLEAR : GOAL_GOLD;
+  const cell = clamp(radius / 9, 0.15, 0.6);
+
+  // 안쪽 수면 — 성긴 점묘. 채워 버리면 바다 위 물감이 되고, 비워 두면 고리만 떠서 "선"으로 읽힌다.
+  const step = cell * 2;
+  const pulse = 0.5 + 0.5 * Math.sin(sec * 1.6);
+  const gx0 = Math.floor((x - radius) / step) * step;
+  const gy0 = Math.floor((y - radius) / step) * step;
+  for (let gy = gy0; gy <= y + radius; gy += step) {
+    for (let gx = gx0; gx <= x + radius; gx += step) {
+      if (Math.hypot(gx - x, gy - y) > radius * 0.92) continue;
+      const h = hash2(gx * 1.3, gy * 1.3);
+      if (h < 0.6) continue;
+      ctx.fillStyle = rgba(tone, 0.08 + 0.18 * pulse * h);
+      ctx.fillRect(gx, gy, cell, cell);
+    }
+  }
+
+  // 고리 — 도트 하나씩 찍은 점선. 빈 칸이 시간에 따라 한 칸씩 돌아 "살아 있는" 표식이 된다.
+  const seg = Math.max(20, Math.round((TAU * radius) / (cell * 1.8)));
+  const spin = Math.floor(sec * 4);
+  ctx.fillStyle = tone;
+  for (let i = 0; i < seg; i++) {
+    if ((i + spin) % 4 === 0) continue;
+    const a = (i / seg) * TAU;
+    ctx.fillRect(x + Math.cos(a) * radius - cell / 2, y + Math.sin(a) * radius - cell / 2, cell, cell);
+  }
+
+  // 부표 — 물결에 맞춰 위아래로 흔들린다. 밑동이 원의 중심에 오도록 그리드 아래쪽을 기준으로 잡는다.
+  const pixel = clamp(radius / 26, 0.1, 0.3);
+  const rows = GOAL_GRID.length;
+  const cols = GOAL_GRID[0].length;
+  const bob = Math.sin(sec * 1.4) * pixel * 0.8;
+  const palette = { K: GOAL_INK, G: tone };
+  drawUprightIcon(ctx, x, y + bob, () => {
+    drawPixelGrid(ctx, GOAL_GRID, palette, -(cols * pixel) / 2, -(rows - 3) * pixel, pixel);
+  });
+}
+
+/**
+ * 도착 지점이 화면 밖일 때 화면 가장자리에 띄우는 방향 화살표 + 남은 거리.
+ *
+ * 이게 없으면 도착 지점은 **항해 대부분의 시간 동안 존재하지 않는 것과 같다** — 20 px/m 줌에서
+ * 화면에 담기는 폭은 60 m 남짓인데 데모 맵의 골은 150 m 앞에 있다.
+ *
+ * @param {{x:number,y:number}|null} from 주인공 월드 좌표. 거리 표기에만 쓴다 (방향은 카메라 기준).
+ */
+export function drawGoalCompass(ctx, view, goal, from, { cleared = false } = {}) {
+  if (!goal) return;
+  const s = view.worldToScreen(goal);
+  const m = COMPASS_MARGIN;
+  if (s.x >= m && s.x <= view.width - m && s.y >= m && s.y <= view.height - m) return;
+
+  const cx = view.width / 2;
+  const cy = view.height / 2;
+  const dx = s.x - cx;
+  const dy = s.y - cy;
+  // 방향은 그대로 두고 길이만 줄여 여백 사각형 위로 끌어온다 (성분별로 clamp 하면 각도가 틀어진다).
+  const t = Math.min(
+    (view.width / 2 - m) / Math.max(Math.abs(dx), 1e-6),
+    (view.height / 2 - m) / Math.max(Math.abs(dy), 1e-6),
+  );
+  const ax = cx + dx * t;
+  const ay = cy + dy * t;
+  const ang = Math.atan2(dy, dx);
+  const tone = cleared ? GOAL_CLEAR : GOAL_GOLD;
+  const dist = from ? Math.hypot(goal.x - from.x, goal.y - from.y) : Infinity;
+
+  view.screenSpace((c) => {
+    c.save();
+    c.translate(ax, ay);
+    c.rotate(ang);
+    c.beginPath();
+    c.moveTo(ARROW_TIP, 0);
+    c.lineTo(-ARROW_BACK, -11);
+    c.lineTo(-4, 0);
+    c.lineTo(-ARROW_BACK, 11);
+    c.closePath();
+    c.fillStyle = tone;
+    c.strokeStyle = 'rgba(8, 20, 32, 0.85)';
+    c.lineWidth = 3;
+    c.stroke();
+    c.fill();
+    c.restore();
+
+    // 라벨은 회전시키지 않는다 — 화면 아래·왼쪽 가장자리에서 글자가 뒤집혀 읽을 수 없게 된다.
+    if (!Number.isFinite(dist)) return;
+    const label = `${goal.label ?? '도착'} ${dist.toFixed(0)} m`;
+    c.font = "14px 'NeoDunggeunmo', monospace";
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    const hw = c.measureText(label).width / 2 + LABEL_PAD;
+    const hh = LABEL_HALF_H;
+    // ★ 판을 밀어내는 거리는 **방향마다 다르다.** 반폭으로만 물러나면 위아래 방향에서는
+    //   판이 훨씬 얕아(높이 11) 화살표를 그대로 덮고, 반높이로만 물러나면 좌우에서 덮인다.
+    //   방향 위에서 중심→테두리까지의 실제 거리(사각형의 지지 함수)를 구해 그만큼 물러난다.
+    const ux = Math.abs(Math.cos(ang));
+    const uy = Math.abs(Math.sin(ang));
+    const reach = Math.min(
+      ux > 1e-6 ? hw / ux : Infinity,
+      uy > 1e-6 ? hh / uy : Infinity,
+    );
+    const back = ARROW_BACK + LABEL_GAP + reach;
+    const lx = ax - Math.cos(ang) * back;
+    const ly = ay - Math.sin(ang) * back;
+    c.fillStyle = 'rgba(8, 20, 32, 0.75)';
+    c.fillRect(lx - hw, ly - hh, hw * 2, hh * 2);
+    c.fillStyle = tone;
+    c.fillText(label, lx, ly);
+  });
 }
 
 /**

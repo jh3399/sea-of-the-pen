@@ -23,7 +23,7 @@ import { CORPUS } from '../hull/corpus.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { View } from '../render/view.js';
-import { drawWater, drawRock, drawHullBody, drawWake } from './render.js';
+import { drawWater, drawRock, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
 import { DEMO_MAP } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
@@ -54,6 +54,12 @@ function fallbackDesign() {
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
+}
+
+/** 남은 거리 표기. 맵 한 장이 수백 m 규모라 km 로 고정하면 도착할 때까지 0.0x km 만 보인다. */
+function formatDistance(m) {
+  if (!Number.isFinite(m)) return '-- m';
+  return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${m.toFixed(0)} m`;
 }
 
 class SailScreen {
@@ -225,6 +231,9 @@ class SailScreen {
 
     // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 물결만 따로 흐른다.
     drawWater(ctx, view, this.simTime);
+    // 도착 지점은 수면 위 표식이라 배·암초보다 **아래**에 깐다 — 도착하는 순간 배가 고리를
+    // 가리는 것이 맞다 (고리 위에 배가 올라앉아야 "들어갔다"로 읽힌다).
+    drawGoal(ctx, view, this.goal, { cleared: this.cleared, sec: this.simTime });
     for (const body of this.obstacles) {
       const spec = body.getUserData()?.obstacle?.spec;
       if (spec?.shape === 'circle') drawRock(ctx, spec);
@@ -239,6 +248,10 @@ class SailScreen {
       drawHullBody(ctx, body.getUserData().hull);
       ctx.restore();
     }
+    // 화면 밖일 때만 가장자리 화살표가 뜬다 — 판단은 `drawGoalCompass` 안에서 한다.
+    drawGoalCompass(ctx, view, this.goal, crewWorldPoint(findCrewBody(this.bodies)), {
+      cleared: this.cleared,
+    });
   }
 
   updateHud() {
@@ -254,9 +267,7 @@ class SailScreen {
       ? Number(this.cleared)
       : clamp01(1 - remaining / this.initialDistance);
     this.hud.barFill.style.width = `${(frac * 100).toFixed(1)}%`;
-    this.hud.distance.textContent = Number.isFinite(remaining)
-      ? `${(remaining / 1000).toFixed(2)} km`
-      : '-- km';
+    this.hud.distance.textContent = formatDistance(remaining);
 
     if (this.cleared) this._huddedAtClear = true;
   }
