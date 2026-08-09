@@ -72,7 +72,13 @@ export const STAGES = [
      */
     id: 'volcano',
     label: '불의 바다',
-    interlude: null,
+    /**
+     * ⚠ **지금은 재생되지 않는다.** 막간은 「다음 스테이지」 버튼에서만 흐르는데 그 버튼이
+     *   `hasNextStage()` 로 잠겨 있어서, 불의 바다 뒤에 스테이지가 하나 더 (불가사리의
+     *   바다) 생기기 전까지 이 값은 죽어 있다. 대사·씬은 [S-09] 로 다 써 두었으니
+     *   그 스테이지가 `STAGES` 에 들어오는 날 저절로 켜진다.
+     */
+    interlude: 'STAR_ISLE',
     hints: false,
     gear: true,
     items: ['booster'],
