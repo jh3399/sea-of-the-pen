@@ -398,8 +398,9 @@ class DrawScreen {
     this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
     this.tutorial.complete();
-    // 항해 화면(sail.html)이 이어받는다 — 같은 폴더의 상대 경로라 dev/build 양쪽에서 그대로 동작.
+    // 항해 화면(sail.html)이 이어받는다 — 새 설계는 언제나 레벨 1부터 시작한다.
     sessionStorage.setItem('shipwright:handoff', JSON.stringify(this.finishedDesign));
+    sessionStorage.setItem('shipwright:sailLevel', '0');
     location.href = 'sail.html';
   }
 

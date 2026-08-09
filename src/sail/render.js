@@ -117,11 +117,12 @@ function visibleWorldRect(view) {
  *
  * @param {number} sec 경과 시간(초). 물리 시각(`simTime`)을 넣으면 일시정지도 따라 멈춘다.
  */
-export function drawWater(ctx, view, sec = 0) {
+export function drawWater(ctx, view, sec = 0, { gloom = 0 } = {}) {
   const pad = WATER_CELL * 2;
   const { x0, x1, y0, y1 } = visibleWorldRect(view);
+  const dim = clamp(gloom, 0, 1);
 
-  ctx.fillStyle = WATER_BASE;
+  ctx.fillStyle = dim > 0 ? shade(WATER_BASE, -0.42 * dim) : WATER_BASE;
   ctx.fillRect(x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2);
 
   const gx0 = Math.floor((x0 - pad) / WATER_CELL) * WATER_CELL;
@@ -162,6 +163,61 @@ export function drawWater(ctx, view, sec = 0) {
       ctx.fillRect(x, yy, WATER_CELL * 0.55, WATER_CELL * 0.22);
     }
   }
+}
+
+/** 폭풍 비 — 화면에 고정된 시드와 물리 시각만 써 프레임 드랍에도 같은 장면을 낸다. */
+export function drawWeather(ctx, view, { sec = 0, rain = 0, wind = { x: 0, y: 0 } } = {}) {
+  const amount = clamp(rain, 0, 1);
+  if (amount <= 0) return;
+
+  const count = Math.round(45 + amount * 85);
+  const speed = 430;
+  const windMag = Math.hypot(wind.x, wind.y);
+  const wx = windMag > 1e-6 ? wind.x / windMag : 0;
+  const wy = windMag > 1e-6 ? wind.y / windMag : 0;
+  const slantX = wx * 22;
+  const slantY = 34 - wy * 12;
+  const travel = Math.hypot(slantX, slantY) || 1;
+  const ux = slantX / travel;
+  const uy = slantY / travel;
+
+  view.screenSpace((c) => {
+    c.strokeStyle = `rgba(186, 220, 239, ${(0.2 + amount * 0.35).toFixed(3)})`;
+    c.lineWidth = 2;
+    c.beginPath();
+    const spanX = view.width + 100;
+    const spanY = view.height + 100;
+    for (let i = 0; i < count; i++) {
+      const phase = hash2(i * 3.17, i * 7.91);
+      const drift = (sec * speed * (0.75 + hash2(i, 19) * 0.5) + phase * spanY) % spanY;
+      const x = ((hash2(i, 31) * spanX + drift * ux) % spanX + spanX) % spanX - 50;
+      const y = ((hash2(i, 47) * spanY + drift * uy) % spanY + spanY) % spanY - 50;
+      const len = 7 + hash2(i, 59) * 9;
+      c.moveTo(Math.round(x), Math.round(y));
+      c.lineTo(Math.round(x - ux * len), Math.round(y - uy * len));
+    }
+    c.stroke();
+  });
+}
+
+/** 어둠 — 캔버스만 덮어 HUD·클리어 창·목표 나침반은 계속 읽을 수 있게 한다. */
+export function drawDarkness(ctx, view, darkness = 0) {
+  const amount = clamp(darkness, 0, 1);
+  if (amount <= 0) return;
+
+  view.screenSpace((c) => {
+    c.fillStyle = `rgba(4, 10, 29, ${(amount * 0.56).toFixed(3)})`;
+    c.fillRect(0, 0, view.width, view.height);
+    const r = Math.max(view.width, view.height) * 0.72;
+    const vignette = c.createRadialGradient(
+      view.width / 2, view.height / 2, r * 0.18,
+      view.width / 2, view.height / 2, r,
+    );
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, `rgba(0, 3, 14, ${(amount * 0.72).toFixed(3)})`);
+    c.fillStyle = vignette;
+    c.fillRect(0, 0, view.width, view.height);
+  });
 }
 
 /**

@@ -172,8 +172,8 @@ class Harness {
         }
         this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
-        applyFieldsToWorld(this.world, this.fields, dt);
-        this.engine.tick(this.world, dt);
+        applyFieldsToWorld(this.world, this.fields, dt, this.simTime);
+        this.engine.tick(this.world, dt, this.simTime);
       },
     });
 
@@ -548,7 +548,7 @@ class Harness {
         const hot = hottestOutlinePoint(
           hull.outline,
           (x, y) => body.getWorldPoint(new Vec2(x, y)),
-          (x, y) => this.fields.sampleScalar(field, x, y),
+          (x, y) => this.fields.sampleScalar(field, x, y, this.simTime),
         );
         // 구배가 없으면 어느 쪽이 더 탔는지 말할 근거가 없다 — 폴백으로 넘어간다.
         if (hot && hot.spread > 1e-3) return hot.local;
@@ -1230,8 +1230,8 @@ class Harness {
     for (let x = Math.floor(min.x / stepM) * stepM; x <= max.x; x += stepM) {
       for (let y = Math.floor(min.y / stepM) * stepM; y <= max.y; y += stepM) {
         // 스칼라장 — 온도는 붉게, 습기는 푸르게.
-        const temp = this.fields.sampleScalar('temperature', x, y);
-        const wet = this.fields.sampleScalar('moisture', x, y);
+        const temp = this.fields.sampleScalar('temperature', x, y, this.simTime);
+        const wet = this.fields.sampleScalar('moisture', x, y, this.simTime);
         if (temp > 25) {
           ctx.fillStyle = `rgba(255, 90, 50, ${Math.min((temp - 20) / 500, 0.35)})`;
           ctx.fillRect(x - stepM / 2, y - stepM / 2, stepM, stepM);
@@ -1242,7 +1242,7 @@ class Harness {
         }
 
         // 벡터장 — 바람 화살표.
-        const wind = this.fields.sampleVector('wind', x, y);
+        const wind = this.fields.sampleVector('wind', x, y, this.simTime);
         const mag = Math.hypot(wind.x, wind.y);
         if (mag < 0.05) continue;
         const len = Math.min(mag * 0.22, stepM * 0.42);
@@ -1500,7 +1500,7 @@ class Harness {
    * 실제 항적과 어긋나 보이면 그것은 UI 버그가 아니라 예측이 거짓말을 하고 있다는 뜻이다.
    */
   drawTrajectory(ctx, view, body, input, color) {
-    const path = predictPath(body, input, { fields: this.fields });
+    const path = predictPath(body, input, { fields: this.fields, startTime: this.simTime });
     if (path.length < 2) return;
     ctx.save();
     ctx.globalAlpha = 0.55;

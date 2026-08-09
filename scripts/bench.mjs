@@ -35,7 +35,7 @@ import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
 import { rateTravelTime } from '../src/game/scoring.js';
-import { DEMO_MAP, boundaryWalls } from '../src/sail/map.js';
+import { DEMO_MAP, STORM_MAP, MAPS, boundaryWalls } from '../src/sail/map.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
@@ -2793,6 +2793,98 @@ check('★ 해역 밖으로는 나갈 수 없다 (사방이 암초 벽 — 경�
   `북 ${ramNorth.toFixed(1)} ≤ ${sea.maxY} · 동 ${ramEast.toFixed(1)} ≤ ${sea.maxX}`);
 check('막는 것이 정말 벽이다 (빼면 그대로 나간다 — 대조군)', ramFree > 200,
   `벽 없이 ${ramFree.toFixed(0)} m`);
+
+// ─────────────────────────────────────────────── 레벨 2 · 시변 폭풍
+console.log('\n\x1b[36m▌레벨 2 — 성긴 암초밭 · 5초 방향 폭풍\x1b[0m\n');
+
+check('현재 맵은 MAPS[0] 레벨 1로 그대로 보존된다', MAPS[0] === DEMO_MAP,
+  `${MAPS[0].label} → ${MAPS[1]?.label ?? '없음'}`);
+check('항해 레벨은 2장이고 ID가 겹치지 않는다',
+  MAPS.length === 2 && new Set(MAPS.map((map) => map.id)).size === MAPS.length,
+  `${MAPS.length}장 · ${MAPS.map((map) => map.id).join(' / ')}`);
+
+function declarativeMap(value, key = '') {
+  if (typeof value === 'function') return false;
+  if (['script', 'code', 'on', 'fn', 'expr'].includes(key) || key.includes('=>')) return false;
+  if (Array.isArray(value)) return value.every((entry) => declarativeMap(entry));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).every(([childKey, child]) => declarativeMap(child, childKey));
+  }
+  return true;
+}
+check('맵 데이터에는 콜백·스크립트 실행 구멍이 없다', MAPS.every((map) => declarativeMap(map)),
+  '모든 잎이 값 데이터');
+
+const stormBands = [];
+for (let y0 = STORM_MAP.bounds.minY; y0 < STORM_MAP.bounds.maxY; y0 += BAND) {
+  stormBands.push(STORM_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length);
+}
+const stormClearance = (p) => Math.min(...STORM_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const stormStartClear = stormClearance({ x: 0, y: 0 });
+const stormGoalClear = stormClearance(STORM_MAP.goal) - STORM_MAP.goal.radius;
+console.log(`  레벨 1 암초 ${DEMO_MAP.obstacles.length}개 → 레벨 2 ${STORM_MAP.obstacles.length}개 · ` +
+  `${BAND} m 띠별 ${stormBands.join('·')}`);
+check('레벨 2 암초는 45~55개로 레벨 1보다 성기다',
+  STORM_MAP.obstacles.length >= 45 && STORM_MAP.obstacles.length <= 55
+    && STORM_MAP.obstacles.length < DEMO_MAP.obstacles.length,
+  `${STORM_MAP.obstacles.length}개 < ${DEMO_MAP.obstacles.length}개`);
+check('레벨 2도 해역 전체에 빈 암초 띠가 없고 출발·도착이 열려 있다',
+  stormBands.every((n) => n > 0) && stormStartClear > 5 && stormGoalClear > 0,
+  `띠 ${stormBands.join('·')} · 출발 ${stormStartClear.toFixed(1)} m · 골 ${stormGoalClear.toFixed(1)} m`);
+check('레벨 2 도착 지점은 해역 경계 안에 있다',
+  STORM_MAP.goal.x + STORM_MAP.goal.radius < STORM_MAP.bounds.maxX
+    && STORM_MAP.goal.y - STORM_MAP.goal.radius > STORM_MAP.bounds.minY
+    && STORM_MAP.goal.y + STORM_MAP.goal.radius < STORM_MAP.bounds.maxY,
+  `골 (${STORM_MAP.goal.x}, ${STORM_MAP.goal.y})`);
+
+const stormFields = createFields(STORM_MAP.fields);
+const windAt = (t) => stormFields.sampleVector('wind', 0, 0, t);
+const w0 = windAt(0);
+const wBefore = windAt(4.999);
+const w5 = windAt(5);
+const w10 = windAt(10);
+const w40 = windAt(40);
+const mag = (v) => Math.hypot(v.x, v.y);
+console.log(`  바람 t=0 (${w0.x.toFixed(1)},${w0.y.toFixed(1)}) → ` +
+  `5s (${w5.x.toFixed(1)},${w5.y.toFixed(1)}) → 10s (${w10.x.toFixed(1)},${w10.y.toFixed(1)})`);
+check('★ 바람은 4.999초까지 유지되고 5.000초에 다음 방향으로 바뀐다',
+  wBefore.x === w0.x && wBefore.y === w0.y && (w5.x !== w0.x || w5.y !== w0.y),
+  `4.999s (${wBefore.x.toFixed(1)},${wBefore.y.toFixed(1)}) · 5s (${w5.x.toFixed(1)},${w5.y.toFixed(1)})`);
+check('방향 목록은 5초마다 순서대로 돌고 한 주기 뒤 재현된다',
+  (w10.x !== w5.x || w10.y !== w5.y) && w40.x === w0.x && w40.y === w0.y,
+  `10s (${w10.x.toFixed(1)},${w10.y.toFixed(1)}) · 40s (${w40.x.toFixed(1)},${w40.y.toFixed(1)})`);
+check('폭풍 방향이 바뀌어도 풍속 크기는 일정하다',
+  Math.abs(mag(w0) - mag(w5)) < 1e-3 && Math.abs(mag(w0) - mag(w10)) < 1e-3,
+  `${mag(w0).toFixed(3)} / ${mag(w5).toFixed(3)} / ${mag(w10).toFixed(3)} m/s`);
+check('레벨 2 어둠과 비 강도가 유효하다',
+  stormFields.sampleScalar('darkness', 0, 0, 20) > 0.4
+    && STORM_MAP.weather.rain > 0 && STORM_MAP.weather.rain <= 1,
+  `어둠 ${stormFields.sampleScalar('darkness', 0, 0, 20).toFixed(2)} · 비 ${STORM_MAP.weather.rain.toFixed(2)}`);
+
+const stormPrediction = (() => {
+  const { world, body } = spawn('sloop', { attach: [{ type: 'sail', x: 0, y: 0, angle: 0 }] });
+  body.setLinearVelocity(new Vec2(2.5, 0.4));
+  const startTime = 4.8;
+  const horizon = 1.2;
+  const path = predictPath(body, {}, {
+    fields: stormFields, startTime, horizon, stride: 1,
+  });
+  let step = 0;
+  const live = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      step += 1;
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, stormFields, dt, startTime + step * FIXED_DT);
+    },
+  });
+  for (let i = 0; i < Math.round(horizon / FIXED_DT); i++) live.advance(FIXED_DT);
+  const actual = body.getWorldCenter();
+  const predicted = path.at(-1);
+  return Math.hypot(actual.x - predicted.x, actual.y - predicted.y);
+})();
+check('★ 5초 바람 전환을 가로질러도 예측선과 실물리가 일치한다', stormPrediction < 1e-7,
+  `최종 오차 ${(stormPrediction * 1000).toFixed(6)} mm`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +

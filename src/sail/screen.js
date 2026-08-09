@@ -10,7 +10,6 @@ import { applyHydroToWorld } from '../physics/hydro.js';
 import { applyFieldsToWorld } from '../physics/fields.js';
 import { createFields } from '../field/field.js';
 import { createRuleEngine, loadRules } from '../rules/engine.js';
-import ZONES from '../field/zones.json';
 import RULE_TABLE from '../rules/table.json';
 import { applyDevices, STROKE_KEYMAP } from '../physics/devices.js';
 import { createHullBody } from '../physics/body.js';
@@ -29,11 +28,15 @@ import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
 import { View } from '../render/view.js';
-import { drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
-import { DEMO_MAP, boundaryWalls } from './map.js';
+import {
+  drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass,
+  drawWeather, drawDarkness,
+} from './render.js';
+import { MAPS, boundaryWalls } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
 const HANDOFF_KEY = 'shipwright:handoff';
+const LEVEL_KEY = 'shipwright:sailLevel';
 /** 트리거로 쓰는 키 코드 — 부착 아이템(부스터·키)의 bind 풀. `main.js` 와 같은 집합. */
 const TRIGGER_KEYS = new Set(['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyQ', 'KeyE']);
 /** 항적 표시 간격 — 이 스텝 수마다 한 점씩 남긴다. */
@@ -50,6 +53,11 @@ function loadHandoff() {
   } catch {
     return null;
   }
+}
+
+function loadLevelIndex() {
+  const index = Number.parseInt(sessionStorage.getItem(LEVEL_KEY) ?? '0', 10);
+  return Number.isInteger(index) && index >= 0 && index < MAPS.length ? index : 0;
 }
 
 /** 핸드오프가 없을 때(직접 sail.html 을 연 경우)의 기본 배 — 기존 코퍼스 재사용. */
@@ -89,11 +97,12 @@ class SailScreen {
     this.view = new View(this.canvas);
     this.view.ppm = PPM * 0.5;
 
+    this.levelIndex = loadLevelIndex();
+    this.map = MAPS[this.levelIndex] ?? MAPS[0];
     this.world = createWorld();
     this.rules = loadRules(RULE_TABLE);
-    // 잔잔한 바다라 현재 맵에서는 화재 규칙이 조건을 못 만족하지만, 파손 소비 경로 자체는
-    // 필드 데이터와 무관하게 항상 연결해 둔다. 이후 맵도 예외 코드 없이 같은 규칙표를 쓴다.
-    this.fields = createFields(ZONES.zones.calm.fields ?? {});
+    // 맵은 필드 데이터만 고르고, 힘·규칙·파손 경로는 모든 레벨이 똑같이 탄다.
+    this.fields = createFields(this.map.fields ?? {});
     this.engine = createRuleEngine(this.rules, this.fields);
 
     this.stepIndex = 0;
@@ -117,8 +126,8 @@ class SailScreen {
         this.simTime = this.stepIndex * FIXED_DT;
         if (!this.cleared) this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
-        applyFieldsToWorld(this.world, this.fields, dt);
-        this.engine.tick(this.world, dt);
+        applyFieldsToWorld(this.world, this.fields, dt, this.simTime);
+        this.engine.tick(this.world, dt, this.simTime);
         if (this.stepIndex % WAKE_EVERY_STEPS === 0) this.sampleWake();
       },
     });
@@ -134,13 +143,21 @@ class SailScreen {
       rating: document.getElementById('clear-rating'),
       time: document.getElementById('clear-time'),
       retry: document.getElementById('btn-retry'),
+      next: document.getElementById('btn-next'),
+      note: document.getElementById('next-stage-note'),
       menu: document.getElementById('btn-clear-menu'),
     };
     this.clearUi.retry.addEventListener('click', () => {
       location.href = 'sail.html';
     });
+    this.clearUi.next.addEventListener('click', () => {
+      if (this.levelIndex + 1 >= MAPS.length) return;
+      sessionStorage.setItem(LEVEL_KEY, String(this.levelIndex + 1));
+      location.href = 'sail.html';
+    });
     this.clearUi.menu.addEventListener('click', () => {
       sessionStorage.removeItem(HANDOFF_KEY);
+      sessionStorage.removeItem(LEVEL_KEY);
       location.href = 'index.html';
     });
 
@@ -149,11 +166,11 @@ class SailScreen {
     window.addEventListener('keyup', (e) => this.onKey(e, false));
 
     this.launch(loadHandoff() ?? fallbackDesign());
-    for (const spec of DEMO_MAP.obstacles) this.placeObstacle(spec);
+    for (const spec of this.map.obstacles) this.placeObstacle(spec);
     // 해역 경계 — 벽도 그냥 암초다 (같은 `placeObstacle`, 같은 재질). 경계 전용 물리·판정
     // 코드가 0줄인 이유이고, 그래서 "여기서부터 못 간다"를 규칙이 아니라 지형이 말한다.
-    for (const spec of boundaryWalls(DEMO_MAP.bounds)) this.placeObstacle(spec);
-    this.goal = createGoal(DEMO_MAP.goal);
+    for (const spec of boundaryWalls(this.map.bounds)) this.placeObstacle(spec);
+    this.goal = createGoal(this.map.goal);
     this.initialDistance = this.currentDistance();
 
     this.lastFrame = performance.now();
@@ -226,7 +243,7 @@ class SailScreen {
         const hot = hottestOutlinePoint(
           hull.outline,
           (x, y) => body.getWorldPoint(new Vec2(x, y)),
-          (x, y) => this.fields.sampleScalar(field, x, y),
+          (x, y) => this.fields.sampleScalar(field, x, y, this.simTime),
         );
         if (hot && hot.spread > 1e-3) return hot.local;
       }
@@ -310,15 +327,20 @@ class SailScreen {
     this.tappedStrokes.clear();
     this.keys.clear();
     this.held = {};
-    this.showClearResult(rateTravelTime(this.clearTime, DEMO_MAP.scoring));
+    this.showClearResult(rateTravelTime(this.clearTime, this.map.scoring));
   }
 
   showClearResult(stars) {
     this.clearUi.stars.forEach((star, i) => star.classList.toggle('active', i < stars));
     this.clearUi.rating.textContent = `별 ${stars}개`;
     this.clearUi.time.textContent = formatClearTime(this.clearTime);
+    const nextMap = MAPS[this.levelIndex + 1] ?? null;
+    this.clearUi.next.disabled = !nextMap;
+    this.clearUi.note.textContent = nextMap
+      ? `다음: 레벨 ${nextMap.number} · ${nextMap.label}`
+      : '모든 스테이지 완료';
     this.clearUi.overlay.classList.remove('hidden');
-    this.clearUi.retry.focus();
+    (nextMap ? this.clearUi.next : this.clearUi.retry).focus();
   }
 
   updateCamera() {
@@ -357,7 +379,7 @@ class SailScreen {
     ctx.imageSmoothingEnabled = false;
 
     // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 물결만 따로 흐른다.
-    drawWater(ctx, view, this.simTime);
+    drawWater(ctx, view, this.simTime, this.map.weather);
     // 도착 지점은 수면 위 표식이라 배·암초보다 **아래**에 깐다 — 도착하는 순간 배가 고리를
     // 가리는 것이 맞다 (고리 위에 배가 올라앉아야 "들어갔다"로 읽힌다).
     drawGoal(ctx, view, this.goal, { cleared: this.cleared, sec: this.simTime });
@@ -374,10 +396,15 @@ class SailScreen {
       drawHullBody(ctx, body.getUserData().hull);
       ctx.restore();
     }
+
+    const crewAt = crewWorldPoint(findCrewBody(this.bodies)) ?? view.center;
+    const wind = this.fields.sampleVector('wind', view.center.x, view.center.y, this.simTime);
+    drawWeather(ctx, view, { sec: this.simTime, rain: this.map.weather?.rain ?? 0, wind });
+    drawDarkness(ctx, view,
+      this.fields.sampleScalar('darkness', crewAt.x, crewAt.y, this.simTime));
+
     // 화면 밖일 때만 가장자리 화살표가 뜬다 — 판단은 `drawGoalCompass` 안에서 한다.
-    drawGoalCompass(ctx, view, this.goal, crewWorldPoint(findCrewBody(this.bodies)), {
-      cleared: this.cleared,
-    });
+    drawGoalCompass(ctx, view, this.goal, crewAt, { cleared: this.cleared });
   }
 
   updateHud() {
