@@ -17,6 +17,11 @@ import { itemIconSVG, templateThumbSVG, drawItemMarker, drawCrewSprite } from '.
 const PALETTE_ITEMS = ['cannon', 'rudder', 'sail', 'booster'];
 const PALETTE_MATERIALS = ['wood', 'iron'];
 
+// 시작 시점에 열려 있는 것 — 나머지는 진행에 따라 언락된다. 팔레트 순서(위 두 배열)는
+// 최종 구성 그대로 두고 여기서만 걸러 내므로, 언락은 이 Set 에 키를 넣는 것으로 끝난다.
+const UNLOCKED_ITEMS = new Set(['rudder']);
+const UNLOCKED_MATERIALS = new Set(['wood']);
+
 const ITEM_MARKER_HIT_PX = 16;
 
 class DrawScreen {
@@ -133,7 +138,7 @@ class DrawScreen {
   // ── 재질 = 펜 색 ──────────────────────────────────────────
   buildMaterialList() {
     this.materialListEl.innerHTML = '';
-    for (const key of PALETTE_MATERIALS) {
+    for (const key of PALETTE_MATERIALS.filter((k) => UNLOCKED_MATERIALS.has(k))) {
       const mat = MATERIALS[key];
       const row = document.createElement('button');
       row.type = 'button';
@@ -151,7 +156,7 @@ class DrawScreen {
   // ── 아이템 팔레트 ─────────────────────────────────────────
   buildItemList() {
     this.itemListEl.innerHTML = '';
-    for (const type of PALETTE_ITEMS) {
+    for (const type of PALETTE_ITEMS.filter((t) => UNLOCKED_ITEMS.has(t))) {
       const spec = ITEM_CATALOG[type];
       const row = document.createElement('button');
       row.type = 'button';
