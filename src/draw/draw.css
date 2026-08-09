@@ -353,14 +353,19 @@ html, body {
 }
 
 .tutorial-mask {
-  background: rgba(5, 13, 22, 0.72);
+  /* 입력 차단만 담당한다. 반투명 마스크 네 장을 맞붙이면 소수점 좌표에서 이음선이 보인다. */
+  background: transparent;
   pointer-events: auto;
 }
 
 .tutorial-ring {
   border: 4px solid var(--accent);
   outline: 2px solid #fffdf7;
-  box-shadow: 0 0 0 3px rgba(11, 28, 44, 0.8), 0 0 22px rgba(240, 201, 135, 0.9);
+  /* 하나의 그림자로 화면을 덮어 작은 대상에서도 마스크 경계선이 생기지 않게 한다. */
+  box-shadow:
+    0 0 0 9999px rgba(5, 13, 22, 0.72),
+    0 0 0 3px rgba(11, 28, 44, 0.8),
+    0 0 22px rgba(240, 201, 135, 0.9);
   animation: tutorial-pulse 1.25s ease-in-out infinite alternate;
   pointer-events: none;
 }
