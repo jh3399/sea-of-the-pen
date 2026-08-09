@@ -158,7 +158,9 @@ class SailScreen {
 
   /** 선체 로컬 폴리곤 + 손으로 붙인 아이템을 기본 장치 위에 얹어 강체로 만든다 (main.js#launch). */
   launch(design) {
-    const items = defaultDevices(design.outline)
+    // oarX 는 그리기 화면에서 플레이어가 찍은 노의 세로 위치. 폴백 설계(fallbackDesign)에는
+    // 없으므로 그때는 D1~D3 의 자동 배치(station)로 되돌아간다.
+    const items = defaultDevices(design.outline, { oarX: design.oarX ?? null })
       .concat((design.items ?? []).map((it) => ({ ...it })));
     const body = createHullBody(
       this.world,

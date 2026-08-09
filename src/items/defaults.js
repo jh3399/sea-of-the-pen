@@ -154,16 +154,46 @@ export function sideAnchors(outline, x, centerY = null) {
 }
 
 /**
+ * ★ 노 중심선 — 선미 부착점과 무게중심(로컬 원점)을 잇는 **반직선** 위의 x 지점.
+ *
+ * `station` 보간(`y = a.y·(1−s)`, `x = a.x·(1−s)`)이 곧 이 반직선이라, 임의의 x 에 대해
+ * y/x = a.y/a.x 하나로 환원된다. 그리기 화면이 x 를 바꿔도 중심선의 근거는 그대로
+ * `sternAnchor` 다 — `sideAnchors` 가 잰 국소 중심을 쓰면 안 되는 이유는 그 주석의 ⚠ 참조.
+ */
+function oarCenterY(sternA, x) {
+  return sternA.x !== 0 ? sternA.y * (x / sternA.x) : 0;
+}
+
+/**
+ * 세로 위치 x 하나로 정해지는 좌우 노 부착점 — 그리기 화면의 미리보기·유효성 검사가 쓴다.
+ * `defaultDevices({ oarX })` 가 실제로 만들 좌표와 **같은 경로**로 계산하므로, 화면에 보인
+ * 자리와 출항 후 자리가 어긋날 수 없다.
+ *
+ * @returns {{port:{x,y}, starboard:{x,y}, centerY:number, halfBeam:number}}
+ */
+export function oarAnchorsAt(outline, x) {
+  const a = sternAnchor(outline);
+  const centerY = oarCenterY(a, x);
+  const span = sideAnchors(outline, x, centerY);
+  return { port: span.port, starboard: span.starboard, centerY, halfBeam: span.halfBeam };
+}
+
+/**
  * 기본 장치를 선체에 자동 배치한다.
  * 반환 형식은 `hull.items` 와 동일 — 파손 시 소속 폴리곤 판정(§7.5)을 그대로 탄다.
+ *
  * @param {Array<{x,y}>} outline 선체 로컬 폴리곤
+ * @param {{oarX?: number}} [opts] `oarX` 를 주면 좌우 노의 세로 위치를 그 값으로 덮어쓴다
+ *   (그리기 화면에서 플레이어가 찍은 자리). 노가 아닌 장치는 `station` 그대로다.
+ *   생략하면 D1~D3 의 자동 배치와 **비트 단위로 같다**.
  */
-export function defaultDevices(outline) {
+export function defaultDevices(outline, { oarX = null } = {}) {
   const a = sternAnchor(outline);
   return Object.entries(DEVICE_SPECS).map(([key, spec]) => {
     // 먼저 선미 부착점을 무게중심 쪽으로 당겨 station 좌표를 잡고,
-    const x = a.x * (1 - spec.station);
-    const y = a.y * (1 - spec.station);
+    const useOarX = spec.side && oarX !== null;
+    const x = useOarX ? oarX : a.x * (1 - spec.station);
+    const y = useOarX ? oarCenterY(a, x) : a.y * (1 - spec.station);
     const at = spec.side
       // 노라면 그 중심선에서 그 자리의 실제 선폭만큼 현측으로 벌린다.
       // (중심선은 sternAnchor 것을 그대로 쓴다 — sideAnchors 주석의 ⚠ 참조.)

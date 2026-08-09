@@ -9,15 +9,31 @@ import {
 } from '../hull/polygon.js';
 import { canAttachAt, attachItem, detachItem } from '../items/attach.js';
 import { ITEM_CATALOG } from '../items/catalog.js';
+import { oarAnchorsAt } from '../items/defaults.js';
 import { MATERIALS } from '../hull/params.js';
 import { TEMPLATES, TEMPLATE_LABELS, TEMPLATE_ORDER } from './templates.js';
-import { itemIconSVG, templateThumbSVG, drawItemMarker, drawCrewSprite } from './icons.js';
+import {
+  itemIconSVG, templateThumbSVG, drawItemMarker, drawCrewSprite,
+  markerAngleToward, itemMarkerSize, OAR_PUSH,
+} from './icons.js';
 
 /** 이미지 순서 그대로 — 대포·키·돛·부스터. 대포는 배치만(발사 로직은 D3 예약, 이번 범위 밖). */
 const PALETTE_ITEMS = ['cannon', 'rudder', 'sail', 'booster'];
 const PALETTE_MATERIALS = ['wood', 'iron'];
 
+// 시작 시점에 열려 있는 것 — 나머지는 진행에 따라 언락된다. 팔레트 순서(위 두 배열)는
+// 최종 구성 그대로 두고 여기서만 걸러 내므로, 언락은 이 Set 에 키를 넣는 것으로 끝난다.
+const UNLOCKED_ITEMS = new Set(['rudder']);
+const UNLOCKED_MATERIALS = new Set(['wood']);
+
 const ITEM_MARKER_HIT_PX = 16;
+
+/** 노 배치 모드의 의사 타입 — 노는 카탈로그 아이템이 아니라 기본 장치라 `placing` 에만 산다. */
+const PLACING_OAR = 'oar';
+
+/** 노 마커의 한 칸 크기 (px). 부착 아이템 마커(3)보다 큰 것은 노가 **선체 밖으로 뻗는**
+ *  장치라서다 — 다른 마커처럼 선체 안 점으로 찍으면 방향이 읽히지 않는다. */
+const OAR_MARKER_PIXEL = 4;
 
 class DrawScreen {
   constructor() {
@@ -26,6 +42,7 @@ class DrawScreen {
     this.page = document.getElementById('page');
     this.statusEl = document.getElementById('status');
     this.itemListEl = document.getElementById('item-list');
+    this.deviceListEl = document.getElementById('device-list');
     this.materialListEl = document.getElementById('material-list');
     this.blueprintToggle = document.getElementById('blueprint-toggle');
     this.blueprintPanel = document.getElementById('blueprint-panel');
@@ -44,6 +61,9 @@ class DrawScreen {
     this.aboard = false;
     this.crewLocal = null;
     this.center = { x: 0, y: 0 };
+    // 플레이어가 찍은 노의 세로 위치(선체 로컬 x). 양현으로 벌리는 일은 defaults.js 가 한다.
+    this.oarX = null;
+    this.oarHoverX = null; // 배치 모드에서 커서를 따라다니는 미리보기
 
     this.capture = new StrokeCapture(this.canvas, {
       onStart: () => this.onStrokeStart(),
@@ -51,6 +71,7 @@ class DrawScreen {
       onComplete: (pts) => this.onStrokeComplete(pts),
     });
 
+    this.buildDeviceList();
     this.buildItemList();
     this.buildMaterialList();
     this.buildBlueprintPanel();
@@ -95,11 +116,16 @@ class DrawScreen {
     if (result.ok) {
       this.design = result;
       this.hull = { items: [] }; // 새 선체는 로컬 좌표계가 달라지므로 부착물을 비운다
-      this.placing = null;
-      this.setStatus('선체가 확정됐습니다.', 'ok');
+      this.oarX = null; //  ↳ 노 위치도 같은 이유로 무효 (로컬 x 의 뜻이 달라진다)
+      this.oarHoverX = null;
+      // 노는 필수라 바로 배치 모드로 들어간다 — 완성하기가 잠긴 이유를 손이 먼저 알게 한다.
+      this.placing = PLACING_OAR;
+      this.capture.enabled = false;
+      this.setStatus('선체가 확정됐습니다. 노를 달 앞뒤 위치를 클릭하세요.', 'ok');
     } else {
       this.setStatus(this.failMessage(result), 'bad');
     }
+    this.buildDeviceList();
     this.buildItemList();
     this.updateAboard();
     this.syncFinishButton();
@@ -133,7 +159,7 @@ class DrawScreen {
   // ── 재질 = 펜 색 ──────────────────────────────────────────
   buildMaterialList() {
     this.materialListEl.innerHTML = '';
-    for (const key of PALETTE_MATERIALS) {
+    for (const key of PALETTE_MATERIALS.filter((k) => UNLOCKED_MATERIALS.has(k))) {
       const mat = MATERIALS[key];
       const row = document.createElement('button');
       row.type = 'button';
@@ -148,10 +174,56 @@ class DrawScreen {
     }
   }
 
+  // ── 기본 장치: 노 위치 ────────────────────────────────────
+  //
+  // 플레이어가 정하는 것은 **세로 위치 x 하나뿐**이다. 좌우로 벌리는 일(그 자리의 실제 선폭)
+  // 과 중심선(sternAnchor 반직선)은 items/defaults.js 가 계산한다 — 조향 코드는 여전히 0줄이고,
+  // 여기서 정해지는 두 수치가 곧 조향의 전부다:
+  //   반폭      → 한쪽만 저을 때의 팔길이 (넓은 자리에 달수록 잘 돈다)
+  //   중심선 y  → 양쪽을 고르게 저어도 남는 토크 (비대칭 배가 저절로 도는 경로)
+  buildDeviceList() {
+    this.deviceListEl.innerHTML = '';
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `item-row${this.placing === PLACING_OAR ? ' selected' : ''}`;
+    row.disabled = !this.design?.ok || this.finished;
+    const state = this.oarX === null ? '위치 미정' : '위치 지정됨';
+    row.innerHTML = `<span class="icon">${itemIconSVG(PLACING_OAR, { pixel: 3 })}</span>`
+      + `<span>노 <small class="row-note">${state}</small></span>`;
+    row.addEventListener('click', () => this.togglePlacing(PLACING_OAR));
+    this.deviceListEl.appendChild(row);
+  }
+
+  /** 세로 위치 x 에 노를 달 수 있는가 — 두 부착점이 모두 선체 안이어야 한다.
+   *  아이템·주인공과 **같은 판정**(canAttachAt)이다. 밖에 걸치면 §7.5 상 첫 파손에 사라진다. */
+  oarPlacementAt(x) {
+    if (!this.design?.ok) return null;
+    const at = oarAnchorsAt(this.design.outline, x);
+    const ok = at.halfBeam > 0
+      && canAttachAt(this.design.outline, [], at.port)
+      && canAttachAt(this.design.outline, [], at.starboard);
+    return { ...at, ok };
+  }
+
+  placeOarAt(px) {
+    const local = toHullLocal(this.design, pxToMetric(px));
+    const at = this.oarPlacementAt(local.x);
+    if (!at?.ok) {
+      this.setStatus('그 자리는 노가 선체 밖으로 걸칩니다. 선체가 넓은 쪽을 골라 보세요.', 'bad');
+      return;
+    }
+    this.oarX = local.x;
+    this.placing = null;
+    this.capture.enabled = true;
+    this.buildDeviceList();
+    this.syncFinishButton();
+    this.setStatus(`노를 달았습니다. 노 간격 ${(at.halfBeam * 2).toFixed(2)} m.`, 'ok');
+  }
+
   // ── 아이템 팔레트 ─────────────────────────────────────────
   buildItemList() {
     this.itemListEl.innerHTML = '';
-    for (const type of PALETTE_ITEMS) {
+    for (const type of PALETTE_ITEMS.filter((t) => UNLOCKED_ITEMS.has(t))) {
       const spec = ITEM_CATALOG[type];
       const row = document.createElement('button');
       row.type = 'button';
@@ -166,20 +238,40 @@ class DrawScreen {
   togglePlacing(type) {
     if (!this.design?.ok || this.finished) return;
     this.placing = this.placing === type ? null : type;
+    this.oarHoverX = null;
     this.capture.enabled = !this.placing;
+    this.buildDeviceList();
     this.buildItemList();
     this.setStatus(
-      this.placing
-        ? `${ITEM_CATALOG[type].name}를 붙일 자리를 선체 안에서 클릭하세요 (다시 누르면 뗍니다).`
-        : '선체가 확정됐습니다.',
+      this.placing === PLACING_OAR
+        ? '노를 달 앞뒤 위치를 클릭하세요 — 좌우로는 알아서 선체 가장자리에 붙습니다.'
+        : this.placing
+          ? `${ITEM_CATALOG[type].name}를 붙일 자리를 선체 안에서 클릭하세요 (다시 누르면 뗍니다).`
+          : '선체가 확정됐습니다.',
       'ok',
     );
+    this.render();
+  }
+
+  canvasPoint(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  handleCanvasMove(e) {
+    if (this.placing !== PLACING_OAR || !this.design?.ok) return;
+    this.oarHoverX = toHullLocal(this.design, pxToMetric(this.canvasPoint(e))).x;
+    this.render();
   }
 
   handleCanvasClick(e) {
     if (!this.placing || !this.design?.ok) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const px = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const px = this.canvasPoint(e);
+    if (this.placing === PLACING_OAR) {
+      this.placeOarAt(px);
+      this.render();
+      return;
+    }
     const local = toHullLocal(this.design, pxToMetric(px));
 
     const hitRadiusM = ITEM_MARKER_HIT_PX / HULL_DEFAULTS.pixelsPerMeter;
@@ -227,6 +319,12 @@ class DrawScreen {
     // 상대경로 — base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 (finish() 와 같은 방식).
     this.menuBtn.addEventListener('click', () => { location.href = 'index.html'; });
     this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
+    this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMove(e));
+    this.canvas.addEventListener('mouseleave', () => {
+      if (this.oarHoverX === null) return;
+      this.oarHoverX = null;
+      this.render();
+    });
   }
 
   resetAll() {
@@ -241,7 +339,10 @@ class DrawScreen {
     this.capture.enabled = true;
     this.aboard = false;
     this.crewLocal = null;
+    this.oarX = null;
+    this.oarHoverX = null;
     this.setStatus('선체를 그려 주인공을 감싸세요.');
+    this.buildDeviceList();
     this.buildItemList();
     this.buildBlueprintPanel();
     this.syncFinishButton();
@@ -249,10 +350,11 @@ class DrawScreen {
   }
 
   finish() {
-    if (!this.design?.ok || !this.aboard || this.finished) return;
+    if (!this.design?.ok || !this.aboard || this.oarX === null || this.finished) return;
     this.finished = true;
     this.capture.enabled = false;
     this.placing = null;
+    this.oarHoverX = null;
     this.finishedDesign = {
       outline: this.design.outline,
       origin: this.design.origin,
@@ -260,7 +362,10 @@ class DrawScreen {
       material: this.material,
       items: this.hull.items,
       crew: this.crewLocal,
+      // 항해 화면이 defaultDevices(outline, { oarX }) 로 그대로 넘긴다.
+      oarX: this.oarX,
     };
+    this.buildDeviceList();
     this.buildItemList();
     this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
@@ -270,7 +375,10 @@ class DrawScreen {
   }
 
   syncFinishButton() {
-    this.finishBtn.disabled = this.finished || !this.design?.ok || !this.aboard;
+    // 노 위치는 필수다 — 기본 장치를 어디에 다는가가 곧 이 배의 조향이라, 자동 배치로
+    // 넘겨 주면 플레이어는 그 선택을 했다는 사실조차 모르고 출항한다.
+    this.finishBtn.disabled = this.finished
+      || !this.design?.ok || !this.aboard || this.oarX === null;
   }
 
   setStatus(text, cls) {
@@ -320,10 +428,50 @@ class DrawScreen {
     ctx.stroke();
     ctx.restore();
 
+    // 확정된 노가 먼저, 그 위에 커서를 따라다니는 미리보기.
+    if (this.oarX !== null) this.renderOarPair(ctx, this.oarPlacementAt(this.oarX), 1);
+    if (this.placing === PLACING_OAR && this.oarHoverX !== null) {
+      this.renderOarPair(ctx, this.oarPlacementAt(this.oarHoverX), 0.55);
+    }
+
     for (const item of this.hull.items) {
       const p = this.localToPx({ x: item.x, y: item.y });
       drawItemMarker(ctx, item.type, p.x, p.y);
     }
+  }
+
+  /** 노 한 쌍 — 두 부착점을 잇는 선이 곧 "그 자리의 선폭"이라 팔길이가 눈에 보인다.
+   *  노깃은 각자 현측 **바깥**을 향한다. 방향을 두 부착점의 차에서 뽑으므로 선체가
+   *  어떤 각도로 놓여 있어도(design.angle) 따라온다 — 좌우 고정값을 쓰면 여기서 어긋난다. */
+  renderOarPair(ctx, at, alpha) {
+    if (!at) return;
+    const port = this.localToPx(at.port);
+    const starboard = this.localToPx(at.starboard);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = at.ok ? '#2f7a4a' : '#a33a2b';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.moveTo(port.x, port.y);
+    ctx.lineTo(starboard.x, starboard.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (at.ok) {
+      // 현측 바깥 단위벡터 — 좌현은 두 부착점의 차, 우현은 그 반대.
+      const dx = port.x - starboard.x;
+      const dy = port.y - starboard.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const angle = markerAngleToward(ux, uy);
+      const push = itemMarkerSize(PLACING_OAR, OAR_MARKER_PIXEL).h * OAR_PUSH;
+      drawItemMarker(ctx, PLACING_OAR,
+        port.x + ux * push, port.y + uy * push, OAR_MARKER_PIXEL, angle);
+      drawItemMarker(ctx, PLACING_OAR,
+        starboard.x - ux * push, starboard.y - uy * push, OAR_MARKER_PIXEL, angle + Math.PI);
+    }
+    ctx.restore();
   }
 
   renderLiveStroke(ctx) {
