@@ -7,8 +7,8 @@ import { StrokeCapture } from '../hull/strokes.js';
 import {
   strokeToHull, toHullLocal, toHullWorld, pxToMetric, metricToPx, HULL_DEFAULTS,
 } from '../hull/polygon.js';
-import { canAttachAt, attachItem, detachItem } from '../items/attach.js';
-import { ITEM_CATALOG } from '../items/catalog.js';
+import { canAttachAt, attachItem, detachItem, nextBind } from '../items/attach.js';
+import { ITEM_CATALOG, ATTACH_DIRECTIONS, bindLabel } from '../items/catalog.js';
 import { oarAnchorsAt } from '../items/defaults.js';
 import { MATERIALS } from '../hull/params.js';
 import { TEMPLATES, TEMPLATE_LABELS, TEMPLATE_ORDER } from './templates.js';
@@ -18,13 +18,13 @@ import {
   markerAngleToward, itemMarkerSize, OAR_PUSH,
 } from './icons.js';
 
-/** 이미지 순서 그대로 — 대포·키·돛·부스터. 대포는 배치만(발사 로직은 D3 예약, 이번 범위 밖). */
+/** 이미지 순서 그대로 — 대포·키·돛·부스터. */
 const PALETTE_ITEMS = ['cannon', 'rudder', 'sail', 'booster'];
 const PALETTE_MATERIALS = ['wood', 'iron'];
 
 // 시작 시점에 열려 있는 것 — 나머지는 진행에 따라 언락된다. 팔레트 순서(위 두 배열)는
 // 최종 구성 그대로 두고 여기서만 걸러 내므로, 언락은 이 Set 에 키를 넣는 것으로 끝난다.
-const UNLOCKED_ITEMS = new Set(['rudder']);
+const UNLOCKED_ITEMS = new Set(['cannon', 'rudder']);
 const UNLOCKED_MATERIALS = new Set(['wood']);
 
 const ITEM_MARKER_HIT_PX = 16;
@@ -45,6 +45,8 @@ class DrawScreen {
     this.page = document.getElementById('page');
     this.statusEl = document.getElementById('status');
     this.itemListEl = document.getElementById('item-list');
+    this.directionPickerEl = document.getElementById('direction-picker');
+    this.directionListEl = document.getElementById('direction-list');
     this.deviceListEl = document.getElementById('device-list');
     this.materialListEl = document.getElementById('material-list');
     this.blueprintToggle = document.getElementById('blueprint-toggle');
@@ -59,6 +61,7 @@ class DrawScreen {
     this.design = null; // strokeToHull() 결과 — 유효한 폐곡선이 확정되면 채워진다
     this.hull = { items: [] }; // items/attach.js 가 기대하는 최소 형태
     this.placing = null; // 배치 모드 중인 아이템 타입
+    this.attachAngle = 0; // 방향성 아이템의 고정 장착 방향 (선체 로컬 rad)
     this.finished = false;
     this.finishedDesign = null;
     this.liveRawPoints = null;
@@ -78,6 +81,7 @@ class DrawScreen {
 
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.buildMaterialList();
     this.buildBlueprintPanel();
     this.bindTopControls();
@@ -146,6 +150,7 @@ class DrawScreen {
     }
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.updateAboard();
     this.syncFinishButton();
     this.render();
@@ -250,9 +255,32 @@ class DrawScreen {
       row.type = 'button';
       row.className = `item-row${this.placing === type ? ' selected' : ''}`;
       row.disabled = !this.design?.ok || this.finished;
-      row.innerHTML = `<span class="icon">${itemIconSVG(type, { pixel: 3 })}</span><span>${spec.name}</span>`;
+      const note = type === 'cannon' ? '단발 · 방향 고정' : '';
+      row.innerHTML = `<span class="icon">${itemIconSVG(type, { pixel: 3 })}</span>`
+        + `<span>${spec.name}${note ? `<small class="row-note">${note}</small>` : ''}</span>`;
       row.addEventListener('click', () => this.togglePlacing(type));
       this.itemListEl.appendChild(row);
+    }
+  }
+
+  /** 대포는 항해 중 조준하지 않는다 — 여기서 정한 선체 로컬 방향이 곧 포신 방향이다. */
+  buildDirectionPicker() {
+    const visible = this.placing === 'cannon' && !this.finished;
+    this.directionPickerEl.classList.toggle('hidden', !visible);
+    this.directionListEl.innerHTML = '';
+    if (!visible) return;
+
+    for (const direction of ATTACH_DIRECTIONS) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `direction-btn${Math.abs(direction.value - this.attachAngle) < 1e-9 ? ' selected' : ''}`;
+      btn.textContent = direction.label;
+      btn.addEventListener('click', () => {
+        this.attachAngle = direction.value;
+        this.buildDirectionPicker();
+        this.render();
+      });
+      this.directionListEl.appendChild(btn);
     }
   }
 
@@ -264,12 +292,15 @@ class DrawScreen {
     this.capture.enabled = !this.placing;
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.setStatus(
       this.placing === PLACING_OAR
         ? '노를 달 앞뒤 위치를 클릭하세요 — 좌우로는 알아서 선체 가장자리에 붙습니다.'
-        : this.placing
-          ? `${ITEM_CATALOG[type].name}를 붙일 자리를 선체 안에서 클릭하세요 (다시 누르면 뗍니다).`
-          : '선체가 확정됐습니다.',
+        : this.placing === 'cannon'
+          ? '포신 방향을 고른 뒤 선체 안에 붙이세요. 항해 중에는 배 자체를 돌려 조준합니다.'
+          : this.placing
+            ? `${ITEM_CATALOG[type].name}를 붙일 자리를 선체 안에서 클릭하세요 (다시 누르면 뗍니다).`
+            : '선체가 확정됐습니다.',
       'ok',
     );
     this.render();
@@ -311,7 +342,20 @@ class DrawScreen {
       this.setStatus('선체 안쪽에 붙여야 해요.', 'bad');
       return;
     }
-    attachItem(this.hull, this.placing, { x: local.x, y: local.y, angle: 0 });
+    const type = this.placing;
+    const triggered = type === 'cannon' || type === 'booster';
+    const item = attachItem(this.hull, type, {
+      x: local.x,
+      y: local.y,
+      angle: type === 'cannon' ? this.attachAngle : 0,
+      bind: triggered ? nextBind(this.hull.items) : undefined,
+    });
+    this.setStatus(
+      item?.bind
+        ? `${item.name} 장착 — ${bindLabel(item.bind)} 키로 사용합니다.`
+        : `${item?.name ?? ITEM_CATALOG[type].name}를 장착했습니다.`,
+      'ok',
+    );
     this.render();
   }
 
@@ -358,6 +402,7 @@ class DrawScreen {
     this.design = null;
     this.hull = { items: [] };
     this.placing = null;
+    this.attachAngle = 0;
     this.template = null;
     this.liveRawPoints = null;
     this.capture.clear();
@@ -370,6 +415,7 @@ class DrawScreen {
     this.setStatus('선체를 그려 주인공을 감싸세요.');
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.buildBlueprintPanel();
     this.syncFinishButton();
     this.render();
@@ -395,6 +441,7 @@ class DrawScreen {
     };
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
     this.tutorial.complete();
@@ -460,19 +507,28 @@ class DrawScreen {
     // 확정된 장치가 먼저, 그 위에 커서를 따라다니는 반투명 미리보기.
     if (this.oarX !== null) this.renderOarPair(ctx, this.oarPlacementAt(this.oarX), 1);
     for (const item of this.hull.items) {
-      this.renderItemMarker(ctx, item.type, { x: item.x, y: item.y });
+      this.renderItemMarker(ctx, item.type, { x: item.x, y: item.y }, 1, null, item.angle ?? 0);
     }
     if (this.placing === PLACING_OAR && this.oarHoverX !== null) {
       this.renderOarPair(ctx, this.oarPlacementAt(this.oarHoverX), 0.55);
     } else if (this.placing && this.itemHoverLocal) {
       const ok = canAttachAt(this.design.outline, [], this.itemHoverLocal);
-      this.renderItemMarker(ctx, this.placing, this.itemHoverLocal, 0.55, ok);
+      this.renderItemMarker(
+        ctx,
+        this.placing,
+        this.itemHoverLocal,
+        0.55,
+        ok,
+        this.placing === 'cannon' ? this.attachAngle : 0,
+      );
     }
   }
 
-  /** 부착 아이템 — 미리보기일 때는 정확한 부착점을 점선 고리로 함께 표시한다. */
-  renderItemMarker(ctx, type, local, alpha = 1, ok = null) {
+  /** 부착 아이템 — 미리보기일 때는 정확한 부착점과 고정 방향을 함께 표시한다. */
+  renderItemMarker(ctx, type, local, alpha = 1, ok = null, angle = 0) {
     const p = this.localToPx(local);
+    const tip = this.localToPx({ x: local.x + Math.cos(angle), y: local.y + Math.sin(angle) });
+    const screenAngle = Math.atan2(tip.y - p.y, tip.x - p.x);
     ctx.save();
     ctx.globalAlpha = alpha;
     if (ok !== null) {
@@ -484,8 +540,19 @@ class DrawScreen {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (type === 'rudder') drawRudderMarker(ctx, p.x, p.y, RUDDER_MARKER_PIXEL);
-    else drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);
+    if (type === 'cannon') {
+      ctx.strokeStyle = '#2a1f14';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + Math.cos(screenAngle) * 30, p.y + Math.sin(screenAngle) * 30);
+      ctx.stroke();
+      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL, screenAngle);
+    } else if (type === 'rudder') {
+      drawRudderMarker(ctx, p.x, p.y, RUDDER_MARKER_PIXEL);
+    } else {
+      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);
+    }
     ctx.restore();
   }
 
