@@ -13,6 +13,47 @@
 /** 항해 가능한 해역. 이 사각형 밖은 `boundaryWalls` 가 만드는 암초 벽으로 막혀 있다. */
 export const SEA_BOUNDS = { minX: -45, maxX: 178, minY: -75, maxY: 75, thickness: 14 };
 
+/**
+ * 0장 「연습 해역」 — 시작의 섬으로 가는 첫 구간.
+ *
+ * ★ **튜토리얼 스테이지가 아니라 항해의 첫 구간이다.** 그리기 튜토리얼(`draw/tutorial.js`)이
+ *   설계 화면을 가르치는 동안 항해 조작은 한 글자도 안 가르치는데, 그 다음이 곧바로 암초
+ *   열한 개였다. 여기는 그 사이를 메운다 — 다만 화면에 "연습"이라고 쓰지 않는다.
+ *   S-05 에서 출항한 배가 첫 섬에 닿는 것이고, 그래서 제4의 벽이 안 생긴다.
+ *
+ * ★ **골을 정면에 두지 않는 것이 이 맵의 전부다.** (40, 34) 는 뱃머리에서 40° 옆이라
+ *   ↑ 만 눌러서는 절대 닿지 않는다. 조작을 설명하는 대신 **하게 만든다** —
+ *   이 게임이 "자기 자리를 안 남긴 배는 못 태운다"를 말로만 하고 규칙으로 막는 것과 같다.
+ *   덤으로 세 조작의 차이를 여기서 몸으로 겪는다 (CLAUDE.md D3 의 실측):
+ *     ↑        양쪽 노 → 직진
+ *     ← 단독   제자리 선회 (반경 2.5 m · 1.69 m/s — 느리다)
+ *     ↑ + ←    넓은 선회 (반경 10.5 m · 3.67 m/s — 빠르다)  ← 아무도 안 알려주는 핵심
+ *
+ * ★ 암초는 **다섯 개뿐이고 항로를 막지 않는다.** 골로 가는 호(弧) 바깥에 놓아서, 부딪히려면
+ *   일부러 가야 한다. "피한다"는 감각만 주고 벌은 주지 않는다 — 연습에서 1별을 받으면
+ *   배우는 게 아니라 혼나는 것이다. 별 기준을 넉넉하게 둔 것도 같은 이유다.
+ *
+ * ★ 해역이 좁다 (±48). 넓은 바다에서 방향을 잃는 것 자체가 초반 좌절의 큰 몫이고,
+ *   경계가 암초 벽이라 벗어나려 하면 지형이 알아서 돌려보낸다 (경계 전용 코드 0줄).
+ */
+export const PRACTICE_BOUNDS = { minX: -40, maxX: 80, minY: -48, maxY: 62, thickness: 12 };
+
+export const PRACTICE_MAP = {
+  goal: { x: 40, y: 34, radius: 7, label: '시작의 섬' },
+  // 노만 단 배의 종단이 4.66 m/s 이고 여기까지가 53 m 다. 직선으로 가도 12초는 걸리는데,
+  // 돌면서 가느라 훨씬 더 든다 — 45초는 "돌 줄 몰라 헤매도 3별"이 되는 값이다.
+  scoring: { threeStarMaxSeconds: 45, twoStarMaxSeconds: 75 },
+  bounds: PRACTICE_BOUNDS,
+  obstacles: [
+    // 골로 가는 호의 **바깥**. 지나는 길에 보이지만 부딪히려면 일부러 가야 한다.
+    { shape: 'circle', x: 8, y: 30, radius: 5 },
+    { shape: 'circle', x: 22, y: -14, radius: 4.5 },
+    { shape: 'circle', x: 58, y: 6, radius: 5 },
+    { shape: 'circle', x: 62, y: 48, radius: 4 },
+    { shape: 'circle', x: -18, y: 12, radius: 4.5 },
+  ].map((o) => ({ ...o, material: 'rock' })),
+};
+
 /** 출항 지점(원점) 기준. 뱃머리(+X) 방향으로 흩어진 암초 사이를 지나 도착점까지. */
 export const DEMO_MAP = {
   goal: { x: 150, y: 0, radius: 6, label: '도착' },
@@ -123,3 +164,14 @@ export function boundaryWalls(b) {
     wall(b.maxX + t / 2, cy, t / 2, halfH, [-1, 0]),  // 동
   ];
 }
+
+/**
+ * 스테이지 id → 맵. `game/progress.js` 의 `STAGES[].id` 와 1:1 이다.
+ *
+ * ★ 맵을 고르는 코드는 `sail/screen.js` 에 **한 줄**이다 (`MAPS[currentStage().id]`).
+ *   맵을 더할 때 고치는 곳이 이 객체와 STAGES 배열 둘뿐이어야 원칙 1 이 지켜진다.
+ */
+export const MAPS = {
+  practice: PRACTICE_MAP,
+  reef: DEMO_MAP,
+};

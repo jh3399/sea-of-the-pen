@@ -23,9 +23,10 @@ import { CORPUS } from '../hull/corpus.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
+import { currentStage, hasNextStage } from '../game/progress.js';
 import { View } from '../render/view.js';
 import { drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
-import { DEMO_MAP, boundaryWalls } from './map.js';
+import { MAPS, boundaryWalls } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
 const HANDOFF_KEY = 'shipwright:handoff';
@@ -122,12 +123,19 @@ class SailScreen {
       barFill: document.getElementById('hud-bar-fill'),
       distance: document.getElementById('hud-distance'),
     };
+    // ★ 어느 바다인가는 `game/progress.js` 가 정하고, 그 id 로 맵을 꺼내는 것이 이 한 줄이다.
+    //   맵별 분기는 여기에도 없다 — 아래는 전부 `this.map` 의 데이터만 읽는다.
+    this.stage = currentStage();
+    this.map = MAPS[this.stage.id];
+
     this.clearUi = {
       overlay: document.getElementById('clear-overlay'),
       stars: [...document.querySelectorAll('#clear-stars span')],
       rating: document.getElementById('clear-rating'),
       time: document.getElementById('clear-time'),
       retry: document.getElementById('btn-retry'),
+      next: document.getElementById('btn-next'),
+      nextNote: document.getElementById('next-stage-note'),
       menu: document.getElementById('btn-clear-menu'),
     };
     this.clearUi.retry.addEventListener('click', () => {
@@ -137,17 +145,18 @@ class SailScreen {
       sessionStorage.removeItem(HANDOFF_KEY);
       location.href = 'index.html';
     });
+    this.clearUi.next.addEventListener('click', () => this.toNextStage());
 
     window.addEventListener('resize', () => this.view.resize());
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
 
     this.launch(loadHandoff() ?? fallbackDesign());
-    for (const spec of DEMO_MAP.obstacles) this.placeObstacle(spec);
+    for (const spec of this.map.obstacles) this.placeObstacle(spec);
     // 해역 경계 — 벽도 그냥 암초다 (같은 `placeObstacle`, 같은 재질). 경계 전용 물리·판정
     // 코드가 0줄인 이유이고, 그래서 "여기서부터 못 간다"를 규칙이 아니라 지형이 말한다.
-    for (const spec of boundaryWalls(DEMO_MAP.bounds)) this.placeObstacle(spec);
-    this.goal = createGoal(DEMO_MAP.goal);
+    for (const spec of boundaryWalls(this.map.bounds)) this.placeObstacle(spec);
+    this.goal = createGoal(this.map.goal);
     this.initialDistance = this.currentDistance();
 
     this.lastFrame = performance.now();
@@ -234,15 +243,39 @@ class SailScreen {
     this.tappedStrokes.clear();
     this.keys.clear();
     this.held = {};
-    this.showClearResult(rateTravelTime(this.clearTime, DEMO_MAP.scoring));
+    this.showClearResult(rateTravelTime(this.clearTime, this.map.scoring));
   }
 
   showClearResult(stars) {
     this.clearUi.stars.forEach((star, i) => star.classList.toggle('active', i < stars));
     this.clearUi.rating.textContent = `별 ${stars}개`;
     this.clearUi.time.textContent = formatClearTime(this.clearTime);
+
+    // 다음 바다가 있으면 그리로, 없으면 잠근 채 이유를 적어 둔다.
+    const next = hasNextStage();
+    this.clearUi.next.disabled = !next;
+    this.clearUi.nextNote.textContent = next
+      ? '이어서 다음 바다로'
+      : '다음 스테이지 준비 중';
+
     this.clearUi.overlay.classList.remove('hidden');
-    this.clearUi.retry.focus();
+    // 이어서 갈 수 있으면 그쪽에 초점을 준다 — 키보드만 쓰는 사람에게 「다시하기」가
+    // 기본이면 클리어할 때마다 같은 바다를 한 번 더 돌게 된다.
+    (next ? this.clearUi.next : this.clearUi.retry).focus();
+  }
+
+  /**
+   * 다음 바다로. **여기서 진행을 올리지 않는다** — 사이 대사(`interlude`)가 있으면
+   * 그 대사를 재생하는 쪽(`menu/screen.js`)이 대사를 다 보여 준 뒤에 올린다.
+   *
+   * ⚠ 순서를 뒤집으면 안 된다. 여기서 먼저 올려 두면 플레이어가 섬 대사 도중에 새로고침
+   *   했을 때 이야기를 못 본 채 다음 바다에 서 있게 된다. "대사를 봤다"와 "진행이 올랐다"가
+   *   같은 사건이어야 한다.
+   */
+  toNextStage() {
+    const beat = this.stage.interlude;
+    // base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 — 상대경로로만 옮긴다.
+    location.href = beat ? `index.html?beat=${encodeURIComponent(beat)}` : 'sail.html';
   }
 
   updateCamera() {

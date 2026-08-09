@@ -63,7 +63,8 @@ src/
   field/    field.js(벡터장·스칼라장 샘플러) · forces.js(돛 힘, 순수 함수)
             zones.json(테스트 존 = 필드 정의. 코드 0줄)
   game/     crew.js(주인공 — 카메라 중심이자 도착 판정의 주체) · goal.js(도착 판정)
-            turrets.js(포탑 시계·발사 요청)
+            turrets.js(포탑 시계·발사 요청) · scoring.js(도착 시간 → 별)
+            progress.js(바다의 순서 — 맵을 하나도 모른다) · handoff.js(항해 중 배 고치기)
   rules/    engine.js(§6 논리 엔진 — 규칙을 하나도 모른다) · table.json(규칙 10줄)
   physics/  world.js(planck 어댑터·고정 타임스텝) · body.js(폴리곤→강체) · hydro.js★③
             devices.js(노 스트로크·키·닻·부스터의 힘) · fields.js(필드 적용부)
@@ -71,7 +72,8 @@ src/
   damage/   carve.js★②(불리언 차감·절단 판정) · apply.js(충격→재구성)
   render/   view.js(카메라: 추적+줌+fitTo, 회전 금지)
   draw/     screen.js(그리기 화면) · icons.js(픽셀 아이콘·주인공) · templates.js · draw.css
-  sail/     screen.js(항해 화면) · render.js(절차적 픽셀 렌더) · map.js · sail.css
+  sail/     screen.js(항해 화면) · render.js(절차적 픽셀 렌더) · sail.css
+            map.js(0장 연습 해역 · 1장 바위 협곡 — 순수 데이터. 맵별 코드 0줄)
   menu/     screen.js(메뉴·컷신 오케스트레이션 — 대사 0줄) · menu.css
   story/    dialogue.js(대사 오버레이 엔진) · script.js(대사 전문 ← docs/SCRIPT.md 와 1:1)
   scene/    pixelbg.js(씬 크로스페이드) · bgscenes.js(배경 29종) · bgkit.js(레이어 프리미티브)
@@ -133,7 +135,13 @@ docs/                 design_doc.md(설계) · dev_plan.md(5일 계획표)
       절단 시 소속 조각 판정.
       **계획 밖 추가**: 메인 메뉴 + 인트로 컷신 5비트(`index.html`), 하니스는 `harness.html` 로.
       구 프로토타입의 배경·도트·칩튠·대사 엔진을 `src/scene`·`src/audio` 로 이관해 재사용했다.
-      ⚠ 남은 것: 맵 JSON 3장 · 실패 분석 화면(항적 고스트 + 침몰 사유 배지).
+      ⚠ 남은 것: 2·3장 맵 · 실패 분석 화면(항적 고스트 + 침몰 사유 배지).
+      **0장 「연습 해역」 추가** — 그리기 튜토리얼이 설계 화면만 가르치고 항해 조작은 한
+      글자도 안 가르치는데 그 다음이 곧바로 암초 열한 개였다. 골을 뱃머리에서 40° 옆에
+      두어 **직진만으로는 못 닿게** 만든 것이 이 맵의 전부다 (조작을 설명하는 대신 하게
+      만든다). 클리어하면 [S-06] 시작의 섬에서 세렌이 **키를 달아 준다** —
+      설계 화면을 다시 띄우지 않는 이유는 `docs/SCRIPT.md` [S-06] 메모 참조.
+      진행은 `game/progress.js` 의 STAGES 배열 하나뿐이고 맵별 코드는 여전히 0줄이다.
 - [ ] D4 (8/9, **12:00 콘텐츠 프리즈**): 폴리시 + 배포 + 영상 + PDF 3종 (타이틀은 8/8 에 선반영)
 - [ ] D5 (8/10 오전): 예비, 버그 수정만
 
