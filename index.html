@@ -10,6 +10,16 @@
   <!-- 애니메이션 픽셀 배경 (메뉴·컷신 공용). 씬 전환은 scene/pixelbg.js -->
   <canvas id="bg" class="pixel" aria-hidden="true"></canvas>
 
+  <!-- 그림 배경. 절차적 캔버스는 논리 356×200 이라 AI 도트 원본의 결이 통째로 뭉갠다 —
+       타이틀에서 이미 겪은 문제라 같은 길을 낸다: 그림이 있는 씬은 이 레이어가 원본
+       해상도로 깔고, 없는 씬은 투명해져서 아래 캔버스가 그대로 보인다.
+       src 와 페이드는 scene/pixelbg.js 의 setScene() 이 관리한다. -->
+  <img id="bg-photo" alt="" aria-hidden="true" />
+
+  <!-- 그림 위에서 움직이는 것만 다시 그리는 캔버스 (창밖 바다·숨). scene/scenefx.js.
+       그림과 **같은 원본 크기 + 같은 object-fit** 이어야 창 비율이 바뀌어도 안 어긋난다. -->
+  <canvas id="scene-fx" aria-hidden="true"></canvas>
+
   <div id="app">
     <section id="screen-title" class="screen active">
       <div class="title-wrap">

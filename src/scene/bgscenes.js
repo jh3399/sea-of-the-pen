@@ -74,6 +74,91 @@ function sea_day(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.04);
 }
 
+// ---------------- rock_strait — S-02 첫째 바다 (바위 협곡) ----------------
+// sea_day 를 고치지 않고 따로 만든다. sea_day 는 "맑은 낮 바다"라는 일반 배경이라
+// 여기에 바위를 박아 넣으면 다른 데서 다시 쓸 수 없게 된다.
+//
+// ★ **무서운 것은 솟은 바위가 아니라 물 밑에 잠긴 바위다.** 그것이 이 맵에서 플레이어를
+//   죽이는 것이므로(`physics/obstacle.js`) 수면 아래 그림자를 같이 그린다. 보이는 것은
+//   피할 수 있고, 안 보이는 것이 배를 부순다 — 그림이 그 말을 먼저 해야 한다.
+// ★ 바람(순풍)은 남는다. 설계 문서 §8 의 반전이 1장의 큰 돛에서 나오기 때문이다.
+//   그래서 구름과 갈매기가 한 방향으로 빠르게 흐른다.
+function rock_strait(ctx, { w, h, sec }) {
+  const hz = R(h * 0.55);
+  skyGradient(ctx, w, 0, hz, ['#3d9ad4', '#63b7e6', '#8bd2ef', '#b6e8f6', '#e0f6f7']);
+  sun(ctx, w * 0.8, hz * 0.18, 8, sec, {});
+  clouds(ctx, w, sec, { y: hz * 0.18, color: '#ffffff', alpha: 0.8, count: 6, speed: 6, scale: 1.6, seed: 31 });
+  clouds(ctx, w, sec, { y: hz * 0.4, color: '#f2fbff', alpha: 0.5, count: 5, speed: 9, scale: 1.1, seed: 32 });
+  hills(ctx, w, hz + 1, '#6a94aa', { amp: 7, freq: 1.3, seed: 33, from: 0.05, to: 0.3 });
+  const bands = seaBands(ctx, w, h, hz, ['#3990b8', '#2f83ab', '#2a769c', '#24688b', '#1e5a7a', '#184c68']);
+  glitter(ctx, w * 0.8, hz, h, sec, '#fff8d8', { alpha: 0.4, count: 80, seed: 34 });
+
+  // 물 밑에 잠긴 바위 — 수면 바로 아래의 검은 얼룩. 이것이 배를 부순다.
+  // 납작하게(0.22) 눌러야 물 밑으로 보인다. 동그랗게 두면 물에 뜬 그림자처럼 보인다.
+  for (let i = 0; i < 9; i++) {
+    const x = R(hash(i, 41) * w);
+    const y = hz + R(h * (0.08 + hash(i, 42) * 0.34));
+    const rw = R(h * (0.06 + hash(i, 43) * 0.08));
+    ctx.globalAlpha = 0.26;
+    blob(ctx, x, y, rw, R(rw * 0.22) + 1, '#0d3a52');
+    ctx.globalAlpha = 0.16;
+    blob(ctx, x, y - 1, R(rw * 0.6), R(rw * 0.12) + 1, '#7fd0e8');   // 수면에 비치는 자리
+    ctx.globalAlpha = 1;
+  }
+
+  waves(ctx, w, bands, sec, '#a8e6f5', { alpha: 0.5, speed: 13, density: 8, seed: 35 });
+
+  // 솟은 바위 — 뒤에서 앞으로. 뒤일수록 작고 옅다.
+  const spire = (x, baseY, hgt, wid, body, top) => {
+    // ⚠ y 는 꼭대기에서 0 이다. t = y/hgt 로 두어야 **위가 좁고 아래가 넓다.**
+    //    반대로 두면 종유석처럼 거꾸로 매달린 모양이 된다 (한 번 그렇게 나왔다).
+    //    제곱근을 씌우는 것은 옆면을 곧은 삼각형이 아니라 살짝 부푼 바위로 만들기 위해서다.
+    // 바위마다 옆면의 부풀기(pow)와 기울기(lean)를 달리한다. 안 그러면 전부 같은
+    // 삼각형이 되어 상어 지느러미처럼 보인다.
+    const pow = 0.35 + hash(R(x), 55) * 0.35;
+    const lean = (hash(R(x), 56) - 0.5) * wid * 0.5;
+    for (let y = 0; y < hgt; y++) {
+      const u = y / hgt;
+      const t = Math.pow(u, pow);
+      const jag = (hash(R(x + y * 7), 44) - 0.5) * wid * 0.28;
+      const ww = R(wid * t) + 3;
+      fill(ctx, x - ww / 2 + jag + lean * (1 - u), baseY - hgt + y, ww, 1, body);
+    }
+    for (let y = 0; y < R(hgt * 0.62); y++) {             // 좌상단 광원 쪽 밝은 면
+      const u = y / hgt;
+      const t = Math.pow(u, pow);
+      const ww = R(wid * t * 0.4) + 1;
+      fill(ctx, x - R(wid * t) / 2 + 1 + lean * (1 - u), baseY - hgt + y, ww, 1, top);
+    }
+    // 물에 닿는 자리 포말 — 파도가 부딪히는 것이 곧 여기 바위가 있다는 표시다
+    const foam = R(wid * 0.9) + 4;
+    for (let i = 0; i < 5; i++) {
+      const fx = x - foam / 2 + R(hash(i, 45) * foam);
+      const bob = Math.sin(sec * 2.2 + i + x * 0.05) * 1.2;
+      ctx.globalAlpha = 0.55;
+      fill(ctx, fx, baseY + R(bob), 2 + R(hash(i, 46) * 3), 1, '#eaf8ff');
+      ctx.globalAlpha = 1;
+    }
+  };
+
+  // 줄마다 가로로 고르게 흩는다 — hash 만 쓰면 뭉쳐서 두세 개가 겹쳐 붙는다.
+  const spread = (i, n, seed, pad) => R(((i + 0.2 + hash(i, seed) * 0.6) / n) * (1 - pad * 2) * w + pad * w);
+
+  for (let i = 0; i < 5; i++) {                            // 먼 바위
+    spire(spread(i, 5, 47, 0.03), hz + R(h * 0.05), R(h * (0.05 + hash(i, 48) * 0.04)), R(h * 0.07), '#3d6a83', '#5b8ba3');
+  }
+  for (let i = 0; i < 4; i++) {                            // 중간 바위
+    spire(spread(i, 4, 49, 0.05), hz + R(h * 0.19), R(h * (0.11 + hash(i, 50) * 0.07)), R(h * 0.13), '#2b4c60', '#456f86');
+  }
+  for (let i = 0; i < 3; i++) {                            // 앞 바위 — 화면을 가른다
+    spire(spread(i, 3, 51, 0.08), h - R(h * 0.04), R(h * (0.26 + hash(i, 52) * 0.14)), R(h * 0.22), '#1a3141', '#2f5165');
+  }
+
+  gulls(ctx, w, sec, { y: hz * 0.28, count: 4, speed: 16, seed: 53 });
+  particles(ctx, w, h, sec, { count: 26, color: '#ffffff', speed: 30, dir: 1, sway: 10, alpha: 0.5, seed: 54, y0: 0.82, y1: 1 });
+  vignette(ctx, w, h, 0.06);
+}
+
 // ---------------- fog_black — S-02 습격 (검은 안개·붉은 포격) ----------------
 
 function fog_black(ctx, { w, h, sec }) {
@@ -662,6 +747,297 @@ function workshop(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.16, 8);
 }
 
+// ---------------- sickroom — S-01 병상 (미오의 방) ----------------
+// 프롤로그에서 유일한 사적 공간이다. 지금까지 S-01 은 village_alive(야외 마을 전경) 위에서
+// 돌았는데, 실내 장면을 야외 그림에 얹은 것이라 대사와 그림이 서로 딴 데를 봤다.
+//
+// ★ 창밖에 바다가 보이는 것이 이 방의 전부다 — 누워서 그것만 보고 있었으니 미오가 그린 것이
+//   배다. 인과를 대사로 설명하지 않고 그림이 만든다. 수평선의 돛 하나가 그 연장이다.
+// ★ 미오는 여기 있지만 얼굴은 없다. 논리 해상도가 짧은 쪽 200px 이라 머리가 7~8px 이고
+//   그 크기에는 이목구비가 물리적으로 안 들어간다 — STORY.md §2 의 "얼굴은 에필로그에서
+//   처음 나온다"가 연출 의도가 아니라 **구조상** 지켜진다. 흉상을 새로 그릴 필요가 없다.
+function sickroom(ctx, { w, h, sec }) {
+  // 벽 — 가로 판자. 창 쪽이 밝다.
+  // 작업장(#2e2015)보다 밝고 따뜻하게 잡는다 — 여기는 헛간이 아니라 사람이 자는 방이다.
+  fill(ctx, 0, 0, w, h, '#5b4a3b');
+  for (let y = 0; y < h; y += 13) {
+    fill(ctx, 0, y, w, 1, '#43362a');
+    fill(ctx, 0, y + 1, w, 1, '#6b5847');
+  }
+  // 창에서 먼 쪽(왼쪽)을 어둡게 깔아 광원 방향을 한쪽으로 고정한다.
+  // overlay() 는 화면 전체 전용이라 여기서는 못 쓴다 — 알파를 직접 걸고 되돌린다.
+  ctx.globalAlpha = 0.18;
+  fill(ctx, 0, 0, R(w * 0.45), h, '#1a140e');
+  ctx.globalAlpha = 1;
+
+  // ---- 창 + 창밖 바다 ----
+  const wx = R(w * 0.56), wy = R(h * 0.13);
+  const ww = R(w * 0.32), wh = R(h * 0.34);
+  fill(ctx, wx - 3, wy - 3, ww + 6, wh + 6, '#2a2016');           // 창틀
+  fill(ctx, wx - 2, wy - 2, ww + 4, wh + 4, '#6b5641');
+  const hz = R(wh * 0.52);                                         // 수평선
+  fill(ctx, wx, wy, ww, hz, '#cfe0ea');                            // 창 안쪽 하늘
+  fill(ctx, wx, wy + R(hz * 0.55), ww, R(hz * 0.45), '#dfeaf0');
+  fill(ctx, wx, wy + hz, ww, wh - hz, '#5d86a4');                  // 바다
+  fill(ctx, wx, wy + hz, ww, 1, '#8fb2c8');
+  for (let i = 0; i < 14; i++) {                                   // 물결 반짝임
+    const t = hash(i, 311);
+    const ly = wy + hz + 2 + R(t * (wh - hz - 3));
+    const lx = wx + R(hash(i, 312) * (ww - 8));
+    fill(ctx, lx, ly, 2 + R(hash(i, 313) * 3), 1, '#7ea6c2');
+  }
+  // ★ 수평선의 돛 하나 — 미오가 배를 그린 이유이자 S-05 의 예고.
+  //   작으면 아무도 못 보고, 크면 창밖이 아니라 이 방의 주인공이 된다. 6px 이 그 사이다.
+  const shx = wx + R(ww * 0.66);
+  fill(ctx, shx - 4, wy + hz + 1, 9, 1, '#2f3c46');       // 선체
+  fill(ctx, shx - 3, wy + hz, 7, 1, '#465866');
+  fill(ctx, shx, wy + hz - 6, 1, 6, '#2f3c46');           // 돛대
+  fill(ctx, shx - 3, wy + hz - 5, 3, 5, '#f4f8fa');       // 돛
+  fill(ctx, shx + 1, wy + hz - 4, 3, 4, '#dfe8ee');
+  // 창살
+  fill(ctx, wx + R(ww / 2) - 1, wy, 2, wh, '#6b5641');
+  fill(ctx, wx, wy + R(wh / 2) - 1, ww, 2, '#6b5641');
+
+  // ---- 창에서 들어오는 빛기둥 (왼쪽 아래로) ----
+  // 침대 위로 떨어지게 각도를 잡는다. 방에서 유일하게 밝은 것이 바다에서 온 빛이어야 한다.
+  ctx.globalAlpha = 0.1;
+  ctx.fillStyle = '#fff3d4';
+  for (let i = 0; i < h; i++) fill(ctx, wx - i * 0.95, wy + i, ww + i * 0.5, 1);
+  ctx.globalAlpha = 1;
+
+  // ---- 침대 ----
+  const bx = R(w * 0.06), by = R(h * 0.60);
+  const bw = R(w * 0.50), bh = R(h * 0.22);
+  fill(ctx, bx - 4, by - R(h * 0.16), 5, R(h * 0.16) + bh, '#4a3524');      // 머리판
+  fill(ctx, bx - 4, by - R(h * 0.16), 5, 2, '#6b5033');
+  fill(ctx, bx, by + bh, bw, 4, '#3b2a1c');                                 // 침대틀
+  fill(ctx, bx, by + bh + 4, bw, 3, '#2a1d13');
+  fill(ctx, bx + 3, by + bh + 7, 3, R(h * 0.07), '#2a1d13');                // 다리
+  fill(ctx, bx + bw - 6, by + bh + 7, 3, R(h * 0.07), '#2a1d13');
+
+  // 숨 — 이불이 1px 오르내린다. 이 방에서 움직이는 것은 이것과 먼지뿐이다
+  const breath = R(Math.sin(sec * 1.5) * 1);
+
+  // 이불 — **윗선(실루엣)으로** 사람을 보여준다. 평평한 판 위에 둔덕을 얹는 방식은
+  // 이 해상도에서 회색 타원 하나로 뭉쳐 사람으로 안 읽힌다 (실제로 그렇게 나왔다).
+  // 어깨에서 솟고 허리에서 꺼지고 무릎에서 다시 솟는 윤곽 자체를 그린다.
+  // 몸이 이불 폭의 절반 안에 들어가는 것이 곧 "작은 아이"다.
+  const bt = by + 4 + breath;
+  const bBot = by + bh;
+  const bump = (t, c, r) => Math.max(0, 1 - ((t - c) / r) ** 2);
+  for (let x = 0; x < bw; x++) {
+    const t = x / bw;
+    const rise = 6 * bump(t, 0.17, 0.15) + 4.5 * bump(t, 0.46, 0.13);
+    const top = R(bt + 5 - rise);
+    fill(ctx, bx + x, top, 1, bBot - top, '#8f9aa6');
+    fill(ctx, bx + x, top, 1, 2, '#a8b3be');                                // 윗면 하이라이트
+  }
+  fill(ctx, bx, bBot - 3, bw, 3, '#6d7783');                                // 이불 그늘
+  for (let i = 0; i < 4; i++) {                                             // 발치 쪽 주름
+    const fx = bx + R(bw * (0.64 + i * 0.09));
+    fill(ctx, fx, bt + 7, 1, bBot - bt - 9, '#7d8894');
+  }
+  // 베개와 머리 — 창을 등지고 돌아누웠다. 얼굴은 이 해상도에 물리적으로 들어가지 않는다
+  fill(ctx, bx + 1, by - 2, R(bw * 0.24), 8, '#dfe4ea');
+  fill(ctx, bx + 1, by - 2, R(bw * 0.24), 2, '#f2f5f8');
+  blob(ctx, bx + R(bw * 0.12), by + 1, 6, 5, '#5a3d29');                    // 머리카락
+  blob(ctx, bx + R(bw * 0.12) - 1, by, 4, 3, '#6b4a33');                    // 좌상단 광원
+
+  // ---- 머리맡 걸상 + 미오가 그린 종이 ----
+  const stx = bx + bw + R(w * 0.03), sty = by + R(bh * 0.55);
+  fill(ctx, stx, sty, R(w * 0.11), 3, '#5a4430');
+  fill(ctx, stx + 2, sty + 3, 2, R(h * 0.13), '#3b2a1c');
+  fill(ctx, stx + R(w * 0.09), sty + 3, 2, R(h * 0.13), '#3b2a1c');
+  fill(ctx, stx + 2, sty - 5, R(w * 0.08), 5, '#efe9d8');                   // ★ 그 종이
+  fill(ctx, stx + 3, sty - 4, R(w * 0.06), 1, '#8a90a0');                   // 그려진 선 (배의 흔적)
+  fill(ctx, stx + 4, sty - 3, R(w * 0.04), 1, '#9aa0a8');
+
+  // 빛기둥 속 먼지 — 방이 멈춰 있다는 것을 먼지만 부정한다
+  particles(ctx, w, h, sec, {
+    count: 30, color: '#fff3d4', speed: 3, dir: 1, sway: 4,
+    alpha: 0.3, seed: 314, twinkle: true, y0: 0.1, y1: 0.9,
+  });
+  vignette(ctx, w, h, 0.2, 8);
+}
+
+// ---------------- living_room — S-02 진단 (루의 집 거실) ----------------
+// 화면에 뜨는 것은 assets/scene/living-room.png 다 (bgphotos.js). 이 함수는 그림이
+// 못 뜰 때의 받침이자, 모든 씬 키가 SCENES 에 있어야 한다는 규약을 지키는 자리다.
+//
+// ★ S-01(미오의 방)에서 여기로 나오는 것이 그냥 장소 이동이 아니다 — 의사가 나쁜 소식을
+//   말하려고 형제를 병실 밖으로 데리고 나온 것이고, 미오가 못 듣는 데서 말한다는 뜻이다.
+function living_room(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#d8c49c');                       // 벽
+  fill(ctx, 0, R(h * 0.72), w, h - R(h * 0.72), '#8a5c33'); // 마룻바닥
+  for (let x = 0; x < w; x += 9) fill(ctx, x, R(h * 0.72), 1, h, '#744b28');
+  // 창 + 바깥 하늘
+  const wx = R(w * 0.62), wy = R(h * 0.08), ww = R(w * 0.26), wh = R(h * 0.34);
+  fill(ctx, wx - 3, wy - 3, ww + 6, wh + 6, '#8a6a44');
+  fill(ctx, wx, wy, ww, wh, '#8fc4e8');
+  fill(ctx, wx, wy + R(wh * 0.62), ww, R(wh * 0.38), '#6ba24e');
+  // 소파
+  const sx = R(w * 0.17), sy = R(h * 0.4), sw = R(w * 0.5), sh = R(h * 0.3);
+  fill(ctx, sx, sy, sw, sh, '#b4402f');
+  fill(ctx, sx, sy, sw, R(sh * 0.16), '#c9503c');
+  fill(ctx, sx, sy + sh - R(sh * 0.18), sw, R(sh * 0.18), '#8f3125');
+  // 소파에 앉은 루 — 이 해상도에서는 덩어리로만 읽힌다
+  const cx = R(sx + sw * 0.5);
+  blob(ctx, cx, sy + R(sh * 0.18), 9, 8, '#eccfa2');       // 머리
+  fill(ctx, cx - 8, sy + R(sh * 0.3), 16, R(sh * 0.42), '#3c518a');  // 몸
+  fill(ctx, cx - 8, sy + R(sh * 0.3), 16, 3, '#e5505a');   // 목도리
+  vignette(ctx, w, h, 0.16, 8);
+}
+
+// ---------------- bulgasari_deep / bulgasari_feed — S-02 전설 (심해) ----------------
+// 화면에 뜨는 것은 assets/scene/bulgasari-deep.png 다 (bgphotos.js). 아래는 그 받침.
+//
+// ★ **키가 둘인데 그림은 한 장이다.** `_deep` 은 가만히 있고 `_feed` 는 같은 그림 위에서
+//   빨아들이는 움직임(scenefx)이 돈다. 대사 두 줄이 "누워 있다" → "빨아들인다" 로
+//   넘어가는데, 그림을 두 장 그리는 대신 같은 자리에서 움직임만 붙였다.
+function bulgasariDeepBase(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#04101f');
+  const lit = R(h * 0.5);
+  for (let y = 0; y < lit; y++) {
+    ctx.globalAlpha = 0.1 * (1 - y / lit);
+    fill(ctx, 0, y, w, 1, '#2a5f8f');
+  }
+  ctx.globalAlpha = 1;
+  fill(ctx, 0, R(h * 0.72), w, h - R(h * 0.72), '#061726');   // 바닥
+  // 별 모양 덩어리 — 팔 다섯을 중심에서 뻗는다
+  const cx = R(w * 0.49), cy = R(h * 0.55);
+  ctx.fillStyle = '#0b2237';
+  for (let a = 0; a < 5; a++) {
+    const ang = (a / 5) * Math.PI * 2 - Math.PI / 2;
+    for (let t = 0; t < R(w * 0.34); t++) {
+      const wdt = R((1 - t / (w * 0.34)) * h * 0.09) + 2;
+      fill(ctx, cx + Math.cos(ang) * t - wdt / 2, cy + Math.sin(ang) * t * 0.55 - wdt / 2, wdt, wdt);
+    }
+  }
+  blob(ctx, cx, cy, R(w * 0.08), R(h * 0.08), '#0e2a42');
+  // 위에서 내려오는 빛 한 줄기
+  ctx.globalAlpha = 0.07;
+  ctx.fillStyle = '#bfe4ff';
+  for (let i = 0; i < R(h * 0.7); i++) fill(ctx, R(w * 0.46) - i * 0.25, i, R(w * 0.06) + i * 0.5, 1);
+  ctx.globalAlpha = 1;
+  particles(ctx, w, h, sec, {
+    count: 30, color: '#8fc0e0', speed: 3, dir: -1, sway: 4, alpha: 0.2, seed: 402,
+  });
+  vignette(ctx, w, h, 0.34, 10);
+}
+const bulgasari_deep = bulgasariDeepBase;
+const bulgasari_feed = bulgasariDeepBase;
+
+// ---------------- essence — S-02 정수 (빛나는 유리병) ----------------
+// 화면에 뜨는 것은 assets/scene/essence.png 다 (bgphotos.js). 아래는 그 받침.
+function essence(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#01040c');
+  const cx = R(w * 0.53), cy = R(h * 0.58);
+  const puls = 0.85 + 0.15 * Math.sin(sec * 1.6);
+  for (let i = 5; i > 0; i--) {                     // 병에서 새어 나오는 빛
+    ctx.globalAlpha = 0.05 * puls;
+    blob(ctx, cx, cy, R(w * 0.05 * i), R(h * 0.07 * i), '#2aa6c8');
+  }
+  ctx.globalAlpha = 1;
+  fill(ctx, cx - R(w * 0.03), cy - R(h * 0.12), R(w * 0.06), R(h * 0.26), '#124a5e');  // 병
+  fill(ctx, cx - R(w * 0.025), cy - R(h * 0.02), R(w * 0.05), R(h * 0.15), '#3fe0ff'); // 액체
+  fill(ctx, cx - R(w * 0.012), cy - R(h * 0.18), R(w * 0.024), R(h * 0.06), '#5a4a33'); // 코르크
+  particles(ctx, w, h, sec, {
+    count: 22, color: '#7fd8ee', speed: 6, dir: -1, sway: 3, alpha: 0.3, seed: 403,
+  });
+  vignette(ctx, w, h, 0.4, 12);
+}
+
+// ---------------- bulgasari_name — S-02 不可殺伊 (이름 풀이) ----------------
+// 이름 자체가 이 괴물의 성격이라 화면이 이름만 보여준다.
+//
+// ★ **그림이 아니라 코드로 찍는다.** 이유 둘:
+//   ① 게임 폰트(NeoDunggeunmo)에 한자 글리프가 없다 — 브라우저가 조용히 시스템 폰트로
+//      대체한다 (`不`·`可` 는 없는 폰트로 그린 것과 잉크량이 정확히 일치했다). 그러니
+//      어차피 다른 폰트를 지정해야 하고, 지정할 바에는 획이 정확한 명조가 맞다.
+//   ② AI 그림은 한자 자획을 자주 틀린다. 한자를 아는 사람이 보면 바로 드러난다.
+//
+// 논리 캔버스가 356×200 이라 여기 그린 글자는 CSS 확대(image-rendering: pixelated)를
+// 거치며 저절로 도트가 된다 — 따로 도트화할 필요가 없다.
+function bulgasari_name(ctx, { w, h, sec }) {
+  // 물 밑. 위쪽만 아주 옅게 밝다
+  fill(ctx, 0, 0, w, h, '#04070f');
+  const lit = R(h * 0.55);
+  for (let y = 0; y < lit; y++) {
+    ctx.globalAlpha = 0.06 * (1 - y / lit);
+    fill(ctx, 0, y, w, 1, '#1d3a5c');
+  }
+  ctx.globalAlpha = 1;
+  particles(ctx, w, h, sec, {
+    count: 26, color: '#6f8fae', speed: 2, dir: -1, sway: 3, alpha: 0.22, seed: 401,
+  });
+
+  // 헤드리스 렌더러(archive/dev/bg-shot.mjs)의 ctx 셰임에는 fillText 가 없다.
+  // 배경까지만 그리고 조용히 빠진다 — 개발 도구 때문에 씬이 죽으면 안 된다.
+  if (typeof ctx.fillText !== 'function') { vignette(ctx, w, h, 0.3, 10); return; }
+
+  const glyphs = ['不', '可', '殺', '伊'];
+  const size = R(h * 0.34);
+  const gap = R(size * 1.16);
+  const cx = R(w / 2);
+  const cy = R(h * 0.42);        // 아래 1/4 은 대화창이 덮으므로 위로 올린다
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `${size}px "Batang","BatangChe","Apple Myungjo","Nanum Myeongjo","Noto Serif KR",serif`;
+
+  glyphs.forEach((g, i) => {
+    const x = cx + (i - 1.5) * gap;
+    ctx.fillStyle = '#5e1520';                 // 새겨진 깊이 — 붉은 그림자 한 겹
+    ctx.fillText(g, x + 2, cy + 2);
+    ctx.fillStyle = '#e6dcc4';                 // 낡은 뼈 빛
+    ctx.fillText(g, x, cy);
+  });
+
+  // 한 글자씩 훑고 지나가는 붉은 빛 — 누가 소리 내어 읽고 있는 것처럼.
+  // sec 는 씬이 시작된 시각이 아니라 절대 시각이라 한 번만 도는 연출은 못 쓴다.
+  // 대신 계속 도는 것으로 두면 어느 시점에 들어와도 같은 그림이 된다.
+  const n = Math.floor((sec * 0.85) % 4);
+  ctx.globalAlpha = 0.4 + 0.25 * Math.sin(sec * 4);
+  ctx.fillStyle = '#c8404e';
+  ctx.fillText(glyphs[n], cx + (n - 1.5) * gap, cy);
+  ctx.globalAlpha = 1;
+
+  vignette(ctx, w, h, 0.3, 10);
+}
+
+// ---------------- mio_drawing — S-01 미오가 그린 배 (책상 위 종이) ----------------
+// 실제로 화면에 뜨는 것은 assets/scene/mio-drawing.png 다 (bgphotos.js). 이 함수는
+// **그림이 못 뜰 때의 받침**이자, 모든 씬 키가 SCENES 에 있어야 한다는 규약을 지키는 자리다.
+// 그래서 크레용 질감까지 흉내 내지 않고 구도만 맞춘다 — 나무 위에 기울어진 밝은 종이.
+function mio_drawing(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#4a3c2f');
+  for (let y = 0; y < h; y += 14) {
+    fill(ctx, 0, y, w, 1, '#372c22');
+    fill(ctx, 0, y + 1, w, 1, '#57473a');
+  }
+  const px = R(w * 0.17), py = R(h * 0.12);
+  const pw = R(w * 0.66), ph = R(h * 0.74);
+  ctx.globalAlpha = 0.3;
+  fill(ctx, px + 6, py + 8, pw, ph, '#241b14');      // 종이 그림자
+  ctx.globalAlpha = 1;
+  // 살짝 기울어 보이게 행마다 좌우로 1px 씩 민다 (실제 그림이 기울어 있다)
+  for (let y = 0; y < ph; y++) {
+    const skew = R((y / ph - 0.5) * 10);
+    fill(ctx, px + skew, py + y, pw, 1, y < 3 || y > ph - 4 ? '#d6cbb4' : '#e6dcc6');
+  }
+  // 배 한 척 — 붉은 선체, 노란 돛, 파란 물결
+  const bx = R(px + pw * 0.5), by = R(py + ph * 0.66);
+  fill(ctx, bx - R(pw * 0.26), by, R(pw * 0.52), R(ph * 0.14), '#c1584f');
+  fill(ctx, bx - 2, by - R(ph * 0.34), 3, R(ph * 0.34), '#7a5636');
+  for (let i = 0; i < R(ph * 0.26); i++) fill(ctx, bx - 4 - i * 0.7, by - R(ph * 0.3) + i, i * 0.7 + 2, 1, '#e0a940');
+  for (let i = 0; i < 3; i++) {
+    const wy = by + R(ph * 0.16) + i * 4;
+    for (let x = 0; x < pw * 0.6; x += 2) {
+      fill(ctx, px + pw * 0.2 + x, wy + Math.round(Math.sin(x * 0.15 + i) * 2), 2, 1, '#4f7fa8');
+    }
+  }
+  vignette(ctx, w, h, 0.22, 8);
+}
+
 // ---------------- world_end — 최종전 (세계의 끝) ----------------
 
 function world_end(ctx, { w, h, sec }) {
@@ -754,6 +1130,7 @@ export const SCENES = {
   night_sea,
   harbor,
   sea_day,
+  rock_strait,
   fog_black,
   dawn_wreck,
   village_pale,
@@ -768,6 +1145,13 @@ export const SCENES = {
   mirror_fog,
   shipyard_grave,
   workshop,
+  sickroom,
+  mio_drawing,
+  living_room,
+  bulgasari_deep,
+  bulgasari_feed,
+  bulgasari_name,
+  essence,
   world_end,
   golden_isle,
 };

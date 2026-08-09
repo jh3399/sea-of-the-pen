@@ -53,6 +53,40 @@ html, body {
   z-index: 0;
 }
 
+/* 그림 배경 — 절차적 캔버스 바로 위. 그림이 있는 씬에서만 불투명해진다.
+   object-fit: cover 는 #title-fx 와 같은 이유다: 창 비율이 어떻든 그림을 잘라서 채운다.
+   페이드 시간은 pixelbg.js 의 FADE_MS 와 맞춰 둔다 — 캔버스 크로스페이드와 그림 페이드가
+   서로 다른 속도로 돌면 전환 중간에 두 배경이 겹쳐 보인다. */
+#bg-photo, #scene-fx {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  z-index: 0;
+  pointer-events: none;
+
+  /* ⚠ 여기만 pixelated 를 쓰지 않는다.
+     다른 그림(로고 134px · 타이틀 배경 418px)은 화면에서 3~4배로 늘어나므로 니어리스트가
+     맞다. 이 그림은 1672px 짜리 등배 도트라 화면 크기와 거의 1:1 이고, 그 배율에서
+     니어리스트는 픽셀을 고르지 않게 겹치거나 버려서 오히려 계단이 생긴다.
+     auto 로 두면 1:1 근처에서는 눈에 안 띄고 어긋난 배율만 매끄럽게 받아 준다. */
+  image-rendering: auto;
+}
+
+#bg-photo {
+  opacity: 0;
+  transition: opacity 650ms ease;   /* = pixelbg.js 의 FADE_MS */
+}
+#bg-photo[data-on='1'] { opacity: 1; }
+
+/* 움직임 레이어는 그림과 같이 뜨고 같이 사라진다 */
+#scene-fx {
+  opacity: 0;
+  transition: opacity 650ms ease;
+}
+#scene-fx[data-on='1'] { opacity: 1; }
+
 /* CRT 스캔라인 */
 body::after {
   content: '';
