@@ -2,14 +2,12 @@
 // 안에서 벡터 대신 `ctx.fillRect` 픽셀 그리드만 채운다. 새 그래픽 자산은 0개다: 선체·바위·
 // 물은 전부 절차적으로(폴리곤 래스터화·시드 해시) 찍고, 아이템·주인공은 `draw/icons.js` 의
 // 기존 픽셀 아이콘 헬퍼를 그대로 재사용한다.
-import { bounds, pointInPolygon } from '../geom/poly.js';
 import { MATERIALS } from '../hull/params.js';
+import { surfaceCellKey, surfaceCellPoint } from '../hull/raster.js';
 import {
   drawItemMarker, drawCrewSprite, drawPixelGrid, markerAngleToward, itemMarkerSize, OAR_PUSH,
 } from '../draw/icons.js';
 
-/** 선체 폴리곤을 몇 칸 그리드로 래스터화할 것인가 (긴 변 기준). */
-const HULL_PIXEL_COLS = 28;
 /** 바위 하나를 몇 칸 그리드로 그릴 것인가 (지름 기준). */
 const ROCK_PIXEL_COLS = 18;
 /** 경계 암초 벽의 픽셀 한 칸 (m). 벽 하나가 200 m 를 넘으므로 낱개 바위보다 굵게 찍는다. */
@@ -91,11 +89,6 @@ function shade(hex, amt) {
 function rgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a.toFixed(3)})`;
-}
-
-function at(grid, cols, rows, r, c) {
-  if (r < 0 || r >= rows || c < 0 || c >= cols) return 0;
-  return grid[r * cols + c];
 }
 
 /** 카메라가 지금 보고 있는 월드 사각형. */
@@ -425,41 +418,39 @@ export function drawGoalCompass(ctx, view, goal, from, { cleared = false } = {})
 }
 
 /**
- * 선체 로컬 폴리곤을 픽셀 그리드로 래스터화. 호출 전 `ctx.translate/rotate` 로 강체 자세를
- * 걸어 두면(§main.js renderSail 관례) 좌표 변환 코드가 따로 필요 없다.
+ * 출항 때 고정한 선체 표면 셀을 그린다. 파손 이벤트가 기존 셀만 걷어내므로 매 프레임 폴리곤을
+ * 다시 래스터화하지 않고, 남은 도트의 크기와 위치도 절대 재배치되지 않는다.
  */
-function drawHullPixels(ctx, outline, materialKey) {
-  const mat = MATERIALS[materialKey] ?? MATERIALS.wood;
-  const bb = bounds(outline);
-  const span = Math.max(bb.width, bb.height, 0.4);
-  const cell = clamp(span / HULL_PIXEL_COLS, 0.05, 0.3);
-  const cols = Math.max(1, Math.ceil(bb.width / cell) + 2);
-  const rows = Math.max(1, Math.ceil(bb.height / cell) + 2);
-  const x0 = bb.minX - cell;
-  const y0 = bb.minY - cell;
+function drawHullPixels(ctx, hull) {
+  const surface = hull.surface;
+  if (!surface?.cells?.length) return;
 
-  const inside = new Uint8Array(cols * rows);
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const cx = x0 + (c + 0.5) * cell;
-      const cy = y0 + (r + 0.5) * cell;
-      if (pointInPolygon({ x: cx, y: cy }, outline)) inside[r * cols + c] = 1;
-    }
+  const mat = hull.params?.material ?? MATERIALS.wood;
+  const occupied = new Set(surface.cells.map(surfaceCellKey));
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const cell of surface.cells) {
+    const { x } = surfaceCellPoint(surface, cell);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
   }
-
+  const span = Math.max(maxX - minX + surface.cell, 0.4);
+  const bowBand = maxX - span * 0.14;
   const dark = shade(mat.color, -0.32);
   const bowLight = shade(mat.color, 0.16);
-  const bowBand = bb.maxX - span * 0.14;
 
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (!inside[r * cols + c]) continue;
-      const edge = !at(inside, cols, rows, r - 1, c) || !at(inside, cols, rows, r + 1, c)
-        || !at(inside, cols, rows, r, c - 1) || !at(inside, cols, rows, r, c + 1);
-      const cx = x0 + (c + 0.5) * cell;
-      ctx.fillStyle = edge ? dark : (cx > bowBand ? bowLight : mat.color);
-      ctx.fillRect(x0 + c * cell, y0 + r * cell, cell, cell);
-    }
+  for (const pixel of surface.cells) {
+    const { col, row } = pixel;
+    const edge = !occupied.has(`${col - 1},${row}`) || !occupied.has(`${col + 1},${row}`)
+      || !occupied.has(`${col},${row - 1}`) || !occupied.has(`${col},${row + 1}`);
+    const center = surfaceCellPoint(surface, pixel);
+    ctx.fillStyle = edge ? dark : (center.x > bowBand ? bowLight : mat.color);
+    ctx.fillRect(
+      surface.originX + col * surface.cell,
+      surface.originY + row * surface.cell,
+      surface.cell,
+      surface.cell,
+    );
   }
 }
 
@@ -491,7 +482,7 @@ function drawOar(ctx, item) {
 
 /** 강체 하나(선체 로컬 좌표계 안에서) — 선체 + 부착 아이템 + 주인공. */
 export function drawHullBody(ctx, hull) {
-  drawHullPixels(ctx, hull.outline, hull.params.material.key);
+  drawHullPixels(ctx, hull);
   for (const item of hull.items) {
     if (item.type === 'oar' && item.side) { drawOar(ctx, item); continue; }
     drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, item.type, 0, 0, ITEM_PIXEL));

@@ -9,6 +9,9 @@ import { strokeToHull } from '../src/hull/polygon.js';
 import { computeHullParams, HYDRO_TUNING, MATERIALS } from '../src/hull/params.js';
 import { decomposeHull } from '../src/hull/decompose.js';
 import { CORPUS, CORPUS_LABELS } from '../src/hull/corpus.js';
+import {
+  pointInHullSolid, rasterizeHullSurface, surfaceCellKey, surfaceCellPoint,
+} from '../src/hull/raster.js';
 import { Settings, Box } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
@@ -1622,6 +1625,82 @@ check('첫 발화는 가장 돌출한 부위에서 시작한다 (§2.2 "뾰족�
     && Math.abs(Math.hypot(exposed.x, exposed.y) - maxReach) < 1e-9,
   exposed ? `반경 ${Math.hypot(exposed.x, exposed.y).toFixed(3)} = 최대 ${maxReach.toFixed(3)} m` : 'hotspot.js 미구현');
 
+// ── ★ 파손 표면 도트가 물리 형상을 그대로 따르는가 ────────────────────────────────
+const rasterOuter = [
+  { x: -2, y: -2 }, { x: 2, y: -2 }, { x: 2, y: 2 }, { x: -2, y: 2 },
+];
+const rasterHole = [
+  { x: -0.8, y: -0.8 }, { x: 0.8, y: -0.8 }, { x: 0.8, y: 0.8 }, { x: -0.8, y: 0.8 },
+];
+const rasterA = rasterizeHullSurface({ outline: rasterOuter, holes: [rasterHole] });
+const rasterB = rasterizeHullSurface({ outline: rasterOuter, holes: [rasterHole] });
+const rasterKeysA = rasterA.cells.map(surfaceCellKey);
+const rasterKeysB = rasterB.cells.map(surfaceCellKey);
+check('선체 도트 격자는 같은 형상에서 결정론적이다',
+  rasterA.cell === rasterB.cell && rasterA.originX === rasterB.originX
+    && rasterA.originY === rasterB.originY && rasterKeysA.join('|') === rasterKeysB.join('|'),
+  `${rasterA.cells.length}칸 · cell ${rasterA.cell.toFixed(3)} m`);
+check('선체 내부 구멍에는 표면 도트가 남지 않는다',
+  rasterA.cells.every((cell) => {
+    const p = surfaceCellPoint(rasterA, cell);
+    return pointInHullSolid(p, rasterOuter, [rasterHole]);
+  }),
+  `외곽 ${rasterA.cells.length}칸 · 구멍 제외`);
+
+const surfaceSplit = (() => {
+  const world = createWorld();
+  const outline = hulls.barbell.outline;
+  const parentSurface = rasterizeHullSurface({ outline, holes: [] });
+  const body = createHullBody(world, { outline, holes: [], items: [], surface: parentSurface },
+    { position: { x: 3, y: -2 }, angle: 0.37, material: 'wood' });
+  const before = new Map(parentSurface.cells.map((cell) => {
+    const p = surfaceCellPoint(parentSurface, cell);
+    const w = body.getWorldPoint(new Vec2(p.x, p.y));
+    return [surfaceCellKey(cell), { x: w.x, y: w.y }];
+  }));
+  const out = applyImpact(world, body, body.getWorldPoint(new Vec2(0, 0)), 0.9);
+  const seen = new Set();
+  let duplicate = false;
+  let outside = false;
+  let maxDrift = 0;
+  let count = 0;
+  for (const child of out.bodies) {
+    const hull = child.getUserData().hull;
+    for (const cell of hull.surface.cells) {
+      const key = surfaceCellKey(cell);
+      if (seen.has(key)) duplicate = true;
+      seen.add(key);
+      count++;
+      const local = surfaceCellPoint(hull.surface, cell);
+      if (!pointInHullSolid(local, hull.outline, hull.holes)) outside = true;
+      const w = child.getWorldPoint(new Vec2(local.x, local.y));
+      const old = before.get(key);
+      maxDrift = Math.max(maxDrift, Math.hypot(w.x - old.x, w.y - old.y));
+    }
+  }
+  return { parent: parentSurface.cells.length, count, duplicate, outside, maxDrift, pieces: out.bodies.length };
+})();
+check('절단된 도트는 한 조각에만 속하고 새로 생기지 않는다',
+  surfaceSplit.pieces === 2 && !surfaceSplit.duplicate && !surfaceSplit.outside
+    && surfaceSplit.count < surfaceSplit.parent,
+  `${surfaceSplit.parent} → ${surfaceSplit.count}칸 · ${surfaceSplit.pieces}조각`);
+check('강체 재중심화 뒤에도 살아남은 도트의 월드 위치가 같다',
+  surfaceSplit.maxDrift < 1e-9,
+  `최대 이동 ${(surfaceSplit.maxDrift * 1e9).toFixed(3)} nm`);
+
+const surfaceMiss = (() => {
+  const world = createWorld();
+  const outline = hulls.sloop.outline;
+  const surface = rasterizeHullSurface({ outline, holes: [] });
+  const body = createHullBody(world, { outline, holes: [], items: [], surface },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const out = applyImpact(world, body, { x: 100, y: 100 }, 0.2);
+  return { sameBody: out.bodies[0] === body, sameSurface: body.getUserData().hull.surface === surface };
+})();
+check('빗맞음은 강체와 도트 표면을 재생성하지 않는다',
+  surfaceMiss.sameBody && surfaceMiss.sameSurface,
+  `body ${surfaceMiss.sameBody ? '유지' : '교체'} · surface ${surfaceMiss.sameSurface ? '유지' : '교체'}`);
+
 // ── ★ 균일한 화염 지대에서 배가 원이 되지 않는가 ─────────────────────────────────
 //
 // §6.1 의 disc 는 `radius × (1−falloff)` 안쪽이 평평하다 (화염 지대는 27 m, 화산대는 7.15 m).
@@ -1632,9 +1711,12 @@ check('첫 발화는 가장 돌출한 부위에서 시작한다 (§2.2 "뾰족�
 function burnWalk(key, mode, rounds = 12) {
   const src = hulls[key];
   const world = createWorld();
-  let body = createHullBody(world, { outline: src.outline, holes: [], items: [] },
+  const surface = rasterizeHullSurface({ outline: src.outline, holes: [] });
+  let body = createHullBody(world, { outline: src.outline, holes: [], items: [], surface },
     { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
   const octants = new Set();
+  const cellCounts = [surface.cells.length];
+  const cellHistory = [new Set(surface.cells.map(surfaceCellKey))];
   let cycles = 0;
   for (let i = 0; i < rounds; i++) {
     const h = body.getUserData().hull;
@@ -1649,11 +1731,18 @@ function burnWalk(key, mode, rounds = 12) {
     const w = body.getWorldPoint(new Vec2(local.x, local.y));
     const out = applyImpact(world, body, { x: w.x, y: w.y },
       burnRadius(mode === 'far' ? h.params.area : (h.launchArea ?? h.params.area)));
-    if (!out || out.bodies.length === 0) return { octants: octants.size, cycles, dead: true };
+    if (!out || out.bodies.length === 0) {
+      cellCounts.push(0);
+      cellHistory.push(new Set());
+      return { octants: octants.size, cycles, dead: true, cellCounts, cellHistory };
+    }
     body = out.bodies.sort((x, y) =>
       y.getUserData().hull.params.area - x.getUserData().hull.params.area)[0];
+    const cells = body.getUserData().hull.surface?.cells ?? [];
+    cellCounts.push(cells.length);
+    cellHistory.push(new Set(cells.map(surfaceCellKey)));
   }
-  return { octants: octants.size, cycles, dead: false };
+  return { octants: octants.size, cycles, dead: false, cellCounts, cellHistory };
 }
 
 const walkFar = burnWalk('round', 'far');
@@ -1667,6 +1756,15 @@ console.log(`  ${pad('슬루프', 14)}${pad(walkFarSloop.octants + '/8', 12)}${w
 check('★ 균일한 화염에서도 배가 원이 되지 않는다 (직전 화점에서 번진다)',
   walkSpread.octants < walkFar.octants && walkSpread.octants <= 4,
   `둥근 배 — 가장 먼 점 ${walkFar.octants}/8 vs 번짐 ${walkSpread.octants}/8`);
+
+const progressiveCells = walkSpread.cellCounts.every((n, i, a) => i === 0 || n <= a[i - 1]);
+const progressiveIds = walkSpread.cellHistory.every((set, i, history) => i === 0
+  || [...set].every((key) => history[i - 1].has(key)));
+const visibleDrops = walkSpread.cellCounts.reduce((n, count, i, a) =>
+  n + Number(i > 0 && count < a[i - 1]), 0);
+check('연속 파손에서 표면 도트는 단계적으로 줄고 다시 생기지 않는다',
+  progressiveCells && progressiveIds && visibleDrops >= 3,
+  `${walkSpread.cellCounts[0]} → ${walkSpread.cellCounts.at(-1)}칸 · 감소 ${visibleDrops}회`);
 
 // ── ★ 배가 유한 사이클에 전손하는가 ─────────────────────────────────────────────
 //

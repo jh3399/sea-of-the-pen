@@ -2,11 +2,10 @@
 // `main.js` 하니스가 이미 가진 순수 모듈을 그대로 재사용하고(설계 원칙 3), 렌더링만 하니스의
 // 벡터 그림 대신 픽셀 그래픽(`sail/render.js`)으로 새로 짠다.
 //
-// 이번 화면은 손상 파이프라인을 연결하지 않는다 — 암초는 `hull` 이 없는 정적 강체라 물리로만
-// 막히고 깎이지 않는다 (`physics/obstacle.js` 머리말). 암초 배치·도착 지점은 `sail/map.js` 에
-// 하드코딩돼 있다 — `docs/d3_handoff.md` §S4 의 `maps.json` 이 이 자리를 나중에 대체한다.
+// 암초·화재가 만드는 손상도 하니스와 같은 `applyImpact` 한 경로를 탄다. 암초 자신은 `hull` 이
+// 없는 정적 강체라 깎이지 않고, 맞은 선체의 폴리곤과 고정 픽셀 표면만 함께 줄어든다.
 import './sail.css';
-import { createWorld, FixedStepper, FIXED_DT } from '../physics/world.js';
+import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../physics/world.js';
 import { applyHydroToWorld } from '../physics/hydro.js';
 import { applyFieldsToWorld } from '../physics/fields.js';
 import { createFields } from '../field/field.js';
@@ -19,7 +18,13 @@ import { createObstacle } from '../physics/obstacle.js';
 import { defaultDevices } from '../items/defaults.js';
 import { itemsExtraMass } from '../items/attach.js';
 import { strokeToHull, HULL_DEFAULTS } from '../hull/polygon.js';
+import { rasterizeHullSurface } from '../hull/raster.js';
 import { CORPUS } from '../hull/corpus.js';
+import { applyImpact } from '../damage/apply.js';
+import { hottestOutlinePoint, nearestOutlinePoint, mostExposedPoint } from '../damage/hotspot.js';
+import { burnRadius } from '../damage/impact.js';
+import { installImpactListener } from '../damage/contact.js';
+import { fieldBehind } from '../rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
@@ -86,13 +91,14 @@ class SailScreen {
 
     this.world = createWorld();
     this.rules = loadRules(RULE_TABLE);
-    // 잔잔한 바다 — 필드가 없어 화재·발화 규칙이 조건을 못 만족한다. 이 화면이 손상 파이프라인을
-    // 안 붙이고도 "파손 없음"인 이유는 이 존 선택이다 (계산 코드가 아니라 데이터 선택).
+    // 잔잔한 바다라 현재 맵에서는 화재 규칙이 조건을 못 만족하지만, 파손 소비 경로 자체는
+    // 필드 데이터와 무관하게 항상 연결해 둔다. 이후 맵도 예외 코드 없이 같은 규칙표를 쓴다.
     this.fields = createFields(ZONES.zones.calm.fields ?? {});
     this.engine = createRuleEngine(this.rules, this.fields);
 
     this.stepIndex = 0;
     this.simTime = 0;
+    this.impacts = installImpactListener(this.world, { now: () => this.simTime });
     this.bodies = new Set();
     this.obstacles = new Set();
     this.heldStrokes = new Set();
@@ -162,9 +168,17 @@ class SailScreen {
     // 없으므로 그때는 D1~D3 의 자동 배치(station)로 되돌아간다.
     const items = defaultDevices(design.outline, { oarX: design.oarX ?? null })
       .concat((design.items ?? []).map((it) => ({ ...it })));
+    const holes = design.holes ?? [];
     const body = createHullBody(
       this.world,
-      { outline: design.outline, holes: [], items, crew: design.crew ?? { x: 0, y: 0 }, tag: null },
+      {
+        outline: design.outline,
+        holes,
+        items,
+        crew: design.crew ?? { x: 0, y: 0 },
+        surface: rasterizeHullSurface({ outline: design.outline, holes }),
+        tag: null,
+      },
       {
         position: { x: 0, y: 0 },
         angle: 0,
@@ -180,6 +194,68 @@ class SailScreen {
     const body = createObstacle(this.world, spec);
     if (body) this.obstacles.add(body);
     return body;
+  }
+
+  // ------------------------------------------------------------ 파손
+
+  /** 이벤트가 이미 지목한 강체만 깎고, 재생성된 조각으로 Set 을 원자적으로 갈아 끼운다. */
+  carveBody(target, worldPoint, radius) {
+    if (!target || !this.bodies.has(target)) return null;
+    const outcome = applyImpact(this.world, target, worldPoint, radius);
+    if (!outcome) return null;
+
+    this.bodies.delete(target);
+    for (const body of outcome.bodies) this.bodies.add(body);
+
+    if (outcome.result.destroyed || outcome.result.crewLost) {
+      this.heldStrokes.clear();
+      this.tappedStrokes.clear();
+      this.keys.clear();
+      this.held = {};
+    }
+    return outcome;
+  }
+
+  /** 연소 파괴 지점 — 규칙표가 가리킨 필드의 뜨거운 외곽, 없으면 직전 화점에서 번진다. */
+  burnSpot(ev) {
+    const hull = ev.target;
+    const body = ev.body;
+    const field = fieldBehind(this.rules, ev.ruleId);
+    const local = (() => {
+      if (field) {
+        const hot = hottestOutlinePoint(
+          hull.outline,
+          (x, y) => body.getWorldPoint(new Vec2(x, y)),
+          (x, y) => this.fields.sampleScalar(field, x, y),
+        );
+        if (hot && hot.spread > 1e-3) return hot.local;
+      }
+      return nearestOutlinePoint(hull.outline, hull.burnAt)
+        ?? mostExposedPoint(hull.outline)
+        ?? { x: 0, y: 0 };
+    })();
+
+    hull.burnAt = { x: local.x, y: local.y };
+    const world = body.getWorldPoint(new Vec2(local.x, local.y));
+    return { x: world.x, y: world.y };
+  }
+
+  consumeRuleEvents() {
+    for (const ev of this.engine.drain()) {
+      if (ev.type !== 'destroyed' || !this.bodies.has(ev.body)) continue;
+      const spot = this.burnSpot(ev);
+      this.carveBody(ev.body, spot, burnRadius(ev.target.launchArea ?? ev.target.params.area));
+    }
+  }
+
+  consumeImpacts() {
+    // 현재 항해 HUD 에 튕김 문구는 없지만 큐 상한에 고이지 않도록 항상 비운다.
+    this.impacts.drainGlances();
+    for (const impact of this.impacts.drain()) {
+      if (!this.bodies.has(impact.body)) continue;
+      if (impact.projectile) impact.projectile.getUserData().projectile.spent = true;
+      this.carveBody(impact.body, impact.at, impact.radius);
+    }
   }
 
   // ------------------------------------------------------------ 입력
@@ -246,12 +322,12 @@ class SailScreen {
   }
 
   updateCamera() {
-    const primary = findCrewBody(this.bodies) ?? [...this.bodies][0];
-    if (primary) this.view.follow(crewWorldPoint(primary) ?? primary.getPosition());
+    const primary = findCrewBody(this.bodies);
+    if (primary) this.view.follow(crewWorldPoint(primary));
   }
 
   sampleWake() {
-    const body = [...this.bodies][0];
+    const body = findCrewBody(this.bodies);
     if (!body) return;
     const p = body.getPosition();
     this.wake.push({ x: p.x, y: p.y });
@@ -264,9 +340,9 @@ class SailScreen {
     const elapsed = Math.min((now - this.lastFrame) / 1000, 0.25);
     this.lastFrame = now;
     this.stepper.advance(elapsed);
-    // 이 화면은 파손을 연결하지 않는다 — 규칙 이벤트는 소비하지 않고 버린다(잔잔한 바다라
-    // 실제로는 발생하지 않지만, 큐가 무한정 쌓이지 않도록 매 프레임 비워 둔다).
-    this.engine.drain();
+    // 하니스와 같은 순서 — 규칙·충돌이 지목한 강체를 물리 스텝 밖에서 재생성한다.
+    this.consumeRuleEvents();
+    this.consumeImpacts();
     this.checkGoal();
     this.updateCamera();
     this.render();
