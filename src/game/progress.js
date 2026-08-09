@@ -72,17 +72,28 @@ export const STAGES = [
      */
     id: 'volcano',
     label: '불의 바다',
-    /**
-     * ⚠ **지금은 재생되지 않는다.** 막간은 「다음 스테이지」 버튼에서만 흐르는데 그 버튼이
-     *   `hasNextStage()` 로 잠겨 있어서, 불의 바다 뒤에 스테이지가 하나 더 (불가사리의
-     *   바다) 생기기 전까지 이 값은 죽어 있다. 대사·씬은 [S-09] 로 다 써 두었으니
-     *   그 스테이지가 `STAGES` 에 들어오는 날 저절로 켜진다.
-     */
     interlude: 'STAR_ISLE',
     hints: false,
     gear: true,
     items: ['booster'],
     materials: ['iron'],
+  },
+  {
+    /**
+     * 마지막 바다 — 삼켜지러 간다.
+     *
+     * ★ **아무것도 새로 열지 않는다** (`items`·`materials` 가 비어 있다). [S-09] 에서
+     *   3인방이 "아무것에도 맞추지 말고 타고 싶은 걸 그려"라고 하는 것과 짝이다 —
+     *   여기서 뭔가를 더 주면 그 말이 거짓이 되고, 마지막 배가 또 하나의 숙제가 된다.
+     *   여태 열린 것(키·돛·부스터·철)은 그대로 다 쓸 수 있다.
+     */
+    id: 'bulgasari',
+    label: '불가사리의 바다',
+    interlude: null,   // 최종 보스 맵이 들어오면 [S-10] ARRIVAL 이 여기 붙는다
+    hints: false,
+    gear: true,
+    items: [],
+    materials: [],
   },
 ];
 
@@ -164,7 +175,7 @@ export const ROUTE = [
   { id: 'reef', kind: 'reef', name: '바위 협곡', note: '바람은 등을 밀어주지만, 주변이 온통 바위' },
   { id: 'storm', kind: 'storm', name: '역풍 협곡', note: '바람이 막아서고, 해적이 들끓는다' },
   { id: 'volcano', kind: 'volcano', name: '불의 바다', note: '물 대신 용암이 흐르는 곳' },
-  { id: 'bulgasari', kind: 'abyss', name: '불가사리의 바다', note: '전설로만 전해지던 그것', locked: true },
+  { id: 'bulgasari', kind: 'abyss', name: '불가사리의 바다', note: '전설로만 전해지던 그것' },
 ];
 
 /** 지도에서 "여기까지 왔다" 를 표시할 지점. ROUTE 인덱스. */

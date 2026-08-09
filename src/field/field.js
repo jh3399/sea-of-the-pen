@@ -48,8 +48,30 @@ function intensity(src, x, y) {
   }
 }
 
-/** 5초 폭풍처럼 일정 간격으로 방향을 바꾸는 선언형 벡터 소스. */
-function vectorAt(src, time) {
+/**
+ * 벡터 소스가 (x, y) 에서 내는 방향·크기.
+ *
+ * 셋 중 하나다:
+ *  - `toward: {x, y}` **한 점을 향한다.** 방향이 위치에 따라 달라지는 유일한 소스다 —
+ *    빨려 드는 흐름(§ 불가사리의 바다)이 이걸로 성립한다. 크기는 `speed`.
+ *  - `directionCycle` 일정 간격으로 방향을 갈아 끼운다 (5초 폭풍).
+ *  - 그 외 `x`·`y` 성분 그대로 (균일풍·해류).
+ *
+ * ★ **세기(intensity)와 방향은 따로 논다.** `toward` 를 `disc` 와 겹치면 "가운데로 갈수록
+ *   세게 빨린다"가 되고, `band` 와 겹치면 "이 띠 안에서만 빨린다"가 된다 — 조합이 곧
+ *   맵 제작이고 새 코드는 없다.
+ * ⚠ 중심에 정확히 서면 방향이 정의되지 않는다. 0 벡터를 돌려 NaN 이 물리로 새는 것을 막는다
+ *   (한 번 새면 강체 위치가 통째로 NaN 이 되어 화면에서 배가 사라진다).
+ */
+function vectorAt(src, time, x, y) {
+  if (src.toward) {
+    const dx = src.toward.x - x;
+    const dy = src.toward.y - y;
+    const d = Math.hypot(dx, dy);
+    if (!(d > 1e-6)) return { x: 0, y: 0 };
+    const s = src.speed ?? 0;
+    return { x: (dx / d) * s, y: (dy / d) * s };
+  }
   const cycle = src.directionCycle;
   if (!cycle?.directions?.length || !(cycle.interval > 0)) {
     return { x: src.x ?? 0, y: src.y ?? 0 };
@@ -64,7 +86,10 @@ function vectorAt(src, time) {
  *
  * @param {object} def `{ wind: [...], temperature: [...], ... }` — 각 값은 소스 배열.
  *   벡터장 소스는 `{shape, ..., x, y}` 의 x·y 가 **벡터 성분**이다. 선택적으로
- *   `directionCycle: {interval, directions:[{x,y}, ...]}` 을 두면 시간 구간마다 성분을 고른다.
+ *   `directionCycle: {interval, directions:[{x,y}, ...]}` 을 두면 시간 구간마다 성분을 고르고,
+ *   `toward: {x,y}` + `speed` 를 두면 **그 점을 향해** 흐른다 (방향이 위치에 따라 달라진다).
+ *   ⚠ `toward` 를 `disc` 와 함께 쓸 때는 `shape` 쪽 x·y 가 **원의 중심**으로 해석된다 —
+ *     성분이 아니다. 방향은 `toward`, 크기는 `speed` 가 전부 정하므로 충돌하지 않는다.
  *   스칼라장 소스는 `{shape, ..., value}` 다.
  * @returns {{sampleVector(name,x,y,time), sampleScalar(name,x,y,time), def, isEmpty}}
  */
@@ -86,7 +111,7 @@ export function createFields(def = {}) {
       for (const src of sources[name] ?? []) {
         const k = intensity(src, x, y);
         if (k <= 0) continue;
-        const v = vectorAt(src, time);
+        const v = vectorAt(src, time, x, y);
         vx += v.x * k;
         vy += v.y * k;
       }

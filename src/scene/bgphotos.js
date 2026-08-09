@@ -16,6 +16,7 @@ import mioDrawing from '../../assets/scene/mio-drawing.png';
 import livingRoom from '../../assets/scene/living-room.png';
 import bulgasariDeep from '../../assets/scene/bulgasari-deep.png';
 import essence from '../../assets/scene/essence.png';
+import starIsle from '../../assets/scene/star-isle.png';
 
 export const BG_PHOTOS = {
   sickroom,
@@ -26,4 +27,7 @@ export const BG_PHOTOS = {
   bulgasari_deep: bulgasariDeep,
   bulgasari_feed: bulgasariDeep,
   essence,
+  // [S-09] 별의섬. 별이 **하늘이 아니라 바위에** 붙어 있는 것이 이 그림의 전부다 —
+  // 그 별들이 곧 캐럿·애플·블루베리가 나온 곳이라, 색도 3인방과 같은 셋이다.
+  star_isle: starIsle,
 };

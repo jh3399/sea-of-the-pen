@@ -270,6 +270,41 @@ export function drawRock(ctx, spec, { shoal = SHOAL_RING } = {}) {
       }
     }
   }
+  if (spec.stars) drawRockStars(ctx, spec);
+}
+
+/**
+ * 바위에 붙은 불가사리 — `spec.stars` 인 암초에만 얹는다 (불가사리의 바다).
+ *
+ * ★ **렌더 전용이다.** 물리·판정에는 아무것도 없다 — 암초는 여전히 그냥 `rock` 이고,
+ *   `reef.inward` 가 렌더 힌트인 것과 같은 자리다. 별의섬에서 여기까지 이어졌다는 것을
+ *   그림 하나로 말하는 것이 전부다.
+ * ★ 색은 캐럿·애플·블루베리와 같은 셋이다 (`scene/sprites.js`). 저 별들이 그 셋이 나온
+ *   곳이라는 것이 [S-09] 의 전제라, 다른 색을 섞으면 그 연결이 끊긴다.
+ * ⚠ 자리는 월드 좌표 해시로 **고정**한다. 시간의 함수로 두면 물결과 구분이 안 되는
+ *   노이즈가 된다 (`drawWater`·`drawGoal` 과 같은 규칙). 흔드는 것은 알파뿐이다.
+ */
+const ROCK_STAR_TINTS = ['#f5872b', '#e8434f', '#3d86e0'];
+
+function drawRockStars(ctx, spec) {
+  const { x, y, radius } = spec;
+  const cell = clamp(radius / 12, 0.12, 0.35);
+  const count = Math.max(6, Math.round(radius * 2.4));
+  for (let i = 0; i < count; i++) {
+    const h1 = hash2(x * 7.1 + i * 1.7, y * 7.1 - i * 2.3);
+    const h2 = hash2(x * 3.9 - i * 2.9, y * 3.9 + i * 1.1);
+    // sqrt 로 반경을 뽑아야 원 안에 고르게 퍼진다. 그냥 h*r 이면 가운데로 몰린다.
+    const rr = Math.sqrt(h1) * radius * 0.78;
+    const ang = h2 * Math.PI * 2;
+    const sx = x + Math.cos(ang) * rr;
+    const sy = y + Math.sin(ang) * rr;
+    const tint = ROCK_STAR_TINTS[i % 3];
+    ctx.fillStyle = tint;
+    ctx.fillRect(sx - cell * 1.5, sy - cell * 0.5, cell * 3, cell);   // 가로 팔
+    ctx.fillRect(sx - cell * 0.5, sy - cell * 1.5, cell, cell * 3);   // 세로 팔
+    ctx.fillStyle = '#fff4d8';
+    ctx.fillRect(sx - cell * 0.5, sy - cell * 0.5, cell, cell);       // 가운데 흰 점
+  }
 }
 
 /** poly 장애물 스펙의 월드 AABB (points 는 몸체 로컬 좌표다). */

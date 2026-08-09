@@ -395,9 +395,95 @@ export function boundaryWalls(b) {
  * ★ 맵을 고르는 코드는 `sail/screen.js` 에 **한 줄**이다 (`MAPS[currentStage().id]`).
  *   맵을 더할 때 고치는 곳이 이 객체와 STAGES 배열 둘뿐이어야 원칙 1 이 지켜진다.
  */
+/**
+ * 마지막 바다 — 별의섬을 떠나 불가사리에게 **삼켜지러** 간다.
+ *
+ * ★ 이 맵은 **시험이 아니라 연출**이다. 앞의 셋이 매번 "무엇에 맞춰 그릴 것인가"를 물었다면
+ *   여기는 [S-09] 에서 그 제약을 전부 걷은 다음이라, 어떻게 그린 배로 와도 도착한다.
+ *   그래서 `damage: false` 다 — 마음대로 그리라고 해 놓고 그 배가 깨지면 자유가 벌이 된다
+ *   (연습 해역이 같은 이유로 false 인 것과 짝을 이룬다).
+ *
+ * ★ 지형은 **첫 바다를 되짚는다.** 성긴 암초 몇 개뿐이고 항로를 막지 않는다. 여정이
+ *   시작한 곳처럼 보여야 마지막이 원을 그린다. 다만 그 바위마다 별이 붙어 있다
+ *   (`stars: true` → `sail/render.js` 가 점을 얹는다) — 별의섬에서 여기까지 이어진 것이다.
+ *
+ * ★ **빨려 든다.** `toward` 벡터 소스가 골을 향하고, `disc` 가 세기를 정한다:
+ *   반경 300 m 밖에서는 0 이라 처음 80 m 는 평소처럼 항해하고, 그 원에 들어서는 순간부터
+ *   끌리기 시작해 가까울수록 세진다. 출항 지점에서 골까지 380 m 이므로 **끌리기 시작하는
+ *   자리에서 남은 거리가 정확히 300 m** 다.
+ *   흡입 9 m/s 는 노 종단(4.66)보다 확실히 크다 — **저항은 되지만 못 이긴다.** 뒤로 저으면
+ *   느려지긴 하는데 결국 끌려가고, 그 발버둥이 무력감을 만든다.
+ *
+ * ⚠ 흡입 구간(x > 80)의 암초는 항로에서 멀리 둔다. 9 m/s 로 끌려가다 바위에 박는 것은
+ *   플레이어가 피할 방법이 없는 사고이고, 피할 수 없는 것으로 벌하면 안 된다.
+ */
+export const BULGASARI_BOUNDS = { minX: -40, maxX: 420, minY: -75, maxY: 75, thickness: 12 };
+
+export const BULGASARI_MAP = {
+  id: 'bulgasari',
+  number: 4,
+  label: '불가사리의 바다',
+  bgm: 'tension',
+  goal: { x: 380, y: 0, radius: 8, label: '불가사리' },
+  // 흡입이 시간을 거의 정하므로 별점은 사실상 고정된다. 헤매도 3별이 되게 넉넉히 둔다 —
+  // 마지막 항해에서 별 하나를 덜 주는 것은 아무것도 가르치지 않는다.
+  scoring: { threeStarMaxSeconds: 110, twoStarMaxSeconds: 160 },
+  bounds: BULGASARI_BOUNDS,
+  fields: {
+    current: [
+      // 잔잔한 밑흐름 — 흡입 밖에서도 바다가 죽어 있지 않게.
+      { shape: 'uniform', x: 0.5, y: 0 },
+      /**
+       * ★ 빨아들이는 입.
+       *
+       * ⚠ `falloff` 가 이 맵의 유일한 밸런싱 노브이고, 0.9 로 뒀다가 한 번 틀렸다.
+       *   0.9 는 "반경의 90%가 램프"라 원 대부분에서 흡입이 약하다 — 실측(x=200, 골까지
+       *   180 m)에서 4.0 m/s 밖에 안 나와 **노 종단(4.66)에 졌다.** 뒤로 저으면 15초에
+       *   32 m 를 되돌아가 그냥 도망칠 수 있었다.
+       *   0.25 면 바깥 75 m 만 램프이고 그 안은 전부 최대 세기다: 테두리(300 m)에서는
+       *   거의 안 잡혀 "가다가 서서히 걸리는" 느낌이 살고, 한 번 들어오면 9 m/s 라
+       *   **발버둥은 쳐지되 못 이긴다.**
+       */
+      {
+        shape: 'disc', x: 380, y: 0, radius: 300, falloff: 0.25,
+        toward: { x: 380, y: 0 }, speed: 9,
+      },
+    ],
+    darkness: [{ shape: 'disc', x: 380, y: 0, radius: 300, falloff: 0.85, value: 0.5 }],
+  },
+  weather: { rain: 0, gloom: 0.3 },
+  surface: {
+    base: '#121a3a',
+    deep: 'rgba(6, 8, 24, 0.45)',
+    glint: '#cdd8ff',
+    shoal: 'rgba(90, 120, 220, 0.55)',
+    wake: '#9fb4f0',
+    flowField: 'current',
+  },
+  damage: false,
+  obstacles: [
+    // 앞 구간(x < 80) — 첫 바다와 같은 성긴 배치. 지나며 보이지만 막지는 않는다.
+    { shape: 'circle', x: 22, y: 30, radius: 5 },
+    { shape: 'circle', x: 34, y: -26, radius: 4.5 },
+    { shape: 'circle', x: 64, y: 22, radius: 4 },
+    { shape: 'circle', x: 70, y: -34, radius: 5 },
+    { shape: 'circle', x: -16, y: 18, radius: 4 },
+    { shape: 'circle', x: 6, y: -46, radius: 4.5 },
+    // 흡입 구간 — 항로(y≈0)에서 30 m 이상 떨어뜨린다. 끌려가며 박을 수 없는 거리다.
+    { shape: 'circle', x: 120, y: 44, radius: 5 },
+    { shape: 'circle', x: 150, y: -48, radius: 4.5 },
+    { shape: 'circle', x: 196, y: 52, radius: 4 },
+    { shape: 'circle', x: 232, y: -44, radius: 5 },
+    { shape: 'circle', x: 274, y: 46, radius: 4.5 },
+    { shape: 'circle', x: 310, y: -50, radius: 4 },
+    { shape: 'circle', x: 344, y: 48, radius: 4.5 },
+  ].map((o) => ({ ...o, material: 'rock', stars: true })),
+};
+
 export const MAPS = {
   practice: PRACTICE_MAP,
   reef: DEMO_MAP,
   storm: STORM_MAP,
   volcano: VOLCANO_MAP,
+  bulgasari: BULGASARI_MAP,
 };

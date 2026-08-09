@@ -382,7 +382,7 @@ export const SCRIPT = {
   //     또 하나의 제약이 되어 이 씬의 유일한 목적이 무너진다.
   STAR_ISLE: [
     { speaker: '', bg: 'volcano', text: '용암이 잦아들고, 검은 바위섬 하나가 떠 있었다.' },
-    { speaker: '', bg: 'world_end', text: '바위마다 별이 붙어 있다. 수백 개가 조용히 빛났다.' },
+    { speaker: '', bg: 'star_isle', text: '바위마다 별이 붙어 있다. 수백 개가 조용히 빛났다.' },
     { speaker: '블루베리', sprite: 'star_blue', text: '여기야. 별의섬.' },
     { speaker: '캐럿', sprite: 'star_orange', text: '블루베리! 살아 있었네! 어디 갔었어! 우리 얼마나—' },
     { speaker: '애플', sprite: 'star_red', text: '시끄러워.' },
@@ -411,7 +411,7 @@ export const SCRIPT = {
     // ★ [S-01] 미오의 그림과 [S-04] 의 대답을 여기서 받는다 —
     //   "동생을 낫게 해서, 같이 이 배를 타고 어디든 가고 싶습니다."
     { speaker: '루', sprite: 'ru', text: '(둘이 탈 배를 그려도 됩니까.)' },
-    { speaker: '', bg: 'world_end', text: '모루의 펜을 다시 쥐었다. 이번에는 아무도 무엇을 그리라 하지 않았다.' },
+    { speaker: '', bg: 'star_isle', text: '모루의 펜을 다시 쥐었다. 이번에는 아무도 무엇을 그리라 하지 않았다.' },
   ],
 };
 

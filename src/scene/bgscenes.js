@@ -1194,6 +1194,55 @@ function world_end(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.16, 9);
 }
 
+// ---------------- star_isle — 별의섬 ([S-09]) ----------------
+//
+// ★ 이 씬은 **그림(assets/scene/star-isle.png)의 폴백**이다. 그림이 못 뜨면 이 캔버스가
+//   그대로 배경 노릇을 하므로(assets/scene/README.md), 구도를 원본과 같게 잡는다 —
+//   수평선의 붉은 잔광, 오른쪽 아래에서 왼쪽으로 내려오는 검은 현무암, 그 위의 별.
+// ★ 별은 하늘이 아니라 **바위 위**에 있다. 그것이 이 장면의 전부다 (대사: "바위마다 별이
+//   붙어 있다"). 하늘 별은 훨씬 성기게 깔아 대비를 만든다.
+function star_isle(ctx, { w, h, sec }) {
+  const hz = R(h * 0.44);
+  // 위는 짙은 남보라, 수평선 바로 위에 불의 바다에서 넘어온 붉은 잔광 한 겹.
+  skyGradient(ctx, w, 0, hz, ['#12082a', '#1b0d38', '#2a1145', '#4a1540', '#7d1c33', '#a82b24']);
+  stars(ctx, w, hz * 0.85, sec, { count: 70, seed: 191, color: '#e6dcff' });
+
+  const bands = seaBands(ctx, w, h, hz,
+    ['#8a1f18', '#6d1a1e', '#4a1730', '#33143a', '#221040', '#180b34']);
+  waves(ctx, w, bands, sec, '#d8402a', { alpha: 0.32, speed: 8, seed: 192 });
+
+  // 현무암 — 두 겹으로 두께를 만든다.
+  // ⚠ `from`/`to` 로 가로를 잘라 쓰면 안 된다. 그 경계가 **수직 절단면**으로 남아 화면에
+  //   사각형이 하나 붙은 것처럼 보인다 (한 번 그렇게 나왔다). 폭은 전부 쓰고 `offsetX` 로
+  //   두 겹의 마루를 어긋내 비스듬한 덩어리를 만든다.
+  hills(ctx, w, R(h * 0.62), '#1b1622', { amp: 26, freq: 0.9, seed: 193, offsetX: 40 });
+  hills(ctx, w, R(h * 0.71), '#120e18', { amp: 20, freq: 1.4, seed: 194, offsetX: 120 });
+  fill(ctx, 0, R(h * 0.78), w, h - R(h * 0.78), '#0d0a12');
+
+  // ★ 바위에 붙은 불가사리. 3인방과 같은 세 색이고(캐럿·애플·블루베리가 저기서 나왔다),
+  //   아래로 갈수록 촘촘하다 — 가까운 바위가 화면 아래이기 때문이다.
+  const TINT = ['#f5872b', '#e8434f', '#3d86e0'];
+  for (let i = 0; i < 150; i++) {
+    const t = hash(i, 195);
+    const x = R(hash(i, 196) * w);
+    // t² 로 몰아 아래쪽이 배로 촘촘해진다 (균등 분포면 바위 위가 허전하다).
+    const y = R(h * 0.60 + t * t * h * 0.40);
+    const c = TINT[i % 3];
+    // 맥동 주기를 개체마다 어긋내지 않으면 150개가 한 몸처럼 뛴다 (night_sea 등불과 같은 교훈).
+    const puls = 0.55 + 0.45 * Math.sin(sec * (1.1 + hash(i, 197) * 1.8) + hash(i, 198) * 6.3);
+    const s = 1 + Math.floor(t * 2);
+    ctx.globalAlpha = 0.35 + 0.45 * puls;
+    fill(ctx, x, y, s * 2 + 1, s, c);          // 가로 팔
+    fill(ctx, x + s, y - s, s, s * 2 + 1, c);  // 세로 팔 — 둘이 겹쳐 별표가 된다
+    ctx.globalAlpha = 0.9 * puls;
+    fill(ctx, x + s, y, s, s, '#fff4d8');      // 가운데 흰 점
+  }
+  ctx.globalAlpha = 1;
+
+  overlay(ctx, w, h, '#1a0630', 0.10);
+  vignette(ctx, w, h, 0.18, 9);
+}
+
 // ---------------- golden_isle — 엔딩 (황금섬) ----------------
 
 function golden_isle(ctx, { w, h, sec }) {
@@ -1262,6 +1311,7 @@ export const SCENES = {
   bulgasari_name,
   essence,
   world_end,
+  star_isle,
   golden_isle,
 };
 

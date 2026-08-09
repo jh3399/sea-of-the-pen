@@ -36,7 +36,7 @@ import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
 import { rateTravelTime } from '../src/game/scoring.js';
 import {
-  DEMO_MAP, PRACTICE_MAP, STORM_MAP, VOLCANO_MAP, MAPS, boundaryWalls,
+  DEMO_MAP, PRACTICE_MAP, STORM_MAP, VOLCANO_MAP, BULGASARI_MAP, MAPS, boundaryWalls,
 } from '../src/sail/map.js';
 import { STAGES, ROUTE } from '../src/game/progress.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
@@ -2840,10 +2840,15 @@ check('★ STAGES 와 MAPS 가 양방향 1:1 이다 (진행 표와 맵 표)',
     && new Set(stageIds).size === stageIds.length,
   stageIds.map((id) => `${id}${MAPS[id] ? '✓' : '✗'}`).join(' · '));
 check('연습 해역이 첫 스테이지다', STAGES[0].id === 'practice', stageIds.join(' → '));
-check('연습만 파손이 꺼지고 본편 해역은 파손이 켜진다',
-  MAPS.practice.damage === false
-    && Object.values(MAPS).filter((map) => map.number > 0).every((map) => map.damage === true),
-  mapIds.map((id) => `${id}:${MAPS[id].damage ? 'on' : 'off'}`).join(' · '));
+// ★ 파손이 꺼진 바다는 **양 끝 둘뿐**이고, 그 사이는 전부 켜져 있다.
+//   첫 바다는 배우는 곳이라 벌하지 않고, 마지막 바다는 [S-09] 에서 "아무것에도 맞추지 말고
+//   타고 싶은 걸 그려"라고 해 놓은 뒤라 벌하면 그 자유가 거짓이 된다. 가운데 셋이 시험이다.
+//   번호로 재므로 바다가 늘어도 이 불변식은 그대로 산다.
+const byNumber = [...Object.values(MAPS)].sort((a, b) => a.number - b.number);
+const damageOff = byNumber.filter((map) => map.damage === false).map((map) => map.number);
+check('파손이 꺼진 바다는 첫 바다와 마지막 바다뿐이다 (그 사이는 전부 시험이다)',
+  damageOff.join(',') === `0,${byNumber.length - 1}`,
+  byNumber.map((map) => `${map.id}:${map.damage ? 'on' : 'off'}`).join(' · '));
 
 // 경계 벽 — 배를 계속 밀어붙여도 넘어가지 못한다. 벽을 빼면 그대로 나가 버리는 것이 대조군이다.
 const seaWalls = boundaryWalls(sea);
@@ -2888,11 +2893,13 @@ console.log('\n\x1b[36m▌레벨 2 — 성긴 암초밭 · 5초 방향 폭풍\x1
 const playableMaps = Object.values(MAPS);
 check('기존 1장 맵은 MAPS.reef 로 그대로 보존된다', MAPS.reef === DEMO_MAP,
   playableMaps.map((map) => map.label).join(' → '));
-check('연습 0장과 본편 1~3장이 있고 ID·번호가 겹치지 않는다',
-  playableMaps.length === 4
-    && new Set(playableMaps.map((map) => map.id)).size === playableMaps.length
+// 번호가 0부터 **빠짐없이** 이어져야 한다. 개수를 박아 두면 바다를 더할 때마다 여기를
+// 고쳐야 하고, 그러면 정작 "번호가 하나 비었다"를 못 잡는다.
+check('맵 번호가 0부터 빠짐없이 이어지고 ID·번호가 겹치지 않는다',
+  new Set(playableMaps.map((map) => map.id)).size === playableMaps.length
     && new Set(playableMaps.map((map) => map.number)).size === playableMaps.length
-    && playableMaps.map((map) => map.number).sort((a, b) => a - b).join(',') === '0,1,2,3',
+    && playableMaps.map((map) => map.number).sort((a, b) => a - b).join(',')
+      === [...playableMaps.keys()].join(','),
   `${playableMaps.length}장 · ${playableMaps.map((map) => `${map.id}:${map.number}`).join(' / ')}`);
 
 function declarativeMap(value, key = '') {
@@ -2998,10 +3005,11 @@ check('레벨 3 도착 지점은 해역 경계 안에 있다',
     && VOLCANO_MAP.goal.y - VOLCANO_MAP.goal.radius > VOLCANO_MAP.bounds.minY
     && VOLCANO_MAP.goal.y + VOLCANO_MAP.goal.radius < VOLCANO_MAP.bounds.maxY,
   `골 (${VOLCANO_MAP.goal.x}, ${VOLCANO_MAP.goal.y})`);
-check('불의 바다는 storm 다음 플레이 스테이지이며 지도에서 열려 있다',
+// ⚠ 지도(ROUTE)에 잠긴 채 남은 바다가 있으면 안 된다. `locked` 는 아직 스테이지가 없는
+//   목적지를 흐리게 그리려고 둔 표시라, 스테이지가 생겼는데 잠긴 채면 지도가 거짓말을 한다.
+check('불의 바다는 storm 다음이고, 스테이지가 있는 바다는 전부 지도에 열려 있다',
   STAGES.findIndex((stage) => stage.id === 'volcano') === STAGES.findIndex((stage) => stage.id === 'storm') + 1
-    && ROUTE.find((node) => node.id === 'volcano')?.locked !== true
-    && ROUTE.find((node) => node.id === 'bulgasari')?.locked === true,
+    && STAGES.every((stage) => ROUTE.find((node) => node.id === stage.id)?.locked !== true),
   STAGES.map((stage) => stage.id).join(' → '));
 
 const volcanoFields = createFields(VOLCANO_MAP.fields);
@@ -3117,6 +3125,96 @@ const currentPrediction = (() => {
 })();
 check('★ 해류 띠 경계를 지나도 예측선과 실물리가 일치한다', currentPrediction < 1e-7,
   `최종 오차 ${(currentPrediction * 1000).toFixed(6)} mm`);
+
+// ─────────────────────────────────────────── 레벨 4 · 삼켜지는 바다
+console.log('\n\x1b[36m▌레벨 4 — 빨려 드는 불가사리의 바다\x1b[0m\n');
+
+const suck = createFields(BULGASARI_MAP.fields);
+const bGoal = BULGASARI_MAP.goal;
+const sampleSuck = (x, y) => suck.sampleVector('current', x, y, 0);
+
+// ★ 방향이 **위치에 따라** 골을 향한다. 여태 벡터 소스는 어디서나 방향이 같았으므로
+//   (uniform·band·directionCycle) 이게 `toward` 프리미티브의 유일한 존재 이유다.
+//   골을 둘러싼 네 방향에서 재서, 전부 안쪽을 향하는지 본다.
+const inward = [[-60, 0], [0, 60], [0, -60], [40, 0]].map(([dx, dy]) => {
+  const v = sampleSuck(bGoal.x + dx, bGoal.y + dy);
+  const len = Math.hypot(v.x, v.y) || 1;
+  const toGoal = Math.hypot(dx, dy);
+  // 흐름 단위벡터와 "골 쪽" 단위벡터의 내적 — 1 이면 정확히 골을 향한다.
+  return (v.x * (-dx) + v.y * (-dy)) / (len * toGoal);
+});
+check('★ 흐름이 사방에서 골을 향한다 (방향이 위치의 함수인 유일한 소스 — toward)',
+  inward.every((dot) => dot > 0.95),
+  `사방 내적 ${inward.map((d) => d.toFixed(3)).join(' · ')}`);
+
+// ★ "좀 항해하다가" 빨려 든다. 반경 300 m 원 **밖**에서는 흡입이 0 이고, 출항점에서
+//   골까지가 380 m 이므로 걸리기 시작하는 자리의 남은 거리가 정확히 300 m 다.
+const atStart = sampleSuck(0, 0);
+const atCatch = sampleSuck(bGoal.x - 290, 0);
+const atClose = sampleSuck(bGoal.x - 40, 0);
+const startPull = Math.hypot(atStart.x, atStart.y);
+const catchPull = Math.hypot(atCatch.x, atCatch.y);
+const closePull = Math.hypot(atClose.x, atClose.y);
+check('★ 출항 직후에는 안 빨린다 (좀 항해하다가 걸린다)',
+  startPull < 1 && Math.hypot(bGoal.x, bGoal.y) > 300,
+  `출항점 ${startPull.toFixed(2)} m/s · 골까지 ${Math.hypot(bGoal.x, bGoal.y).toFixed(0)} m`);
+check('★ 안으로 갈수록 세진다 (걸리는 자리 < 가까운 자리)', catchPull < closePull,
+  `−290 m ${catchPull.toFixed(2)} → −40 m ${closePull.toFixed(2)} m/s`);
+
+// ★ 저항은 되지만 못 이긴다 — 노 종단(4.66 m/s)보다 확실히 세야 한다. 같으면 제자리에
+//   멈춰 서서 "빨려 든다"가 사라지고, 훨씬 세면 발버둥 자체가 화면에 안 보인다.
+check('★ 흡입이 노 종단보다 세다 (발버둥은 쳐지되 못 이긴다)',
+  closePull > maxCad.speed * 1.5 && closePull < maxCad.speed * 3,
+  `흡입 ${closePull.toFixed(2)} vs 노 종단 ${maxCad.speed.toFixed(2)} m/s`);
+
+/**
+ * ★ **배를 띄워서 재야 한다.** 필드 값만 보면 이 버그를 못 잡는다 — 실제로 그랬다.
+ *
+ * `falloff` 를 0.9 로 뒀을 때 위 세 검사(방향·세짐·최대 세기)는 전부 통과했는데, 정작
+ * 흡입 구간 **한가운데**에서 뒤로 저으면 15초에 32 m 를 되돌아가 그냥 도망칠 수 있었다.
+ * 골 바로 앞만 세고 나머지가 약했기 때문이다. 위 검사들은 그 두 지점을 안 봤다.
+ *
+ * 그래서 여기서는 구간 한가운데(골까지 180 m)에 배를 놓고 **최대 케이던스로 뒤로 저어** 본다.
+ * 늦춰지기는 해야 하고(발버둥이 화면에 보여야 한다), 그래도 끌려가야 한다(못 이긴다).
+ */
+const suckStruggle = (() => {
+  const drill = (keys) => {
+    const { world, body } = spawn('sloop', { devices: true });
+    const fields = createFields(BULGASARI_MAP.fields);
+    // 흡입 구간 한가운데 — 골까지 180 m.
+    body.setTransform(new Vec2(bGoal.x - 180, 0), 0);
+    const stroke = [];
+    for (const key of keys) stroke.push(...STROKE_KEYMAP[key]);
+    const x0 = body.getPosition().x;
+    const steps = Math.round(15 / FIXED_DT);
+    for (let i = 0; i < steps; i++) {
+      applyDevices(body, { strokes: stroke, held: {} }, FIXED_DT);
+      applyHydroToWorld(world, FIXED_DT);
+      applyFieldsToWorld(world, fields, FIXED_DT, i * FIXED_DT);
+      world.step(FIXED_DT);
+    }
+    return body.getPosition().x - x0;
+  };
+  return { drift: drill([]), fight: drill(['ArrowDown']) };
+})();
+check('★ 빨려 드는 도중 뒤로 저어도 못 이긴다 (구간 한가운데에서 — 필드 값만으로는 못 잡는 회귀)',
+  suckStruggle.fight > 0,
+  `가만히 +${suckStruggle.drift.toFixed(1)} m · 뒤로 저으며 +${suckStruggle.fight.toFixed(1)} m`);
+check('그래도 발버둥이 눈에 보인다 (뒤로 저으면 확실히 늦춰진다)',
+  suckStruggle.fight < suckStruggle.drift * 0.75,
+  `${(suckStruggle.drift - suckStruggle.fight).toFixed(1)} m 늦춘다`);
+
+// 끌려가는 길에 박을 수 없어야 한다 — 피할 방법이 없는 사고로 벌하지 않는다.
+const bulgasariLaneClear = Math.min(...BULGASARI_MAP.obstacles
+  .filter((o) => o.x > 80)
+  .map((o) => Math.abs(o.y) - o.radius));
+check('★ 흡입 구간의 암초는 항로에서 비켜나 있다 (끌려가며 박을 수 없다)', bulgasariLaneClear > 25,
+  `항로에서 최소 ${bulgasariLaneClear.toFixed(1)} m`);
+
+check('마지막 바다의 도착 지점이 해역 안에 있다',
+  bGoal.x + bGoal.radius < BULGASARI_MAP.bounds.maxX
+    && Math.abs(bGoal.y) + bGoal.radius < BULGASARI_MAP.bounds.maxY,
+  `골 (${bGoal.x}, ${bGoal.y}) · 해역 x≤${BULGASARI_MAP.bounds.maxX}`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
