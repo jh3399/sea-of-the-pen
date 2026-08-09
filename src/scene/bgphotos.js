@@ -17,6 +17,9 @@ import livingRoom from '../../assets/scene/living-room.png';
 import bulgasariDeep from '../../assets/scene/bulgasari-deep.png';
 import essence from '../../assets/scene/essence.png';
 import starIsle from '../../assets/scene/star-isle.png';
+import bulgasariAsleep from '../../assets/scene/bulgasari-asleep.png';
+import bulgasariGullet from '../../assets/scene/bulgasari-gullet.png';
+import essenceHandoff from '../../assets/scene/essence-handoff.png';
 
 export const BG_PHOTOS = {
   sickroom,
@@ -30,4 +33,16 @@ export const BG_PHOTOS = {
   // [S-09] 별의섬. 별이 **하늘이 아니라 바위에** 붙어 있는 것이 이 그림의 전부다 —
   // 그 별들이 곧 캐럿·애플·블루베리가 나온 곳이라, 색도 3인방과 같은 셋이다.
   star_isle: starIsle,
+
+  // ── [S-10] 불가사리의 바다 ──────────────────────────────────
+  // ★ 잠든 얼굴 앞에 3인방이 서 있는 그림이 이 씬의 축이다. **눈을 감고 있는 것**이
+  //   "죽인 게 아니라 재웠다"를 대사 없이 말한다 — 불가살이(죽일 수 없는 것)라는 이름을
+  //   [S-02] 가 깔아 놓은 뒤라, 그림 한 장이 그 회수를 대신한다.
+  bulgasari_asleep: bulgasariAsleep,
+  // 목구멍 속. 삼킨 것이 몸속에 맺힌다는 [S-02] 의 전설이 여기서 눈으로 확인된다 —
+  // 보물이 널려 있는 것이 곧 "돌아온 사람이 하나뿐"이라는 말의 그림판이다.
+  bulgasari_gullet: bulgasariGullet,
+  // 블루베리가 정수를 건네는 컷. 병 하나가 화면을 통째로 가져가는 자리라 `essence` 와
+  // 같은 문법이고, 이 항해의 목적어가 처음으로 손에 들린 장면이다.
+  essence_handoff: essenceHandoff,
 };

@@ -1243,6 +1243,92 @@ function star_isle(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.18, 9);
 }
 
+// -------- bulgasari_asleep · bulgasari_gullet · essence_handoff ([S-10]) --------
+//
+// ★ 셋 다 **그림의 폴백**이다 (assets/scene/bulgasari-*.png). 원본이 못 뜨면 이 캔버스가
+//   받으므로, 구도와 색만 원본과 맞춘다 — 디테일은 그림 몫이다.
+
+/** 잠든 보스. 눈을 **감고 있는 것**이 "죽인 게 아니라 재웠다"의 전부다. */
+function bulgasari_asleep(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#0a1030');
+  seaBands(ctx, w, h, 0, ['#0d1436', '#101a40', '#131f4a', '#0e1638', '#0a1030']);
+  // 자주빛 몸통 — 화면 아래 절반을 덮는 거대한 덩어리.
+  const cy = R(h * 0.62);
+  blob(ctx, R(w * 0.5), cy, R(w * 0.46), R(h * 0.34), '#a8267f');
+  blob(ctx, R(w * 0.5), cy - R(h * 0.06), R(w * 0.34), R(h * 0.22), '#c0359a');
+  // 감은 눈 둘 — 위로 볼록한 곡선. 이 두 줄이 이 그림의 유일한 정보다.
+  for (const ex of [0.42, 0.58]) {
+    const x0 = R(w * ex);
+    blob(ctx, x0, R(h * 0.44), R(w * 0.055), R(h * 0.05), '#d24aab');
+    fill(ctx, x0 - R(w * 0.05), R(h * 0.45), R(w * 0.1), 2, '#5c1247');
+  }
+  // 벌린 입 — 가운데 검은 구멍.
+  blob(ctx, R(w * 0.5), R(h * 0.66), R(w * 0.14), R(h * 0.14), '#2a0620');
+  blob(ctx, R(w * 0.5), R(h * 0.72), R(w * 0.1), R(h * 0.05), '#8e1c3a');
+  // 3인방 — 입 앞에 셋. 색은 캐럿·애플·블루베리 순.
+  const TRIO = ['#f5872b', '#e8434f', '#3d86e0'];
+  TRIO.forEach((c, i) => {
+    const x = R(w * (0.38 + i * 0.12));
+    const y = R(h * 0.88 + Math.sin(sec * 1.4 + i * 2) * 2);
+    fill(ctx, x - 5, y - 2, 11, 4, c);
+    fill(ctx, x - 2, y - 5, 4, 11, c);
+  });
+  particles(ctx, w, h, sec, { count: 24, color: '#9fd8ff', size: 1, speed: 6, dir: -1, alpha: 0.35, seed: 210 });
+  vignette(ctx, w, h, 0.22, 9);
+}
+
+/** 목구멍 속 — 삼킨 것이 몸속에 맺힌다는 [S-02] 전설의 그림판. */
+function bulgasari_gullet(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#6b1550');
+  // 안쪽으로 좁아지는 살굴 — 동심 타원을 어두워지며 겹친다.
+  // 램프를 계산하지 않고 적어 두는 이유는 bgkit 에 색 연산 헬퍼가 없어서다. 일곱 칸이라
+  // 손으로 적는 편이 짧고, 휴시프트(자주 → 검자주)도 눈으로 맞출 수 있다.
+  const GULLET = ['#8e1f68', '#78185a', '#61134b', '#4b0f3c', '#360b2c', '#22071d', '#12040f'];
+  GULLET.forEach((c, i) => {
+    const t = i / (GULLET.length - 1);
+    blob(ctx, R(w * 0.5), R(h * 0.42), R(w * (0.46 - t * 0.34)), R(h * (0.4 - t * 0.3)), c);
+  });
+  // 보물 — 바닥에 깔린 금붙이·보석. 자리는 해시로 고정하고 반짝임만 시간의 함수다.
+  const GEM = ['#f5c542', '#e8434f', '#3d86e0', '#3fd07d', '#b06ff0', '#f5f0d8'];
+  for (let i = 0; i < 90; i++) {
+    const x = R(hash(i, 211) * w);
+    const y = R(h * (0.6 + hash(i, 212) * 0.38));
+    const c = GEM[i % GEM.length];
+    const s = 2 + Math.floor(hash(i, 213) * 3);
+    ctx.globalAlpha = 0.7 + 0.3 * Math.sin(sec * 2 + hash(i, 214) * 6.3);
+    fill(ctx, x, y, s, s, c);
+  }
+  ctx.globalAlpha = 1;
+  overlay(ctx, w, h, '#3a0828', 0.12);
+  vignette(ctx, w, h, 0.26, 9);
+}
+
+/** 정수를 건네는 컷 — 병 하나가 화면을 가져간다 (`essence` 와 같은 문법). */
+function essence_handoff(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#071230');
+  seaBands(ctx, w, h, 0, ['#08153a', '#0a1a44', '#0c1f4e', '#081538', '#061029']);
+  // 블루베리 — 화면 가운데 큰 별.
+  const cx = R(w * 0.44);
+  const cy = R(h * 0.52);
+  const arm = R(h * 0.2);
+  fill(ctx, cx - arm, cy - R(arm * 0.34), arm * 2, R(arm * 0.68), '#3d86e0');
+  fill(ctx, cx - R(arm * 0.34), cy - arm, R(arm * 0.68), arm * 2, '#3d86e0');
+  for (const ex of [-0.34, 0.18]) {
+    fill(ctx, cx + R(arm * ex), cy - R(arm * 0.1), R(arm * 0.18), R(arm * 0.2), '#0a1428');
+  }
+  // 병 — 맥동하는 청록. 이 항해의 목적어가 처음으로 손에 들린다.
+  const bx = R(w * 0.62);
+  const by = R(h * 0.5);
+  const puls = 0.7 + 0.3 * Math.sin(sec * 1.8);
+  fill(ctx, bx, by, R(w * 0.05), R(h * 0.14), '#1d5f8a');
+  ctx.globalAlpha = puls;
+  fill(ctx, bx + 2, by + 4, R(w * 0.05) - 4, R(h * 0.14) - 8, '#5fe8f0');
+  ctx.globalAlpha = 1;
+  fill(ctx, bx + R(w * 0.012), by - R(h * 0.03), R(w * 0.026), R(h * 0.03), '#7a5230');
+  particles(ctx, w, h, sec, { count: 22, color: '#8fd8ff', size: 1, speed: 7, dir: -1, alpha: 0.3, seed: 215 });
+  vignette(ctx, w, h, 0.2, 9);
+}
+
 // ---------------- golden_isle — 엔딩 (황금섬) ----------------
 
 function golden_isle(ctx, { w, h, sec }) {
@@ -1312,6 +1398,9 @@ export const SCENES = {
   essence,
   world_end,
   star_isle,
+  bulgasari_asleep,
+  bulgasari_gullet,
+  essence_handoff,
   golden_isle,
 };
 

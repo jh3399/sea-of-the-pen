@@ -211,6 +211,44 @@ body::after {
 .title-menu { display: flex; flex-direction: column; gap: 12px; align-items: center; min-width: 260px; }
 .title-menu .btn-primary, .title-menu .btn-tool { width: 100%; }
 
+/* ---- THE END ---- */
+
+.the-end {
+  position: fixed;
+  inset: 0;
+  z-index: 50;                              /* 확인창(40)보다도 위 — 마지막 화면이다 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: #05070f;
+  animation: the-end-in 1.6s ease-out both;
+}
+
+/* ⚠ 반드시 있어야 한다. `display: flex` 가 `hidden` 을 이겨서, 없으면 처음부터 떠 있는다. */
+.the-end[hidden] { display: none; }
+
+.the-end-mark {
+  margin: 0;
+  color: var(--sand);
+  font-size: 40px;
+  letter-spacing: 12px;                     /* 자간이 넓어야 마침표처럼 읽힌다 */
+  text-indent: 12px;                        /* 자간이 만든 오른쪽 여백을 상쇄 */
+}
+
+.the-end-hint {
+  margin: 0;
+  color: var(--sand);
+  font-size: 13px;
+  letter-spacing: 2px;
+  opacity: 0.4;
+  animation: the-end-blink 2s step-end infinite;
+}
+
+@keyframes the-end-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes the-end-blink { 50% { opacity: 0.12; } }
+
 /* ---- 확인창 (되돌릴 수 없는 것 앞에서 한 번 묻는다) ---- */
 
 .confirm-layer {

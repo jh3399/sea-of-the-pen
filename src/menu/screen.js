@@ -11,7 +11,7 @@ import { startPixelBg, SCENES } from '../scene/pixelbg.js';
 import { stars, glitter } from '../scene/bgkit.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { runDialogue, setDialogueBlip, skipDialogue } from '../story/dialogue.js';
-import { SCRIPT, INTRO_BEATS, INTERLUDES } from '../story/script.js';
+import { SCRIPT, INTRO_BEATS, INTERLUDES, ENDING } from '../story/script.js';
 import { advanceStage, resetStage, stageIndex } from '../game/progress.js';
 
 const INTRO_SEEN_KEY = 'shipwright:introSeen'; // session — 처음 온 사람은 항상 인트로를 본다
@@ -31,6 +31,7 @@ const els = {
   confirm: document.getElementById('confirm-layer'),
   confirmYes: document.getElementById('btn-confirm-yes'),
   confirmNo: document.getElementById('btn-confirm-no'),
+  theEnd: document.getElementById('the-end'),
 };
 
 let muted = localStorage.getItem(MUTED_KEY) === '1';
@@ -202,6 +203,38 @@ async function playInterlude(beat) {
   location.href = 'draw.html';
 }
 
+/**
+ * 엔딩 — **막간이 아니다.** 갈리는 지점이 둘이고, 그래서 함수를 따로 둔다:
+ *
+ *  ① 비트가 **줄줄이 이어 붙는다** (인트로와 같은 모양). 막간은 하나만 재생한다.
+ *  ② 끝이 `draw.html` 이 아니라 **타이틀**이다. 막간의 끝은 다음 배를 그리는 것이지만
+ *     엔딩의 끝은 더 그릴 배가 없다는 것이다.
+ *
+ * ⚠ `advanceStage()` 를 부르지 않는다. 다음 바다가 없다 — 부르면 존재하지 않는
+ *   스테이지 인덱스가 남아 다음 실행이 빈 맵을 띄운다.
+ * ⚠ 진행(`shipwright:stage`)과 설계는 여기서 지운다. 엔딩을 본 사람이 타이틀로 돌아갔을 때
+ *   「계속하기」가 이미 끝난 항해를 가리키고 있으면 안 된다.
+ */
+async function playEnding() {
+  skipping = false;
+  showCutscene(true);
+  for (const beat of ENDING) {
+    if (skipping) break;
+    if (beat.bgm) playBgm(beat.bgm);
+    await runDialogue(SCRIPT[beat.key]);
+  }
+  showCutscene(false);
+
+  sessionStorage.removeItem(HANDOFF_KEY);
+  sessionStorage.removeItem('shipwright:stage');
+
+  els.theEnd.hidden = false;
+  // 아무 키·클릭으로 타이틀. `once` 라 두 입력이 겹쳐도 한 번만 돈다.
+  const leave = () => { location.href = 'index.html'; };
+  window.addEventListener('keydown', leave, { once: true });
+  window.addEventListener('pointerdown', leave, { once: true });
+}
+
 /** 주소에 `?beat=KEY` 가 있으면 그 막간을 재생한다. 없거나 모르는 키면 null. */
 function requestedInterlude() {
   const key = new URLSearchParams(location.search).get('beat');
@@ -320,8 +353,14 @@ function init() {
     if (e.code === 'Escape') onSkip();
   });
 
-  // 항해 중간에 들른 것이라면 메뉴를 보여 주지 않고 곧바로 막간을 재생한다.
+  // 항해 중간에 들른 것이라면 메뉴를 보여 주지 않고 곧바로 막간·엔딩을 재생한다.
   // ⚠ 리스너를 다 건 **뒤에** 부른다 — 건너뛰기(Esc)가 이 대사에도 걸려야 한다.
+  // ⚠ 엔딩을 막간보다 **먼저** 본다. 둘 다 붙은 주소는 있을 수 없지만, 순서를 정해 두면
+  //   나중에 누가 실수로 둘을 같이 붙여도 거동이 정해져 있다.
+  if (new URLSearchParams(location.search).get('ending') === '1') {
+    playEnding();
+    return;
+  }
   const beat = requestedInterlude();
   if (beat) playInterlude(beat);
 }

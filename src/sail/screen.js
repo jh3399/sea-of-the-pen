@@ -585,17 +585,20 @@ class SailScreen {
     this.clearUi.rating.textContent = `별 ${stars}개`;
     this.clearUi.time.textContent = formatClearTime(this.clearTime);
 
-    // 다음 바다가 있으면 그리로, 없으면 잠근 채 이유를 적어 둔다.
+    // ★ 마지막 바다를 깼으면 버튼이 **엔딩으로 가는 문**이 된다. 예전엔 여기서 그냥
+    //   잠갔는데, 그러면 이야기를 끝까지 만들어 놓고 플레이어는 「모든 스테이지 완료」라는
+    //   회색 버튼만 보게 된다 — 엔딩이 있는데 갈 길이 없는 상태였다.
     const next = hasNextStage();
-    this.clearUi.next.disabled = !next;
+    this.clearUi.next.disabled = false;
+    this.clearUi.next.textContent = next ? '다음 스테이지' : '이야기의 끝으로';
     this.clearUi.nextNote.textContent = next
       ? '이어서 다음 바다로'
-      : '모든 스테이지 완료';
+      : '마지막 바다를 건넜습니다';
 
     this.clearUi.overlay.classList.remove('hidden');
-    // 이어서 갈 수 있으면 그쪽에 초점을 준다 — 키보드만 쓰는 사람에게 「다시하기」가
+    // 이어서 갈 곳이 늘 있으므로 초점도 늘 그쪽이다 — 키보드만 쓰는 사람에게 「다시하기」가
     // 기본이면 클리어할 때마다 같은 바다를 한 번 더 돌게 된다.
-    (next ? this.clearUi.next : this.clearUi.retry).focus();
+    this.clearUi.next.focus();
   }
 
   /**
@@ -606,8 +609,16 @@ class SailScreen {
    * "진행이 올랐다"가 같은 사건이어야 한다.
    */
   toNextStage() {
-    const beat = this.stage.interlude;
     // base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 — 상대경로로만 옮긴다.
+    //
+    // ★ **마지막 바다면 엔딩이다.** 진행을 올리지 않는다 — 올릴 다음이 없고, 올리면
+    //   존재하지 않는 스테이지 인덱스가 남아 다음 실행이 빈 맵을 띄운다. 진행을 지우는
+    //   것은 엔딩이 끝난 뒤 메뉴가 한다 (`playEnding`).
+    if (!hasNextStage()) {
+      location.href = 'index.html?ending=1';
+      return;
+    }
+    const beat = this.stage.interlude;
     if (beat) {
       location.href = `index.html?beat=${encodeURIComponent(beat)}`;
       return;
