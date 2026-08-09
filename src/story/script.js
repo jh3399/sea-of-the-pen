@@ -69,7 +69,7 @@ export const SCRIPT = {
 
     // 바다 셋 = 실제 3맵. 각 줄이 그 맵에서 플레이어를 죽이는 것을 하나씩 말한다.
     { speaker: '포포', sprite: 'examiner', text: '바다를 셋 건너야 하지.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'sea_day', text: '첫째는 바위 협곡. 바람은 등을 밀어주지만, 주변이 온통 바위지.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'rock_strait', text: '첫째는 바위 협곡. 바람은 등을 밀어주지만, 주변이 온통 바위지.' },
     { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 바람이 정면으로 막아서는데, 해적까지 들끓는단다.' },
     { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 물 대신 용암이 흐르는 곳이지…' },
     { speaker: '포포', sprite: 'examiner', bg: 'world_end', text: '그 셋을 다 건너면 불가사리의 바다가 나온단다…' },

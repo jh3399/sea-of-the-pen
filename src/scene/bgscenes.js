@@ -74,6 +74,91 @@ function sea_day(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.04);
 }
 
+// ---------------- rock_strait — S-02 첫째 바다 (바위 협곡) ----------------
+// sea_day 를 고치지 않고 따로 만든다. sea_day 는 "맑은 낮 바다"라는 일반 배경이라
+// 여기에 바위를 박아 넣으면 다른 데서 다시 쓸 수 없게 된다.
+//
+// ★ **무서운 것은 솟은 바위가 아니라 물 밑에 잠긴 바위다.** 그것이 이 맵에서 플레이어를
+//   죽이는 것이므로(`physics/obstacle.js`) 수면 아래 그림자를 같이 그린다. 보이는 것은
+//   피할 수 있고, 안 보이는 것이 배를 부순다 — 그림이 그 말을 먼저 해야 한다.
+// ★ 바람(순풍)은 남는다. 설계 문서 §8 의 반전이 1장의 큰 돛에서 나오기 때문이다.
+//   그래서 구름과 갈매기가 한 방향으로 빠르게 흐른다.
+function rock_strait(ctx, { w, h, sec }) {
+  const hz = R(h * 0.55);
+  skyGradient(ctx, w, 0, hz, ['#3d9ad4', '#63b7e6', '#8bd2ef', '#b6e8f6', '#e0f6f7']);
+  sun(ctx, w * 0.8, hz * 0.18, 8, sec, {});
+  clouds(ctx, w, sec, { y: hz * 0.18, color: '#ffffff', alpha: 0.8, count: 6, speed: 6, scale: 1.6, seed: 31 });
+  clouds(ctx, w, sec, { y: hz * 0.4, color: '#f2fbff', alpha: 0.5, count: 5, speed: 9, scale: 1.1, seed: 32 });
+  hills(ctx, w, hz + 1, '#6a94aa', { amp: 7, freq: 1.3, seed: 33, from: 0.05, to: 0.3 });
+  const bands = seaBands(ctx, w, h, hz, ['#3990b8', '#2f83ab', '#2a769c', '#24688b', '#1e5a7a', '#184c68']);
+  glitter(ctx, w * 0.8, hz, h, sec, '#fff8d8', { alpha: 0.4, count: 80, seed: 34 });
+
+  // 물 밑에 잠긴 바위 — 수면 바로 아래의 검은 얼룩. 이것이 배를 부순다.
+  // 납작하게(0.22) 눌러야 물 밑으로 보인다. 동그랗게 두면 물에 뜬 그림자처럼 보인다.
+  for (let i = 0; i < 9; i++) {
+    const x = R(hash(i, 41) * w);
+    const y = hz + R(h * (0.08 + hash(i, 42) * 0.34));
+    const rw = R(h * (0.06 + hash(i, 43) * 0.08));
+    ctx.globalAlpha = 0.26;
+    blob(ctx, x, y, rw, R(rw * 0.22) + 1, '#0d3a52');
+    ctx.globalAlpha = 0.16;
+    blob(ctx, x, y - 1, R(rw * 0.6), R(rw * 0.12) + 1, '#7fd0e8');   // 수면에 비치는 자리
+    ctx.globalAlpha = 1;
+  }
+
+  waves(ctx, w, bands, sec, '#a8e6f5', { alpha: 0.5, speed: 13, density: 8, seed: 35 });
+
+  // 솟은 바위 — 뒤에서 앞으로. 뒤일수록 작고 옅다.
+  const spire = (x, baseY, hgt, wid, body, top) => {
+    // ⚠ y 는 꼭대기에서 0 이다. t = y/hgt 로 두어야 **위가 좁고 아래가 넓다.**
+    //    반대로 두면 종유석처럼 거꾸로 매달린 모양이 된다 (한 번 그렇게 나왔다).
+    //    제곱근을 씌우는 것은 옆면을 곧은 삼각형이 아니라 살짝 부푼 바위로 만들기 위해서다.
+    // 바위마다 옆면의 부풀기(pow)와 기울기(lean)를 달리한다. 안 그러면 전부 같은
+    // 삼각형이 되어 상어 지느러미처럼 보인다.
+    const pow = 0.35 + hash(R(x), 55) * 0.35;
+    const lean = (hash(R(x), 56) - 0.5) * wid * 0.5;
+    for (let y = 0; y < hgt; y++) {
+      const u = y / hgt;
+      const t = Math.pow(u, pow);
+      const jag = (hash(R(x + y * 7), 44) - 0.5) * wid * 0.28;
+      const ww = R(wid * t) + 3;
+      fill(ctx, x - ww / 2 + jag + lean * (1 - u), baseY - hgt + y, ww, 1, body);
+    }
+    for (let y = 0; y < R(hgt * 0.62); y++) {             // 좌상단 광원 쪽 밝은 면
+      const u = y / hgt;
+      const t = Math.pow(u, pow);
+      const ww = R(wid * t * 0.4) + 1;
+      fill(ctx, x - R(wid * t) / 2 + 1 + lean * (1 - u), baseY - hgt + y, ww, 1, top);
+    }
+    // 물에 닿는 자리 포말 — 파도가 부딪히는 것이 곧 여기 바위가 있다는 표시다
+    const foam = R(wid * 0.9) + 4;
+    for (let i = 0; i < 5; i++) {
+      const fx = x - foam / 2 + R(hash(i, 45) * foam);
+      const bob = Math.sin(sec * 2.2 + i + x * 0.05) * 1.2;
+      ctx.globalAlpha = 0.55;
+      fill(ctx, fx, baseY + R(bob), 2 + R(hash(i, 46) * 3), 1, '#eaf8ff');
+      ctx.globalAlpha = 1;
+    }
+  };
+
+  // 줄마다 가로로 고르게 흩는다 — hash 만 쓰면 뭉쳐서 두세 개가 겹쳐 붙는다.
+  const spread = (i, n, seed, pad) => R(((i + 0.2 + hash(i, seed) * 0.6) / n) * (1 - pad * 2) * w + pad * w);
+
+  for (let i = 0; i < 5; i++) {                            // 먼 바위
+    spire(spread(i, 5, 47, 0.03), hz + R(h * 0.05), R(h * (0.05 + hash(i, 48) * 0.04)), R(h * 0.07), '#3d6a83', '#5b8ba3');
+  }
+  for (let i = 0; i < 4; i++) {                            // 중간 바위
+    spire(spread(i, 4, 49, 0.05), hz + R(h * 0.19), R(h * (0.11 + hash(i, 50) * 0.07)), R(h * 0.13), '#2b4c60', '#456f86');
+  }
+  for (let i = 0; i < 3; i++) {                            // 앞 바위 — 화면을 가른다
+    spire(spread(i, 3, 51, 0.08), h - R(h * 0.04), R(h * (0.26 + hash(i, 52) * 0.14)), R(h * 0.22), '#1a3141', '#2f5165');
+  }
+
+  gulls(ctx, w, sec, { y: hz * 0.28, count: 4, speed: 16, seed: 53 });
+  particles(ctx, w, h, sec, { count: 26, color: '#ffffff', speed: 30, dir: 1, sway: 10, alpha: 0.5, seed: 54, y0: 0.82, y1: 1 });
+  vignette(ctx, w, h, 0.06);
+}
+
 // ---------------- fog_black — S-02 습격 (검은 안개·붉은 포격) ----------------
 
 function fog_black(ctx, { w, h, sec }) {
@@ -1025,6 +1110,7 @@ export const SCENES = {
   night_sea,
   harbor,
   sea_day,
+  rock_strait,
   fog_black,
   dawn_wreck,
   village_pale,
