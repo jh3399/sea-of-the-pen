@@ -662,6 +662,119 @@ function workshop(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.16, 8);
 }
 
+// ---------------- sickroom — S-01 병상 (미오의 방) ----------------
+// 프롤로그에서 유일한 사적 공간이다. 지금까지 S-01 은 village_alive(야외 마을 전경) 위에서
+// 돌았는데, 실내 장면을 야외 그림에 얹은 것이라 대사와 그림이 서로 딴 데를 봤다.
+//
+// ★ 창밖에 바다가 보이는 것이 이 방의 전부다 — 누워서 그것만 보고 있었으니 미오가 그린 것이
+//   배다. 인과를 대사로 설명하지 않고 그림이 만든다. 수평선의 돛 하나가 그 연장이다.
+// ★ 미오는 여기 있지만 얼굴은 없다. 논리 해상도가 짧은 쪽 200px 이라 머리가 7~8px 이고
+//   그 크기에는 이목구비가 물리적으로 안 들어간다 — STORY.md §2 의 "얼굴은 에필로그에서
+//   처음 나온다"가 연출 의도가 아니라 **구조상** 지켜진다. 흉상을 새로 그릴 필요가 없다.
+function sickroom(ctx, { w, h, sec }) {
+  // 벽 — 가로 판자. 창 쪽이 밝다.
+  // 작업장(#2e2015)보다 밝고 따뜻하게 잡는다 — 여기는 헛간이 아니라 사람이 자는 방이다.
+  fill(ctx, 0, 0, w, h, '#5b4a3b');
+  for (let y = 0; y < h; y += 13) {
+    fill(ctx, 0, y, w, 1, '#43362a');
+    fill(ctx, 0, y + 1, w, 1, '#6b5847');
+  }
+  // 창에서 먼 쪽(왼쪽)을 어둡게 깔아 광원 방향을 한쪽으로 고정한다.
+  // overlay() 는 화면 전체 전용이라 여기서는 못 쓴다 — 알파를 직접 걸고 되돌린다.
+  ctx.globalAlpha = 0.18;
+  fill(ctx, 0, 0, R(w * 0.45), h, '#1a140e');
+  ctx.globalAlpha = 1;
+
+  // ---- 창 + 창밖 바다 ----
+  const wx = R(w * 0.56), wy = R(h * 0.13);
+  const ww = R(w * 0.32), wh = R(h * 0.34);
+  fill(ctx, wx - 3, wy - 3, ww + 6, wh + 6, '#2a2016');           // 창틀
+  fill(ctx, wx - 2, wy - 2, ww + 4, wh + 4, '#6b5641');
+  const hz = R(wh * 0.52);                                         // 수평선
+  fill(ctx, wx, wy, ww, hz, '#cfe0ea');                            // 창 안쪽 하늘
+  fill(ctx, wx, wy + R(hz * 0.55), ww, R(hz * 0.45), '#dfeaf0');
+  fill(ctx, wx, wy + hz, ww, wh - hz, '#5d86a4');                  // 바다
+  fill(ctx, wx, wy + hz, ww, 1, '#8fb2c8');
+  for (let i = 0; i < 14; i++) {                                   // 물결 반짝임
+    const t = hash(i, 311);
+    const ly = wy + hz + 2 + R(t * (wh - hz - 3));
+    const lx = wx + R(hash(i, 312) * (ww - 8));
+    fill(ctx, lx, ly, 2 + R(hash(i, 313) * 3), 1, '#7ea6c2');
+  }
+  // ★ 수평선의 돛 하나 — 미오가 배를 그린 이유이자 S-05 의 예고.
+  //   작으면 아무도 못 보고, 크면 창밖이 아니라 이 방의 주인공이 된다. 6px 이 그 사이다.
+  const shx = wx + R(ww * 0.66);
+  fill(ctx, shx - 4, wy + hz + 1, 9, 1, '#2f3c46');       // 선체
+  fill(ctx, shx - 3, wy + hz, 7, 1, '#465866');
+  fill(ctx, shx, wy + hz - 6, 1, 6, '#2f3c46');           // 돛대
+  fill(ctx, shx - 3, wy + hz - 5, 3, 5, '#f4f8fa');       // 돛
+  fill(ctx, shx + 1, wy + hz - 4, 3, 4, '#dfe8ee');
+  // 창살
+  fill(ctx, wx + R(ww / 2) - 1, wy, 2, wh, '#6b5641');
+  fill(ctx, wx, wy + R(wh / 2) - 1, ww, 2, '#6b5641');
+
+  // ---- 창에서 들어오는 빛기둥 (왼쪽 아래로) ----
+  // 침대 위로 떨어지게 각도를 잡는다. 방에서 유일하게 밝은 것이 바다에서 온 빛이어야 한다.
+  ctx.globalAlpha = 0.1;
+  ctx.fillStyle = '#fff3d4';
+  for (let i = 0; i < h; i++) fill(ctx, wx - i * 0.95, wy + i, ww + i * 0.5, 1);
+  ctx.globalAlpha = 1;
+
+  // ---- 침대 ----
+  const bx = R(w * 0.06), by = R(h * 0.60);
+  const bw = R(w * 0.50), bh = R(h * 0.22);
+  fill(ctx, bx - 4, by - R(h * 0.16), 5, R(h * 0.16) + bh, '#4a3524');      // 머리판
+  fill(ctx, bx - 4, by - R(h * 0.16), 5, 2, '#6b5033');
+  fill(ctx, bx, by + bh, bw, 4, '#3b2a1c');                                 // 침대틀
+  fill(ctx, bx, by + bh + 4, bw, 3, '#2a1d13');
+  fill(ctx, bx + 3, by + bh + 7, 3, R(h * 0.07), '#2a1d13');                // 다리
+  fill(ctx, bx + bw - 6, by + bh + 7, 3, R(h * 0.07), '#2a1d13');
+
+  // 숨 — 이불이 1px 오르내린다. 이 방에서 움직이는 것은 이것과 먼지뿐이다
+  const breath = R(Math.sin(sec * 1.5) * 1);
+
+  // 이불 — **윗선(실루엣)으로** 사람을 보여준다. 평평한 판 위에 둔덕을 얹는 방식은
+  // 이 해상도에서 회색 타원 하나로 뭉쳐 사람으로 안 읽힌다 (실제로 그렇게 나왔다).
+  // 어깨에서 솟고 허리에서 꺼지고 무릎에서 다시 솟는 윤곽 자체를 그린다.
+  // 몸이 이불 폭의 절반 안에 들어가는 것이 곧 "작은 아이"다.
+  const bt = by + 4 + breath;
+  const bBot = by + bh;
+  const bump = (t, c, r) => Math.max(0, 1 - ((t - c) / r) ** 2);
+  for (let x = 0; x < bw; x++) {
+    const t = x / bw;
+    const rise = 6 * bump(t, 0.17, 0.15) + 4.5 * bump(t, 0.46, 0.13);
+    const top = R(bt + 5 - rise);
+    fill(ctx, bx + x, top, 1, bBot - top, '#8f9aa6');
+    fill(ctx, bx + x, top, 1, 2, '#a8b3be');                                // 윗면 하이라이트
+  }
+  fill(ctx, bx, bBot - 3, bw, 3, '#6d7783');                                // 이불 그늘
+  for (let i = 0; i < 4; i++) {                                             // 발치 쪽 주름
+    const fx = bx + R(bw * (0.64 + i * 0.09));
+    fill(ctx, fx, bt + 7, 1, bBot - bt - 9, '#7d8894');
+  }
+  // 베개와 머리 — 창을 등지고 돌아누웠다. 얼굴은 이 해상도에 물리적으로 들어가지 않는다
+  fill(ctx, bx + 1, by - 2, R(bw * 0.24), 8, '#dfe4ea');
+  fill(ctx, bx + 1, by - 2, R(bw * 0.24), 2, '#f2f5f8');
+  blob(ctx, bx + R(bw * 0.12), by + 1, 6, 5, '#5a3d29');                    // 머리카락
+  blob(ctx, bx + R(bw * 0.12) - 1, by, 4, 3, '#6b4a33');                    // 좌상단 광원
+
+  // ---- 머리맡 걸상 + 미오가 그린 종이 ----
+  const stx = bx + bw + R(w * 0.03), sty = by + R(bh * 0.55);
+  fill(ctx, stx, sty, R(w * 0.11), 3, '#5a4430');
+  fill(ctx, stx + 2, sty + 3, 2, R(h * 0.13), '#3b2a1c');
+  fill(ctx, stx + R(w * 0.09), sty + 3, 2, R(h * 0.13), '#3b2a1c');
+  fill(ctx, stx + 2, sty - 5, R(w * 0.08), 5, '#efe9d8');                   // ★ 그 종이
+  fill(ctx, stx + 3, sty - 4, R(w * 0.06), 1, '#8a90a0');                   // 그려진 선 (배의 흔적)
+  fill(ctx, stx + 4, sty - 3, R(w * 0.04), 1, '#9aa0a8');
+
+  // 빛기둥 속 먼지 — 방이 멈춰 있다는 것을 먼지만 부정한다
+  particles(ctx, w, h, sec, {
+    count: 30, color: '#fff3d4', speed: 3, dir: 1, sway: 4,
+    alpha: 0.3, seed: 314, twinkle: true, y0: 0.1, y1: 0.9,
+  });
+  vignette(ctx, w, h, 0.2, 8);
+}
+
 // ---------------- world_end — 최종전 (세계의 끝) ----------------
 
 function world_end(ctx, { w, h, sec }) {
@@ -768,6 +881,7 @@ export const SCENES = {
   mirror_fog,
   shipyard_grave,
   workshop,
+  sickroom,
   world_end,
   golden_isle,
 };
