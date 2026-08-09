@@ -87,10 +87,21 @@ export function createRuleEngine(rules, fields) {
   /** 이번 틱에 발생한 이벤트. 소비자는 **스텝 밖에서** 비운다 (스텝 도중 강체 파괴 금지). */
   const events = [];
 
-  /** 한 대상(선체 또는 아이템)에 규칙을 적용한다. @returns {boolean} 파괴 요청 여부 */
+  /**
+   * 한 대상(선체 또는 아이템)에 규칙을 적용한다.
+   *
+   * @returns {string|null} 파괴를 요청한 **규칙 id**, 없으면 null.
+   *   ★ 불리언이 아니라 id 인 이유: 소비자가 "무엇이 죽였는가"를 알아야 어디가 깎이는지
+   *     정할 수 있다. `sail/screen.js#burnSpot` 은 `fieldBehind(rules, ruleId)` 로 규칙이
+   *     가리킨 필드를 되찾아 **그 필드가 가장 뜨거운 외곽점**을 태우는데, 여기서 id 를 흘리면
+   *     그 분기가 영영 안 돌고 늘 직전 화점으로 되돌아간다. 균일 온도(3장 용암)에서는 모든
+   *     외곽점이 똑같이 뜨거워 무해했지만, **좁은 띠(보스의 빔)에서는 실제로 닿은 부위가
+   *     아니라 엉뚱한 자리가 깎인다.** 호출부가 `if (applyTo(...))` 로 쓰던 진리값 관례는
+   *     비어 있지 않은 문자열이 참이라 그대로 유지된다.
+   */
   function applyTo(target, materialKey, sample, dt, ctx) {
     const status = target.status ?? (target.status = {});
-    let destroy = false;
+    let destroyedBy = null;
     /** 이번 틱에 이 대상에서 일어난 상태 변화. 끝에서 상쇄분을 걷어내고 발행한다. */
     const changes = [];
 
@@ -115,7 +126,7 @@ export function createRuleEngine(rules, fields) {
         changes.push({ state: e.clear, ruleId: rule.id, delta: -1 });
       }
       if (e.drain) status[e.drain] = Math.max(0, (status[e.drain] ?? 0) - dt * ((e.rate ?? 1) - 1));
-      if (e.destroy) destroy = true;
+      if (e.destroy) destroyedBy = rule.id;
       // enable·weaken 은 힘 함수가 status 를 직접 읽어 반영한다 (field/forces.js 의 wetScale).
       // 규칙표에 명시해 두는 이유는 그 조합이 **데이터에 선언돼 있어야** 하기 때문이다.
     }
@@ -135,7 +146,7 @@ export function createRuleEngine(rules, fields) {
         ruleId: c.ruleId,
       });
     }
-    return destroy;
+    return destroyedBy;
   }
 
   return {
@@ -174,8 +185,12 @@ export function createRuleEngine(rules, fields) {
         };
 
         const ctx = { hullBurning: hull.status?.burning > 0 };
-        if (applyTo(hull, hull.params.material.key, sample, step, ctx)) {
-          events.push({ type: 'destroyed', body, at: { x: c.x, y: c.y }, target: hull });
+        const destroyedBy = applyTo(hull, hull.params.material.key, sample, step, ctx);
+        if (destroyedBy) {
+          // ruleId 를 실어야 소비자가 `fieldBehind` 로 "어느 필드가 죽였는가"를 되찾을 수 있다.
+          events.push({
+            type: 'destroyed', body, at: { x: c.x, y: c.y }, target: hull, ruleId: destroyedBy,
+          });
           // 연소 시계를 되감는다. 안 감으면 소비자가 조각을 남겼을 때 다음 틱에 곧바로 다시
           // 파괴 조건이 서서 0.1초마다 차감이 터진다. 되감으면 "한 구획이 무너지고, 남은
           // 부분이 다시 타들어간다"가 되어 §7 파손 지오메트리와 자연스럽게 이어진다.
@@ -188,9 +203,10 @@ export function createRuleEngine(rules, fields) {
         const itemCtx = { hullBurning: hull.status?.burning > 0 };
         for (let i = hull.items.length - 1; i >= 0; i--) {
           const item = hull.items[i];
-          if (applyTo(item, item.material, sample, step, itemCtx)) {
+          const lostBy = applyTo(item, item.material, sample, step, itemCtx);
+          if (lostBy) {
             hull.items.splice(i, 1);
-            events.push({ type: 'itemLost', body, item, target: hull });
+            events.push({ type: 'itemLost', body, item, target: hull, ruleId: lostBy });
           }
         }
       }

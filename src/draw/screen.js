@@ -8,7 +8,7 @@ import {
   strokeToHull, toHullLocal, toHullWorld, pxToMetric, metricToPx, HULL_DEFAULTS,
 } from '../hull/polygon.js';
 import { canAttachAt, attachItem, detachItem, nextBind } from '../items/attach.js';
-import { ITEM_CATALOG } from '../items/catalog.js';
+import { ITEM_CATALOG, ATTACH_DIRECTIONS, BIND_POOL, bindLabel } from '../items/catalog.js';
 import { oarAnchorsAt } from '../items/defaults.js';
 import { MATERIALS } from '../hull/params.js';
 import { unlockedItems, unlockedMaterials } from '../game/progress.js';
@@ -19,7 +19,7 @@ import {
   markerAngleToward, itemMarkerSize, OAR_PUSH,
 } from './icons.js';
 
-/** 이미지 순서 그대로 — 대포·키·돛·부스터. 대포는 배치만(발사 로직은 D3 예약, 이번 범위 밖). */
+/** 이미지 순서 그대로 — 대포·키·돛·부스터. */
 const PALETTE_ITEMS = ['cannon', 'rudder', 'sail', 'booster'];
 const PALETTE_MATERIALS = ['wood', 'iron'];
 
@@ -30,6 +30,9 @@ const PALETTE_MATERIALS = ['wood', 'iron'];
 // ★ **첫 배는 노만 단다.** 연습 해역이 노 젓기를 익히는 바다라, 키도 돛도 아직 없다.
 //   키는 시작의 섬에서 세렌을 만난 뒤에 열린다 ([S-06]) — 미리 달 수 있으면 그 장면이
 //   통째로 의미를 잃고 "노만 달고 왔어?" 라는 세렌의 첫 대사가 거짓말이 된다.
+// ⚠ 대포는 아직 어느 스테이지에도 열려 있지 않다 — 해적선(game/pirates.js)이 스톰 맵에
+//   배치되기 전까지는 STAGES[].items 에 'cannon' 을 넣지 않는다 (데모 맵 테스트 배치는
+//   뺐다). 하니스(main.js)는 진행도와 무관하게 항상 전부 열려 있어 기능 자체는 계속 검증된다.
 
 const ITEM_MARKER_HIT_PX = 16;
 const ITEM_MARKER_PIXEL = 3;
@@ -73,6 +76,8 @@ class DrawScreen {
     this.page = document.getElementById('page');
     this.statusEl = document.getElementById('status');
     this.itemListEl = document.getElementById('item-list');
+    this.directionPickerEl = document.getElementById('direction-picker');
+    this.directionListEl = document.getElementById('direction-list');
     this.deviceListEl = document.getElementById('device-list');
     this.materialListEl = document.getElementById('material-list');
     this.blueprintToggle = document.getElementById('blueprint-toggle');
@@ -87,7 +92,10 @@ class DrawScreen {
     this.design = null; // strokeToHull() 결과 — 유효한 폐곡선이 확정되면 채워진다
     this.hull = { items: [] }; // items/attach.js 가 기대하는 최소 형태
     this.placing = null; // 배치 모드 중인 아이템 타입
-    /** 다음에 붙일 아이템의 방향 (선체 로컬 rad, 반시계 +). 휠로 돌린다. */
+    /**
+     * 방향성 아이템의 고정 장착 방향 (선체 로컬 rad, 반시계 +).
+     * **입력이 둘**이다 — 대포는 버튼 피커(4방향), 그 밖은 휠(45° 8방향). 둘 다 이 값을 쓴다.
+     */
     this.attachAngle = 0;
     this.finished = false;
     this.finishedDesign = null;
@@ -108,6 +116,7 @@ class DrawScreen {
 
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.buildMaterialList();
     this.buildBlueprintPanel();
     this.bindTopControls();
@@ -176,6 +185,7 @@ class DrawScreen {
     }
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.updateAboard();
     this.syncFinishButton();
     this.render();
@@ -285,20 +295,57 @@ class DrawScreen {
       row.type = 'button';
       row.className = `item-row${this.placing === type ? ' selected' : ''}`;
       row.disabled = !this.design?.ok || this.finished;
-      row.innerHTML = `<span class="icon">${itemIconSVG(type, { pixel: 3 })}</span><span>${spec.name}</span>`;
+      const note = type === 'cannon' ? '단발 · 방향 고정' : '';
+      row.innerHTML = `<span class="icon">${itemIconSVG(type, { pixel: 3 })}</span>`
+        + `<span>${spec.name}${note ? `<small class="row-note">${note}</small>` : ''}</span>`;
       row.addEventListener('click', () => this.togglePlacing(type));
       this.itemListEl.appendChild(row);
     }
   }
 
-  /** 지금 고른 것이 방향을 쓰는 아이템인가 (휠이 의미 있는가). */
+  /**
+   * 지금 고른 것이 방향을 쓰는 아이템인가 (휠이 의미 있는가).
+   *
+   * ★ 타입이 아니라 **kind** 로 판별한다 — 새 아이템이 카탈로그에 들어와도 이 파일은
+   *   안 고친다. 대포(impulse)·부스터(thruster)·돛(sail)이 여기 해당한다.
+   * ⚠ 키(foil)·밸러스트(mass)·닻(joint)은 `angle` 을 아예 안 읽는다. 돌리게 두면 아무 일도
+   *   안 일어나는 노브가 되어 "고장 났나"가 된다.
+   */
   placingUsesAngle() {
     return Boolean(this.placing)
       && this.placing !== PLACING_OAR
       && ANGLE_KINDS.has(ITEM_CATALOG[this.placing]?.kind);
   }
 
-  /** 배치 모드의 안내 문구 — 방향을 쓰는 아이템이면 지금 방향과 휠 안내를 함께 적는다. */
+  /**
+   * 대포는 항해 중 조준하지 않는다 — 여기서 정한 선체 로컬 방향이 곧 포신 방향이다.
+   *
+   * ★ **입력이 둘인 것은 의도다.** 대포는 앞/뒤/좌현/우현 넷이면 충분하고 버튼이 더
+   *   눈에 띈다. 부스터·돛은 45° 8방향이 필요해서 휠을 쓴다 — 둘 다 `attachAngle` 하나를
+   *   쓰므로 상태가 갈라지지 않는다.
+   */
+  buildDirectionPicker() {
+    const visible = this.placing === 'cannon' && !this.finished;
+    this.directionPickerEl.classList.toggle('hidden', !visible);
+    this.directionListEl.innerHTML = '';
+    if (!visible) return;
+
+    for (const direction of ATTACH_DIRECTIONS) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `direction-btn${Math.abs(direction.value - this.attachAngle) < 1e-9 ? ' selected' : ''}`;
+      btn.textContent = direction.label;
+      btn.addEventListener('click', () => {
+        this.attachAngle = direction.value;
+        this.buildDirectionPicker();
+        this.setStatus(this.placingStatus(), 'ok');
+        this.render();
+      });
+      this.directionListEl.appendChild(btn);
+    }
+  }
+
+  /** 배치 모드의 안내 문구 — 방향을 쓰는 아이템이면 지금 방향과 조작 안내를 함께 적는다. */
   placingStatus() {
     if (this.placing === PLACING_OAR) {
       return '노를 달 앞뒤 위치를 클릭하세요 — 좌우로는 알아서 선체 가장자리에 붙습니다.';
@@ -309,9 +356,12 @@ class DrawScreen {
       return `${name}를 붙일 자리를 선체 안에서 클릭하세요 (다시 누르면 뗍니다).`;
     }
     // 돛의 angle 은 미는 방향이 아니라 **돛면의 법선**이라 말을 바꾼다.
-    const what = ITEM_CATALOG[this.placing].kind === 'sail' ? '돛이 향한 쪽' : '미는 방향';
-    return `${name} — ${what}: ${angleLabel(this.attachAngle)}. `
-      + '휠을 굴려 방향을 정하고 선체 안을 클릭하세요 (다시 누르면 뗍니다).';
+    const kind = ITEM_CATALOG[this.placing].kind;
+    const what = kind === 'sail' ? '돛이 향한 쪽' : (kind === 'impulse' ? '포신 방향' : '미는 방향');
+    const how = this.placing === 'cannon'
+      ? '방향을 고른 뒤 선체 안에 붙이세요. 항해 중에는 배 자체를 돌려 조준합니다.'
+      : '휠을 굴려 방향을 정하고 선체 안을 클릭하세요 (다시 누르면 뗍니다).';
+    return `${name} — ${what}: ${angleLabel(this.attachAngle)}. ${how}`;
   }
 
   togglePlacing(type) {
@@ -325,12 +375,17 @@ class DrawScreen {
     this.capture.enabled = !this.placing;
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.setStatus(this.placingStatus(), 'ok');
     this.render();
   }
 
   /**
    * 휠로 부착 방향을 돌린다 — **화면에서 시계방향**이 아래로 굴리는 쪽이다.
+   *
+   * 대포는 버튼 피커가 따로 있지만 휠도 그대로 듣는다 (같은 `attachAngle` 이라 공짜다).
+   * 다만 버튼이 4방향이라 휠로 45° 사이 값을 만들면 어느 버튼도 선택 표시가 안 붙는데,
+   * 그건 정확한 상태 표시다 — 지금 방향은 안내 문구가 늘 글자로 말한다.
    *
    * ⚠ 물리는 Y-up, 캔버스는 Y-down 이라 **화면 시계방향 = 물리각 감소**다
    *   (`metricToPx` 가 y 를 뒤집는다). 부호를 뒤집으면 눈에 보이는 회전과 실제 추력
@@ -341,6 +396,7 @@ class DrawScreen {
     e.preventDefault();   // 페이지가 같이 스크롤되면 그리는 손이 화면을 잃는다
     const dir = e.deltaY > 0 ? -1 : 1;
     this.attachAngle = (this.attachAngle + dir * ANGLE_STEP) % (Math.PI * 2);
+    this.buildDirectionPicker();
     this.setStatus(this.placingStatus(), 'ok');
     this.render();
   }
@@ -381,17 +437,34 @@ class DrawScreen {
       this.setStatus('선체 안쪽에 붙여야 해요.', 'bad');
       return;
     }
-    attachItem(this.hull, this.placing, {
-      x: local.x, y: local.y,
-      angle: this.attachAngle,
-      // ★ 트리거는 **비어 있는 것을 하나 골라** 준다 (하니스와 같은 `nextBind`).
-      //   예전엔 bind 를 안 넘겨 카탈로그 기본값으로 떨어졌는데, 그러면 부스터를 둘 달면
-      //   **둘 다 A** 가 되어 한 키에 같이 켜졌다 — 좌우로 나눠 번갈아 누르는 슬라럼이
-      //   아예 불가능했다. 빈 키가 A·S·D·F·G·H 여섯이나 있는데 안 쓰이고 있었다.
-      // ⚠ `bind: null` 인 아이템(돛)은 트리거가 없는 것이 사양이므로 배정하지 않는다.
-      bind: ITEM_CATALOG[this.placing].bind === null ? null : nextBind(this.hull.items),
+    const type = this.placing;
+    /**
+     * 트리거 키를 **풀에서** 새로 받을 아이템인가.
+     *
+     * ★ 판별을 데이터로 한다 — 카탈로그의 기본 bind 가 `BIND_POOL` 안에 있으면 그 아이템은
+     *   "아무 빈 키나 하나" 쓰는 종류다 (부스터 A · 대포 F). 타입 이름을 박아 두면
+     *   카탈로그가 늘 때마다 여기를 고쳐야 한다.
+     * ⚠ 키(`KeyQ/KeyE`)·닻(`Space`)은 풀 밖이라 제외된다 — 이게 중요하다. 풀 바인딩을
+     *   주면 `devices.js` 가 `held.KeyQ`/`held.KeyE` 를 직접 읽는 키가 엉뚱한 글자를
+     *   받아 영영 안 듣는다. 돛(null)도 트리거가 없는 것이 사양이다.
+     * ★ 풀에서 고르는 이유: 예전엔 bind 를 안 넘겨 카탈로그 기본값으로 떨어졌고, 그래서
+     *   부스터를 둘 달면 **둘 다 A** 였다 — 좌우로 나눠 번갈아 누르는 슬라럼이 불가능했다.
+     */
+    const pooled = BIND_POOL.includes(ITEM_CATALOG[type].bind);
+    const item = attachItem(this.hull, type, {
+      x: local.x,
+      y: local.y,
+      // 방향을 안 읽는 아이템(키·밸러스트)에 각을 넘기면 조용히 무시되지만, 0 으로 못 박아
+      // 두면 나중에 그 아이템이 angle 을 읽게 됐을 때 여기가 원인이 된다.
+      angle: this.placingUsesAngle() ? this.attachAngle : 0,
+      bind: pooled ? nextBind(this.hull.items) : undefined,
     });
-    this.setStatus(this.placingStatus(), 'ok');
+    this.setStatus(
+      item?.bind
+        ? `${item.name} 장착 — ${bindLabel(item.bind)} 키로 사용합니다.`
+        : `${item?.name ?? ITEM_CATALOG[type].name}를 장착했습니다.`,
+      'ok',
+    );
     this.render();
   }
 
@@ -440,6 +513,7 @@ class DrawScreen {
     this.design = null;
     this.hull = { items: [] };
     this.placing = null;
+    this.attachAngle = 0;
     this.template = null;
     this.liveRawPoints = null;
     this.capture.clear();
@@ -452,6 +526,7 @@ class DrawScreen {
     this.setStatus('선체를 그려 주인공을 감싸세요.');
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.buildBlueprintPanel();
     this.syncFinishButton();
     this.render();
@@ -477,6 +552,7 @@ class DrawScreen {
     };
     this.buildDeviceList();
     this.buildItemList();
+    this.buildDirectionPicker();
     this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
     this.tutorial.complete();
@@ -553,15 +629,19 @@ class DrawScreen {
   }
 
   /**
-   * 부착 아이템 — 미리보기일 때는 정확한 부착점을 점선 고리로 함께 표시한다.
+   * 부착 아이템 — 미리보기일 때는 정확한 부착점과 고정 방향을 함께 표시한다.
    *
-   * ★ `angle` 은 **선체 로컬 물리각**(Y-up, 반시계 +)이고, 화면 회전으로는 노 한 쌍과
-   *   **같은 경로**로 바꾼다: 방향을 화면 픽셀 벡터로 만든 뒤 `markerAngleToward` 에 넘긴다.
-   *   그래야 선체가 어떤 각도로 놓여 있어도(`design.angle`) 마커가 따라온다 — 노가 좌우
-   *   고정값을 안 쓰는 것과 같은 이유이고, 변환을 두 벌 만들면 반드시 한쪽이 틀어진다.
+   * ★ `angle` 은 **선체 로컬 물리각**(Y-up, 반시계 +)이다. 화면 회전으로 바꾸는 경로가
+   *   둘인데 **둘 다 맞다** — 스프라이트의 기본 방향이 다르기 때문이다:
+   *     대포 그리드는 +X(오른쪽)를 보고 있어 `screenAngle` 을 그대로 준다.
+   *     그 밖(부스터·돛)은 노와 같이 위를 보고 있어 `markerAngleToward` 를 거친다.
+   *   어느 쪽이든 `localToPx` 를 통과한 벡터에서 뽑으므로 선체가 어떤 각도로 놓여 있어도
+   *   (`design.angle`) 따라온다 — 좌우 고정값을 쓰면 여기서 어긋난다.
    */
   renderItemMarker(ctx, type, local, alpha = 1, ok = null, angle = 0) {
     const p = this.localToPx(local);
+    const tip = this.localToPx({ x: local.x + Math.cos(angle), y: local.y + Math.sin(angle) });
+    const screenAngle = Math.atan2(tip.y - p.y, tip.x - p.x);
     ctx.save();
     ctx.globalAlpha = alpha;
     if (ok !== null) {
@@ -573,13 +653,20 @@ class DrawScreen {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (type === 'rudder') {
+    if (type === 'cannon') {
+      ctx.strokeStyle = '#2a1f14';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + Math.cos(screenAngle) * 30, p.y + Math.sin(screenAngle) * 30);
+      ctx.stroke();
+      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL, screenAngle);
+    } else if (type === 'rudder') {
       drawRudderMarker(ctx, p.x, p.y, RUDDER_MARKER_PIXEL);
     } else if (ANGLE_KINDS.has(ITEM_CATALOG[type]?.kind)) {
-      // 월드 물리각 → 화면 픽셀 벡터 (metricToPx 가 y 를 뒤집는다) → 마커 회전각.
-      const world = (this.design?.angle ?? 0) + angle;
-      const marker = markerAngleToward(Math.cos(world), -Math.sin(world));
-      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL, marker);
+      // 부스터·돛 — 그리드가 위를 보고 있어 `markerAngleToward` 를 거친다 (노와 같은 경로).
+      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL,
+        markerAngleToward(tip.x - p.x, tip.y - p.y));
     } else {
       drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);
     }

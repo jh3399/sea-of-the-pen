@@ -44,6 +44,29 @@ export const SFX = {
     noiseHit(ctx, dest, 62, t, 0.18, 0.15);
   },
 
+  /**
+   * 빔 충전 — 낮은 데서 높이 치솟는 스윕. **경고선이 켜지는 순간 한 번만** 부른다.
+   * 프레임마다 부르면 스윕이 겹쳐 쌓여 화이트노이즈가 된다.
+   */
+  charge(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'sawtooth', 180, 1600, t, 0.9, 0.16);
+  },
+
+  /** 빨아들이기 — 높은 데서 낮게 꺼지는 스윕 + 저역 럼블. charge 의 정확한 반대 방향이다. */
+  suck(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'triangle', 700, 90, t, 1.2, 0.22);
+    noiseHit(ctx, dest, 46, t, 1.0, 0.14, 0.2);
+  },
+
+  /** 포효 — 페이즈가 넘어갈 때. 아주 낮게 떨어지는 스윕 + 거친 노이즈. */
+  roar(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'sawtooth', 120, 58, t, 0.8, 0.3);
+    noiseHit(ctx, dest, 52, t, 0.5, 0.22, 0.06);
+  },
+
   /** 전투 승리 징글 — 장조 아르페지오 상행 */
   win(ctx, dest) {
     const t = ctx.currentTime;

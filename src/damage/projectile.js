@@ -36,6 +36,10 @@ export function spawnProjectile(world, req) {
   // 계약을 코드로 남겨 둔다 — 나중에 post-solve 안에서 부르고 싶어지는 순간이 온다.
   if (world.isLocked()) return null;
   if (!(radius > 0) || !(mass > 0)) return null;
+  // ⚠ `bornAt` 이 없으면 `expiresAt` 이 NaN 이 되어 **수명 컬링이 영영 안 걸리고**(`now >= NaN`
+  //   은 항상 false) `contact.js` 의 무장 지연도 그냥 통과한다. 조용히 새는 대신 여기서 거절해
+  //   "시각을 안 넘긴 호출자"가 첫 발에서 드러나게 한다.
+  if (!Number.isFinite(bornAt) || !Number.isFinite(lifetime)) return null;
 
   const material = MATERIALS[req.material] ?? MATERIALS.iron;
 

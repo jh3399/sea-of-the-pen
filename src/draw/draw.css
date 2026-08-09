@@ -271,6 +271,42 @@ html, body {
 
 .item-row .icon svg, .material-row .icon svg { width: 100%; height: 100%; }
 
+.direction-picker {
+  margin: 0 8px 8px;
+  padding: 8px;
+  background: rgba(255, 248, 226, 0.56);
+  border: 2px solid rgba(90, 65, 30, 0.35);
+}
+
+.direction-picker.hidden { display: none; }
+
+.direction-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  color: var(--wood-dark);
+}
+
+.direction-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.direction-btn {
+  min-height: 30px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--wood-dark);
+  background: rgba(255, 255, 255, 0.42);
+  border: 2px solid rgba(90, 65, 30, 0.4);
+  cursor: pointer;
+}
+
+.direction-btn:hover { background: rgba(90, 65, 30, 0.12); }
+.direction-btn.selected { background: rgba(47, 81, 120, 0.2); border-color: var(--banner); }
+
 .material-row .swatch {
   width: 30px;
   height: 30px;
