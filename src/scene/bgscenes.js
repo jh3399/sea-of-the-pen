@@ -775,6 +775,40 @@ function sickroom(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.2, 8);
 }
 
+// ---------------- mio_drawing — S-01 미오가 그린 배 (책상 위 종이) ----------------
+// 실제로 화면에 뜨는 것은 assets/scene/mio-drawing.png 다 (bgphotos.js). 이 함수는
+// **그림이 못 뜰 때의 받침**이자, 모든 씬 키가 SCENES 에 있어야 한다는 규약을 지키는 자리다.
+// 그래서 크레용 질감까지 흉내 내지 않고 구도만 맞춘다 — 나무 위에 기울어진 밝은 종이.
+function mio_drawing(ctx, { w, h, sec }) {
+  fill(ctx, 0, 0, w, h, '#4a3c2f');
+  for (let y = 0; y < h; y += 14) {
+    fill(ctx, 0, y, w, 1, '#372c22');
+    fill(ctx, 0, y + 1, w, 1, '#57473a');
+  }
+  const px = R(w * 0.17), py = R(h * 0.12);
+  const pw = R(w * 0.66), ph = R(h * 0.74);
+  ctx.globalAlpha = 0.3;
+  fill(ctx, px + 6, py + 8, pw, ph, '#241b14');      // 종이 그림자
+  ctx.globalAlpha = 1;
+  // 살짝 기울어 보이게 행마다 좌우로 1px 씩 민다 (실제 그림이 기울어 있다)
+  for (let y = 0; y < ph; y++) {
+    const skew = R((y / ph - 0.5) * 10);
+    fill(ctx, px + skew, py + y, pw, 1, y < 3 || y > ph - 4 ? '#d6cbb4' : '#e6dcc6');
+  }
+  // 배 한 척 — 붉은 선체, 노란 돛, 파란 물결
+  const bx = R(px + pw * 0.5), by = R(py + ph * 0.66);
+  fill(ctx, bx - R(pw * 0.26), by, R(pw * 0.52), R(ph * 0.14), '#c1584f');
+  fill(ctx, bx - 2, by - R(ph * 0.34), 3, R(ph * 0.34), '#7a5636');
+  for (let i = 0; i < R(ph * 0.26); i++) fill(ctx, bx - 4 - i * 0.7, by - R(ph * 0.3) + i, i * 0.7 + 2, 1, '#e0a940');
+  for (let i = 0; i < 3; i++) {
+    const wy = by + R(ph * 0.16) + i * 4;
+    for (let x = 0; x < pw * 0.6; x += 2) {
+      fill(ctx, px + pw * 0.2 + x, wy + Math.round(Math.sin(x * 0.15 + i) * 2), 2, 1, '#4f7fa8');
+    }
+  }
+  vignette(ctx, w, h, 0.22, 8);
+}
+
 // ---------------- world_end — 최종전 (세계의 끝) ----------------
 
 function world_end(ctx, { w, h, sec }) {
@@ -882,6 +916,7 @@ export const SCENES = {
   shipyard_grave,
   workshop,
   sickroom,
+  mio_drawing,
   world_end,
   golden_isle,
 };

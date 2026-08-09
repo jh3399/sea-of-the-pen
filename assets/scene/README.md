@@ -9,6 +9,8 @@
 |---|---|---|
 | `source/sickroom-1672.png` | 원본 1672×941 · 30751색 · 1290KB | **ChatGPT 생성**, 2026-08-09 |
 | `sickroom.png` | 배포용 1672×941 · 256색 · 440KB | 원본을 `scripts/bg-snap.mjs` 로 가공 |
+| `source/mio-drawing-1448.png` | 원본 1448×1086 (4:3) · 1967KB | **ChatGPT 생성**, 2026-08-09 |
+| `mio-drawing.png` | 배포용 1930×1085 · 256색 · 860KB | 위를 16:9 로 덧대고 가공 |
 
 > ⚠ 생성형 AI 산출물이다. 게임 **안**에는 AI 가 없고(설계 원칙) AI 는 개발 과정에만
 > 쓴다는 것과 별개로, 이 그림은 AI 가 만들었으므로 기술 문서에 그렇게 적어야 한다.
@@ -18,6 +20,19 @@
 ```bash
 node scripts/bg-snap.mjs assets/scene/source/sickroom-1672.png --grid 1672 --colors 256 --out assets/scene/sickroom.png
 ```
+
+```bash
+node scripts/bg-snap.mjs assets/scene/source/mio-drawing-1448.png --aspect 16:9 --grid 1930 --colors 256 --out assets/scene/mio-drawing.png
+```
+
+### ⚠ 비율이 다르면 --aspect 로 덧댄다 (자르지 말고)
+
+`mio-drawing` 원본은 4:3 이라 16:9 화면에서 `object-fit: cover` 가 위아래를 잘라
+**종이 윗변 9px 이 날아갔다**. `--aspect 16:9` 는 가장자리 픽셀을 늘려 비율을 맞춘다.
+
+이 그림들의 배경이 **가로 판자벽**이라 좌우로 늘리는 것은 이음매가 없다 — 각 행의 끝 색을
+옆으로 늘리면 판자선이 그대로 이어진다. 반대로 위아래로 덧대야 할 때는 판자선이 번지므로
+결과를 반드시 눈으로 볼 것.
 
 ### ⚠ 축소하지 않는다 — 한 번 틀렸던 자리다
 

@@ -25,11 +25,46 @@ if (!srcPath || srcPath.startsWith('--')) {
   console.error('용법: node scripts/bg-snap.mjs <원본.png> --grid <가로 도트 수> --out <경로.png>');
   console.error('      --probe        격자 후보를 훑어 도트 크기가 정수에 가까운 것을 찾는다');
   console.error('      --colors N     팔레트를 N 색으로 (원본이 이미 1px 격자면 --grid 는 원본 폭 그대로 두고 이것만 쓴다)');
+  console.error('      --aspect 16:9  가장자리를 늘려 비율을 맞춘다 (자르지 않는다). --grid 보다 먼저 적용된다');
   console.error('      --preview N    니어리스트 N배 확대본도 같이 낸다 (.preview.png)');
   process.exit(1);
 }
 
-const src = decodePng(fs.readFileSync(srcPath));
+let src = decodePng(fs.readFileSync(srcPath));
+
+// --aspect W:H — 가장자리를 늘려 비율을 맞춘다. **자르지 않고 덧댄다.**
+//
+// 화면은 16:9 인데 그림이 4:3 으로 오면 object-fit: cover 가 위아래를 잘라 먹는다
+// (실측: scene02 는 종이 윗변 9px 이 잘렸다). 미리 덧대 두면 잘릴 것이 없다.
+//
+// 가장자리 픽셀을 그대로 늘리는 이유: 이 그림들의 배경은 **가로 판자벽**이라 각 행의
+// 끝 색을 옆으로 늘리면 판자선이 그대로 이어진다. 세로로 덧대야 할 때는 반대로
+// 위아래 끝 행을 늘리는데, 그때는 판자선이 번지므로 결과를 눈으로 볼 것.
+const aspect = flag('aspect', null);
+if (aspect) {
+  const [aw, ah] = aspect.split(':').map(Number);
+  const want = aw / ah;
+  const have = src.w / src.h;
+  let nw = src.w, nh = src.h;
+  if (have < want) nw = Math.round(src.h * want);       // 가로가 모자라다 → 좌우로
+  else if (have > want) nh = Math.round(src.w / want);  // 세로가 모자라다 → 위아래로
+  if (nw !== src.w || nh !== src.h) {
+    const ox = Math.floor((nw - src.w) / 2);
+    const oy = Math.floor((nh - src.h) / 2);
+    const buf = Buffer.alloc(nw * nh * 4);
+    for (let y = 0; y < nh; y++) {
+      const sy = Math.min(src.h - 1, Math.max(0, y - oy));
+      for (let x = 0; x < nw; x++) {
+        const sx = Math.min(src.w - 1, Math.max(0, x - ox));
+        const s = (sy * src.w + sx) * 4, d = (y * nw + x) * 4;
+        buf[d] = src.rgba[s]; buf[d + 1] = src.rgba[s + 1];
+        buf[d + 2] = src.rgba[s + 2]; buf[d + 3] = 255;
+      }
+    }
+    console.log(`비율 ${aspect}: ${src.w}×${src.h} → ${nw}×${nh} (가장자리 덧댐)`);
+    src = { w: nw, h: nh, rgba: buf };
+  }
+}
 
 // --probe: 어느 격자에 그려졌는지 모를 때. 도트 크기의 소수부가 0 에 가까울수록 좋다.
 if (argv.includes('--probe')) {

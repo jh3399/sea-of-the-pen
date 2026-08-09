@@ -12,7 +12,9 @@
 // 문자열 경로로 적으면 dev 에서만 되고 배포에서 404 난다 (base 가 /sea-of-the-pen/).
 
 import sickroom from '../../assets/scene/sickroom.png';
+import mioDrawing from '../../assets/scene/mio-drawing.png';
 
 export const BG_PHOTOS = {
   sickroom,
+  mio_drawing: mioDrawing,
 };

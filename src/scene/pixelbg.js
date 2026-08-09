@@ -33,11 +33,11 @@ function syncPhoto(key) {
   if (src) {
     if (el.getAttribute('src') !== src) el.setAttribute('src', src);
     el.dataset.on = '1';
-    // 움직임(창밖 바다·숨)은 그림이 있는 씬에만 있다. 정의가 없으면 startSceneFx 가 끄기만 한다.
-    if (fx) { fx.dataset.on = '1'; startSceneFx(fx, key, src); }
+    // 레이어를 켤지 말지는 scenefx 가 정한다 — 움직임이 정의된 씬인지 아는 쪽이 거기다.
+    startSceneFx(fx, key, src);
   } else {
     el.dataset.on = '0';
-    if (fx) { fx.dataset.on = '0'; stopSceneFx(); }
+    stopSceneFx();
   }
 }
 

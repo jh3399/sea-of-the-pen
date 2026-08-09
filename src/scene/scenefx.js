@@ -80,7 +80,10 @@ let gen = 0;
 function stop() {
   if (raf) cancelAnimationFrame(raf);
   raf = 0;
-  if (state) state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+  if (state) {
+    state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+    state.canvas.dataset.on = '0';
+  }
   state = null;
 }
 
@@ -94,6 +97,9 @@ export function startSceneFx(canvas, key, src) {
   stop();
   const myGen = ++gen;
   const cfg = FX[key];
+  // 움직임이 정의된 씬에만 레이어를 켠다. 그림만 있고 움직임이 없는 씬(mio_drawing)에서
+  // 켜 두면 빈 캔버스가 계속 합성되고, "왜 안 움직이지"를 여기서 찾게 된다.
+  if (canvas) canvas.dataset.on = cfg && src ? '1' : '0';
   if (!canvas || !cfg || !src) return;
 
   const img = new Image();
