@@ -30,7 +30,13 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '(괜찮다는 말은 사흘째고, 목소리는 어제보다 작다.)' },
   ],
 
-  // ── [S-02] 썰물병과 불가사리 ─────────────────────────────────
+  // ── [S-02] 불치병과 불가사리 ─────────────────────────────────
+  //
+  // ★ 포포의 말투는 **전부 60대 어르신**이다. 종결이 ~구나 · ~지 · ~다더구나 · ~다만 ·
+  //   ~야 로 끝나고, 단정하지 않고 미룬다. 전설을 자기 말로 보증하지 않는 것이 그 나이의
+  //   정직함이다. 한 줄이라도 젊은 말투가 섞이면 인물이 흔들린다.
+  // ★ 병에는 **이름을 주지 않는다.** 포포도 모르는 병이라야 "고칠 방도가 없다"가 무겁고,
+  //   그래야 뒤의 "어떤 병도 낫는다더라"가 유일한 길이 된다.
   // 이 게임의 전제가 통째로 여기 있다. 병에 이름이 붙고, 목적이 생기고, 갈 곳 셋이
   // 정해진다. 배경이 여섯 번 바뀌는 이유도 그것이다 — 말로만 지나가면 지명 나열이지만
   // 그림으로 지나가면 예고편이다. 심사위원이 컷신을 끝까지 볼지 여기서 갈린다.
@@ -38,33 +44,36 @@ export const SCRIPT = {
   // 배경은 S-01 의 sickroom 을 그대로 이어받는다. 포포는 미오를 보러 온 것이고,
   // 진단을 그 방에서 듣는 편이 밖에서 듣는 것보다 무겁다.
   THE_ONLY_CURE: [
-    { speaker: '포포', sprite: 'examiner', text: '루냐. 앉아라. 서서 들을 얘기가 아니다.' },
-    { speaker: '포포', sprite: 'examiner', text: '약재는 진작에 떨어졌다. 있었어도 소용없었을 게야.' },
+    { speaker: '포포', sprite: 'examiner', text: '루냐. 앉아라. 서서 들을 얘기가 아니야.' },
+    { speaker: '포포', sprite: 'examiner', text: '마을 약재는 다 써 봤다. 드는 게 하나도 없구나.' },
     { speaker: '루', sprite: 'ru', text: '무슨 병입니까.' },
-    { speaker: '포포', sprite: 'examiner', text: '썰물병이라고 한다. 물 빠지듯 마르는 병인데, 이 바다 것으로는 안 낫는다.' },
-    { speaker: '루', sprite: 'ru', text: '낫는 방법이 있긴 합니까.' },
-    { speaker: '포포', sprite: 'examiner', text: '…있다고들 하지. 믿을지 말지는 네가 정해라.' },
+    { speaker: '포포', sprite: 'examiner', text: '나도 모르겠구나. 여태 못 보던 병이야.' },
+    { speaker: '포포', sprite: 'examiner', text: '고칠 방도가 없다. 그런 것을 불치병이라 하지.' },
+    // 루는 여기서 말을 잃는다. 물어볼 것이 없어서가 아니라 물어봐야 소용이 없어서다.
+    { speaker: '루', sprite: 'ru', text: '…' },
+    { speaker: '포포', sprite: 'examiner', text: '…아주 없는 건 아니다만.' },
+    { speaker: '포포', sprite: 'examiner', text: '믿을지 말지는 네가 정해라.' },
 
     // 전설. 이름 풀이(불가살이 = 죽일 수 없는 것)가 이 괴물의 성격을 한 줄에 담는다.
     { speaker: '포포', sprite: 'examiner', bg: 'fog_black', text: '바다 밑에 불가사리라는 게 산다더구나.' },
-    { speaker: '포포', sprite: 'examiner', text: '불가살이. 죽일 수 없는 것이라는 뜻이야.' },
+    { speaker: '포포', sprite: 'examiner', text: '불가살이(不可殺伊). 죽일 수 없는 것이라는 뜻이야.' },
     { speaker: '포포', sprite: 'examiner', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
-    { speaker: '포포', sprite: 'examiner', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 한다.' },
+    { speaker: '포포', sprite: 'examiner', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 하는구나.' },
     { speaker: '포포', sprite: 'examiner', text: '그거 한 모금이면 어떤 병도 낫는다더라.' },
     { speaker: '루', sprite: 'ru', text: '그 괴물이 어디 있는지 아시나요.' },
 
     // 바다 셋 = 실제 3맵. 각 줄이 그 맵에서 플레이어를 죽이는 것을 하나씩 말한다.
-    { speaker: '포포', sprite: 'examiner', text: '바다를 셋 건너야 한다.' },
+    { speaker: '포포', sprite: 'examiner', text: '바다를 셋 건너야 하지.' },
     { speaker: '포포', sprite: 'examiner', bg: 'sea_day', text: '첫째는 순풍 해협. 바람은 등을 밀어주는데 물속이 온통 바위야.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 바람은 정면으로 오고, 해적이 붙는다.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 물 대신 용암이 흐르는 데다.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'night_storm', text: '둘째는 역풍 협곡. 바람은 정면으로 오고, 해적이 붙는다더구나.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'volcano', text: '셋째는 불의 바다. 물 대신 용암이 흐르는 데야.' },
     { speaker: '포포', sprite: 'examiner', bg: 'world_end', text: '그 셋을 다 건너면 삼킨 바다가 나온다. 불가사리는 거기 있다더구나.' },
 
     // 루는 기한을 묻지 않는다. 다 듣고 한 마디 하는 것이 그의 말수에 맞고,
     // 포포의 핀잔이 곧바로 경고로 이어지는 것이 시한보다 무섭다.
     { speaker: '루', sprite: 'ru', text: '알겠습니다.' },
     { speaker: '포포', sprite: 'examiner', text: '알긴 뭘 알아.' },
-    { speaker: '포포', sprite: 'examiner', bg: 'shipyard_grave', text: '가겠다고 나선 사람은 여럿 있었다.' },
+    { speaker: '포포', sprite: 'examiner', bg: 'shipyard_grave', text: '가겠다고 나선 사람은 여럿 있었지.' },
     { speaker: '포포', sprite: 'examiner', text: '돌아온 사람이 없어서 하는 말이야.' },
   ],
 
