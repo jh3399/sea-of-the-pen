@@ -136,7 +136,9 @@ console.log('\n\x1b[36m▌스파이크 ③ — 이방성 저항 안정성\x1b[0m
 function spawn(key, options = {}) {
   const world = createWorld();
   const hull = hulls[key];
-  const items = options.devices ? defaultDevices(hull.outline) : [];
+  const items = options.devices
+    ? defaultDevices(hull.outline, { oarX: options.oarX ?? null })
+    : [];
   if (options.rudder) items.push(rudderItem(hull.outline));
   // §4.1 부착 아이템 — 기본 장치와 **같은 배열, 같은 형식**으로 얹힌다.
   for (const spec of options.attach ?? []) {
@@ -238,6 +240,7 @@ function drive(key, input, setup = {}) {
   const seconds = setup.seconds ?? 3;
   const { world, body } = spawn(key, {
     devices: setup.devices ?? true, rudder: setup.rudder, attach: setup.attach,
+    oarX: setup.oarX,
   });
   if (setup.v) body.setLinearVelocity(new Vec2(setup.v.x, setup.v.y));
   if (setup.w) body.setAngularVelocity(setup.w);
@@ -578,6 +581,94 @@ const halfBeamOf = (key) => sideAnchors(hulls[key].outline, oarX(key)).halfBeam;
 check('넓은 배가 한쪽 젓기로 더 잘 돈다 (팔길이 = 노 반폭)',
   halfBeamOf('round') > halfBeamOf('sloop'),
   `둥근 배 반폭 ${halfBeamOf('round').toFixed(2)} > 슬루프 ${halfBeamOf('sloop').toFixed(2)} m`);
+
+// ── 플레이어가 정하는 노 위치 (그리기 화면 → oarX) ────────────────────────────
+//
+// 정하는 것은 **세로 위치 x 하나**다. 좌우로 벌리는 일은 sideAnchors 가, 중심선은
+// sternAnchor 반직선이 맡는다 — 조향 코드는 여전히 0줄이고, x 는 그 두 수치를 고르는
+// 손잡이일 뿐이다. 아래가 그 손잡이가 실제로 무엇을 바꾸는지 (그리고 무엇을 안 바꾸는지) 다.
+console.log('\n  \x1b[36m노 위치 지정 (oarX)\x1b[0m');
+
+// ① 인자를 주지 않으면 D1~D3 의 자동 배치와 **비트 단위로 같아야** 한다. 그리기 화면이
+//    생겨도 하니스·폴백 설계·기존 벤치 89건이 재는 것이 달라지면 안 된다.
+const autoDevices = defaultDevices(hulls.sloop.outline);
+const autoAgain = defaultDevices(hulls.sloop.outline, {});
+check('oarX 를 주지 않으면 자동 배치와 비트 일치 (기존 경로 회귀)',
+  autoDevices.every((d, i) => d.x === autoAgain[i].x && d.y === autoAgain[i].y),
+  `장치 ${autoDevices.length}개 좌표 동일`);
+
+// ② 플레이어가 찍은 x 에 두 노가 놓이고, 좌우는 그 자리의 실제 선폭에서 나온다.
+const PICKED_X = -1.2;
+const picked = defaultDevices(hulls.sloop.outline, { oarX: PICKED_X })
+  .filter((d) => d.type === 'oar');
+const pickedSpan = sideAnchors(hulls.sloop.outline, PICKED_X,
+  sternAnchor(hulls.sloop.outline).y * (PICKED_X / sternAnchor(hulls.sloop.outline).x));
+check('찍은 x 에 좌우 노가 놓인다 (플레이어는 앞뒤만 정한다)',
+  picked.length === 2 && picked.every((d) => Math.abs(d.x - PICKED_X) < 1e-12),
+  `x = ${picked.map((d) => d.x.toFixed(3)).join(' · ')} m`);
+check('좌우 벌림은 그 자리의 실제 선폭에서 나온다 (손으로 찍는 값이 아니다)',
+  Math.abs(Math.abs(picked[0].y - picked[1].y) - pickedSpan.halfBeam * 2) < 1e-12,
+  `노 간격 ${Math.abs(picked[0].y - picked[1].y).toFixed(3)} m = 반폭 ×2`);
+
+// ③ ★ 대칭 선체에서는 x 를 어디에 찍든 **가짜 토크가 생기면 안 된다.** 중심선을 sideAnchors
+//    의 국소 중심으로 되돌리면 여기서 걸린다 (D1·D2 에서 두 번 잡힌 버그의 세 번째 재발 지점).
+const roundBB = bounds(hulls.round.outline);
+const worstOffset = [0.2, 0.4, 0.6, 0.8].reduce((worst, r) => {
+  const x = roundBB.minX + roundBB.width * r;
+  const pair = defaultDevices(hulls.round.outline, { oarX: x }).filter((d) => d.type === 'oar');
+  return Math.max(worst, Math.abs(pair[0].y + pair[1].y));
+}, 0);
+check('★ 대칭 선체는 어느 x 에 찍어도 두 노의 y 합이 0 이다 (가짜 선회 없음)',
+  worstOffset < 0.01,
+  `4자리 중 최악 어긋남 ${(worstOffset * 100).toFixed(2)} cm`);
+
+// ④ §7.5 — 두 부착점이 선체 안이어야 한다. 그리기 화면이 canAttachAt 으로 막는 그 조건을
+//    여기서도 확인한다 (밖에 걸친 노는 첫 파손에 무조건 사라진다).
+const insideAll = [0.25, 0.5, 0.75].every((r) => {
+  const bb = bounds(hulls.sloop.outline);
+  const pair = defaultDevices(hulls.sloop.outline, { oarX: bb.minX + bb.width * r })
+    .filter((d) => d.type === 'oar');
+  return pair.every((d) => canAttachAt(hulls.sloop.outline, [], { x: d.x, y: d.y }));
+});
+check('선체 중앙부에 찍은 노는 두 짝 모두 선체 안이다 (§7.5 소속 판정)',
+  insideAll, '앞·중앙·뒤 3자리 모두 통과');
+
+// ⑤ 그래서 x 는 무엇을 바꾸는가 — **반폭뿐이다.** 노 힘은 fx += f · torque += −y·f 라
+//    x 항이 아예 없다. 넓은 자리에 찍으면 선회가 커지고, 직진 속도는 그대로다.
+const beamAt = (r) => {
+  const bb = bounds(hulls.sloop.outline);
+  const x = bb.minX + bb.width * r;
+  return { x, half: sideAnchors(hulls.sloop.outline, x).halfBeam };
+};
+// 슬루프의 최대 선폭은 뱃머리 1/4 지점이고 선미·선수로 갈수록 좁아진다 (실측 프로파일).
+const wideSpot = beamAt(0.25);
+const narrowSpot = beamAt(0.8);
+// 입력은 반드시 STROKE_KEYMAP 을 거친다 (위 ⚠ 와 같은 이유).
+const wideOars = drive('sloop', holdKeys('ArrowLeft'), { seconds: 6, oarX: wideSpot.x });
+const narrowOars = drive('sloop', holdKeys('ArrowLeft'), { seconds: 6, oarX: narrowSpot.x });
+// 직진(↑)은 토크 없이 추력만 — x 를 옮겨도 달라지지 않아야 한다 (힘 식에 x 항이 없다).
+const wideStraight = drive('sloop', holdKeys('ArrowUp'), { seconds: 6, oarX: wideSpot.x });
+const narrowStraight = drive('sloop', holdKeys('ArrowUp'), { seconds: 6, oarX: narrowSpot.x });
+console.log(`  넓은 자리(반폭 ${wideSpot.half.toFixed(2)} m) → ← 6초 ${wideOars.turned.toFixed(1)}° · ` +
+  `↑ 6초 ${wideStraight.speed.toFixed(3)} m/s`);
+console.log(`  좁은 자리(반폭 ${narrowSpot.half.toFixed(2)} m) → ← 6초 ${narrowOars.turned.toFixed(1)}° · ` +
+  `↑ 6초 ${narrowStraight.speed.toFixed(3)} m/s`);
+check('넓은 자리에 찍을수록 잘 돈다 (플레이어의 x 선택이 조향으로 이어진다)',
+  wideOars.turned > narrowOars.turned * 1.5,
+  `${wideOars.turned.toFixed(1)}° > ${narrowOars.turned.toFixed(1)}° × 1.5`);
+// ⚠ **원칙 2 미해결 — 통과/미달로 재지 않고 경고로 남긴다.**
+//
+// 노 힘은 `fx += f` · `τ += −y·f` 라 **x 항이 아예 없다.** 그래서 넓은 자리에 찍으면 선회만
+// 얻고 직진 속도는 한 푼도 잃지 않는다 (아래 실측 차이는 비대칭 잔여 요잉이 만든 항력 차이
+// 뿐이다). 지금 상태에서는 "가장 넓은 곳"이 **항상 정답**이라 §5.2 원칙 2 를 만족하지 못한다.
+//
+// 이것을 check 로 고정하지 않는 이유: 지금의 결함을 불변식으로 박아 두면, 대가를 붙이는 날
+// 벤치가 그것을 회귀로 신고한다. 고쳐야 할 것은 코드지 이 수치가 아니다.
+const straightGap = Math.abs(wideStraight.speed - narrowStraight.speed);
+console.log(`  \x1b[33m⚠ 원칙 2 미해결\x1b[0m — 넓은 자리는 선회를 `
+  + `${(wideOars.turned / narrowOars.turned).toFixed(1)}배 얻고 직진 속도는 `
+  + `${(straightGap / wideStraight.speed * 100).toFixed(3)}% 만 잃는다 (사실상 대가 없음).`);
+console.log('    노 힘 식에 x 항이 없어 "가장 넓은 곳"이 항상 정답이다 — 약점을 붙일 자리다.');
 
 // ── 부착 아이템으로서의 키: 유속 비례 선회력, 정지 시 무효 (§5.1) ───────────────
 //

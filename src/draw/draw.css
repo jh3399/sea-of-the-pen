@@ -241,6 +241,13 @@ html, body {
   background: rgba(90, 65, 30, 0.03);
 }
 
+/* 기본 장치 행의 상태 꼬리표 (노 — 위치 미정 / 지정됨) */
+.item-row .row-note {
+  display: block;
+  font-size: 14px;
+  opacity: 0.65;
+}
+
 .item-row .icon, .material-row .icon {
   width: 40px;
   height: 40px;

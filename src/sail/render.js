@@ -4,7 +4,9 @@
 // 기존 픽셀 아이콘 헬퍼를 그대로 재사용한다.
 import { bounds, pointInPolygon } from '../geom/poly.js';
 import { MATERIALS } from '../hull/params.js';
-import { drawItemMarker, drawCrewSprite } from '../draw/icons.js';
+import {
+  drawItemMarker, drawCrewSprite, markerAngleToward, itemMarkerSize, OAR_PUSH,
+} from '../draw/icons.js';
 
 /** 선체 폴리곤을 몇 칸 그리드로 래스터화할 것인가 (긴 변 기준). */
 const HULL_PIXEL_COLS = 28;
@@ -16,6 +18,8 @@ const WATER_CELL = 1.6;
  *  여기는 월드 좌표라 선체 스케일에 맞는 작은 값을 쓴다. */
 const ITEM_PIXEL = 0.06;
 const CREW_PIXEL = 0.05;
+/** 노는 선체 밖으로 뻗는 장치라 다른 마커보다 크다 (22칸 × 0.09 = 약 2 m 짜리 노). */
+const OAR_PIXEL = 0.09;
 
 const WATER_BASE = '#1c4fae';
 const WATER_DEEP = 'rgba(6, 22, 64, 0.28)';
@@ -176,10 +180,25 @@ function drawUprightIcon(ctx, x, y, draw) {
   ctx.restore();
 }
 
+/**
+ * 노 — 유일하게 **방향과 바깥쪽이 있는** 마커다.
+ *
+ * 노깃이 현측 밖 물에 놓여야 "양쪽에서 젓는다"가 그림에서 읽힌다. 좌현은 로컬 +Y 가
+ * 바깥이고 우현은 −Y 라, 좌우 스프라이트를 따로 두지 않고 부호 하나로 가른다.
+ * drawUprightIcon 안은 Y 가 한 번 뒤집힌 프레임이므로 각도의 부호도 그에 맞춰 넘긴다.
+ */
+function drawOar(ctx, item) {
+  const outward = item.side === 'port' ? 1 : -1;
+  const push = itemMarkerSize('oar', OAR_PIXEL).h * OAR_PUSH;
+  drawUprightIcon(ctx, item.x, item.y + outward * push,
+    () => drawItemMarker(ctx, 'oar', 0, 0, OAR_PIXEL, markerAngleToward(0, -outward)));
+}
+
 /** 강체 하나(선체 로컬 좌표계 안에서) — 선체 + 부착 아이템 + 주인공. */
 export function drawHullBody(ctx, hull) {
   drawHullPixels(ctx, hull.outline, hull.params.material.key);
   for (const item of hull.items) {
+    if (item.type === 'oar' && item.side) { drawOar(ctx, item); continue; }
     drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, item.type, 0, 0, ITEM_PIXEL));
   }
   if (hull.crew) {
