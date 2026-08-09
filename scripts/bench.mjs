@@ -31,6 +31,7 @@ import {
 import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
+import { rateTravelTime } from '../src/game/scoring.js';
 import { DEMO_MAP, boundaryWalls } from '../src/sail/map.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
@@ -2507,6 +2508,27 @@ check('주인공 없는 선체도 파손 경로를 그대로 탄다 (crew 는 �
   splitResult.result.crewLost === false && splitResult.bodies.every(
     (bd) => bd.getUserData().hull.crew === null),
   `조각 ${splitResult.bodies.length}개 · crew null · crewLost false`);
+
+// 도착 결과는 그림을 채점하지 않고 맵 데이터의 시간 기준만 읽는다.
+const starScoring = DEMO_MAP.scoring;
+check('클리어 시간 3별 경계는 포함된다', rateTravelTime(60, starScoring) === 3,
+  `60.000초 → ${rateTravelTime(60, starScoring)}별`);
+check('3별 경계를 한 물리 스텝 넘으면 2별이다', rateTravelTime(60 + FIXED_DT, starScoring) === 2,
+  `${(60 + FIXED_DT).toFixed(3)}초 → ${rateTravelTime(60 + FIXED_DT, starScoring)}별`);
+check('클리어 시간 2별 경계는 포함된다', rateTravelTime(90, starScoring) === 2,
+  `90.000초 → ${rateTravelTime(90, starScoring)}별`);
+check('2별 경계를 한 물리 스텝 넘으면 1별이다', rateTravelTime(90 + FIXED_DT, starScoring) === 1,
+  `${(90 + FIXED_DT).toFixed(3)}초 → ${rateTravelTime(90 + FIXED_DT, starScoring)}별`);
+let malformedScoringRejected = false;
+let reversedScoringRejected = false;
+try { rateTravelTime(30, { threeStarMaxSeconds: NaN, twoStarMaxSeconds: 90 }); } catch (error) {
+  malformedScoringRejected = error instanceof RangeError;
+}
+try { rateTravelTime(30, { threeStarMaxSeconds: 90, twoStarMaxSeconds: 60 }); } catch (error) {
+  reversedScoringRejected = error instanceof RangeError;
+}
+check('잘못되거나 역전된 별 시간 기준은 거절한다', malformedScoringRejected && reversedScoringRejected,
+  `잘못된 값 ${malformedScoringRejected ? '거절' : '통과'} · 역전 ${reversedScoringRejected ? '거절' : '통과'}`);
 
 // ─────────────────────────────────────────────── D3 ⑤ 해역
 // D3 통과 질문 (b) "3맵 전부 클리어 가능한가" 의 반대편 — 클리어는 되어야 하지만 **옆으로

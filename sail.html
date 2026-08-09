@@ -27,7 +27,29 @@
       </div>
     </div>
 
-    <div class="hud-banner hidden" id="hud-banner">도착!</div>
+    <div class="clear-overlay hidden" id="clear-overlay" role="dialog" aria-modal="true" aria-labelledby="clear-title">
+      <div class="clear-panel">
+        <p class="clear-kicker">목표 도착</p>
+        <h1 id="clear-title">항해 완료!</h1>
+
+        <div class="clear-stars" id="clear-stars" aria-hidden="true">
+          <span>★</span><span>★</span><span>★</span>
+        </div>
+        <p class="clear-rating" id="clear-rating">별 --개</p>
+
+        <div class="clear-record">
+          <span>클리어 시간</span>
+          <strong id="clear-time">00:00.00</strong>
+        </div>
+
+        <div class="clear-actions">
+          <button class="clear-btn clear-btn-primary" id="btn-retry" type="button">다시하기</button>
+          <button class="clear-btn" id="btn-next" type="button" aria-describedby="next-stage-note" disabled>다음 스테이지</button>
+          <button class="clear-btn clear-btn-ghost" id="btn-clear-menu" type="button">메인 메뉴</button>
+        </div>
+        <p class="clear-note" id="next-stage-note">다음 스테이지 준비 중</p>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/src/sail/screen.js"></script>

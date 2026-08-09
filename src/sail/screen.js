@@ -22,6 +22,7 @@ import { strokeToHull, HULL_DEFAULTS } from '../hull/polygon.js';
 import { CORPUS } from '../hull/corpus.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
+import { rateTravelTime } from '../game/scoring.js';
 import { View } from '../render/view.js';
 import { drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
 import { DEMO_MAP, boundaryWalls } from './map.js';
@@ -62,6 +63,21 @@ function formatDistance(m) {
   return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${m.toFixed(0)} m`;
 }
 
+function formatClock(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  const mm = Math.floor(total / 60).toString().padStart(2, '0');
+  const ss = (total % 60).toString().padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+function formatClearTime(seconds) {
+  const total = Math.max(0, Math.floor(seconds * 100 + 1e-6));
+  const mm = Math.floor(total / 6000).toString().padStart(2, '0');
+  const ss = Math.floor((total % 6000) / 100).toString().padStart(2, '0');
+  const cs = (total % 100).toString().padStart(2, '0');
+  return `${mm}:${ss}.${cs}`;
+}
+
 class SailScreen {
   constructor() {
     this.canvas = document.getElementById('sea');
@@ -85,12 +101,15 @@ class SailScreen {
     this.keys = new Set();
     this.wake = [];
     this.cleared = false;
+    this.clearTime = null;
 
     this.stepper = new FixedStepper(this.world, {
       onPreStep: (dt) => {
+        // 여러 물리 스텝이 한 렌더 프레임에 몰려도 직전 스텝의 도착 시각을 놓치지 않는다.
+        this.checkGoal();
         this.stepIndex += 1;
         this.simTime = this.stepIndex * FIXED_DT;
-        this.applyControls(dt);
+        if (!this.cleared) this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
         applyFieldsToWorld(this.world, this.fields, dt);
         this.engine.tick(this.world, dt);
@@ -102,8 +121,22 @@ class SailScreen {
       clock: document.getElementById('hud-clock'),
       barFill: document.getElementById('hud-bar-fill'),
       distance: document.getElementById('hud-distance'),
-      banner: document.getElementById('hud-banner'),
     };
+    this.clearUi = {
+      overlay: document.getElementById('clear-overlay'),
+      stars: [...document.querySelectorAll('#clear-stars span')],
+      rating: document.getElementById('clear-rating'),
+      time: document.getElementById('clear-time'),
+      retry: document.getElementById('btn-retry'),
+      menu: document.getElementById('btn-clear-menu'),
+    };
+    this.clearUi.retry.addEventListener('click', () => {
+      location.href = 'sail.html';
+    });
+    this.clearUi.menu.addEventListener('click', () => {
+      sessionStorage.removeItem(HANDOFF_KEY);
+      location.href = 'index.html';
+    });
 
     window.addEventListener('resize', () => this.view.resize());
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -194,7 +227,20 @@ class SailScreen {
     const at = crewWorldPoint(findCrewBody(this.bodies));
     if (!at || !goalReached(this.goal, at)) return;
     this.cleared = true;
-    this.hud.banner.classList.remove('hidden');
+    this.clearTime = this.simTime;
+    this.heldStrokes.clear();
+    this.tappedStrokes.clear();
+    this.keys.clear();
+    this.held = {};
+    this.showClearResult(rateTravelTime(this.clearTime, DEMO_MAP.scoring));
+  }
+
+  showClearResult(stars) {
+    this.clearUi.stars.forEach((star, i) => star.classList.toggle('active', i < stars));
+    this.clearUi.rating.textContent = `별 ${stars}개`;
+    this.clearUi.time.textContent = formatClearTime(this.clearTime);
+    this.clearUi.overlay.classList.remove('hidden');
+    this.clearUi.retry.focus();
   }
 
   updateCamera() {
@@ -260,9 +306,7 @@ class SailScreen {
     // 도착하면 시계·거리 바를 그 순간 값에 고정한다 — 이후 배가 표류해도 숫자가 흔들리지 않는다.
     if (this.cleared && this._huddedAtClear) return;
 
-    const mm = Math.floor(this.simTime / 60).toString().padStart(2, '0');
-    const ss = Math.floor(this.simTime % 60).toString().padStart(2, '0');
-    this.hud.clock.textContent = `${mm}:${ss}`;
+    this.hud.clock.textContent = formatClock(this.clearTime ?? this.simTime);
 
     const remaining = this.cleared ? 0 : this.currentDistance();
     const frac = this.cleared || this.initialDistance <= 0

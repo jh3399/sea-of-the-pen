@@ -16,6 +16,7 @@ export const SEA_BOUNDS = { minX: -45, maxX: 178, minY: -75, maxY: 75, thickness
 /** 출항 지점(원점) 기준. 뱃머리(+X) 방향으로 흩어진 암초 사이를 지나 도착점까지. */
 export const DEMO_MAP = {
   goal: { x: 150, y: 0, radius: 6, label: '도착' },
+  scoring: { threeStarMaxSeconds: 60, twoStarMaxSeconds: 90 },
   bounds: SEA_BOUNDS,
   obstacles: [
     // 항로 위 (원래 11개) — 골까지의 직선을 막아 지그재그를 강요하는 핵심 배치.
