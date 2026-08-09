@@ -775,6 +775,63 @@ function sickroom(ctx, { w, h, sec }) {
   vignette(ctx, w, h, 0.2, 8);
 }
 
+// ---------------- bulgasari_name — S-02 不可殺伊 (이름 풀이) ----------------
+// 이름 자체가 이 괴물의 성격이라 화면이 이름만 보여준다.
+//
+// ★ **그림이 아니라 코드로 찍는다.** 이유 둘:
+//   ① 게임 폰트(NeoDunggeunmo)에 한자 글리프가 없다 — 브라우저가 조용히 시스템 폰트로
+//      대체한다 (`不`·`可` 는 없는 폰트로 그린 것과 잉크량이 정확히 일치했다). 그러니
+//      어차피 다른 폰트를 지정해야 하고, 지정할 바에는 획이 정확한 명조가 맞다.
+//   ② AI 그림은 한자 자획을 자주 틀린다. 한자를 아는 사람이 보면 바로 드러난다.
+//
+// 논리 캔버스가 356×200 이라 여기 그린 글자는 CSS 확대(image-rendering: pixelated)를
+// 거치며 저절로 도트가 된다 — 따로 도트화할 필요가 없다.
+function bulgasari_name(ctx, { w, h, sec }) {
+  // 물 밑. 위쪽만 아주 옅게 밝다
+  fill(ctx, 0, 0, w, h, '#04070f');
+  const lit = R(h * 0.55);
+  for (let y = 0; y < lit; y++) {
+    ctx.globalAlpha = 0.06 * (1 - y / lit);
+    fill(ctx, 0, y, w, 1, '#1d3a5c');
+  }
+  ctx.globalAlpha = 1;
+  particles(ctx, w, h, sec, {
+    count: 26, color: '#6f8fae', speed: 2, dir: -1, sway: 3, alpha: 0.22, seed: 401,
+  });
+
+  // 헤드리스 렌더러(archive/dev/bg-shot.mjs)의 ctx 셰임에는 fillText 가 없다.
+  // 배경까지만 그리고 조용히 빠진다 — 개발 도구 때문에 씬이 죽으면 안 된다.
+  if (typeof ctx.fillText !== 'function') { vignette(ctx, w, h, 0.3, 10); return; }
+
+  const glyphs = ['不', '可', '殺', '伊'];
+  const size = R(h * 0.34);
+  const gap = R(size * 1.16);
+  const cx = R(w / 2);
+  const cy = R(h * 0.42);        // 아래 1/4 은 대화창이 덮으므로 위로 올린다
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `${size}px "Batang","BatangChe","Apple Myungjo","Nanum Myeongjo","Noto Serif KR",serif`;
+
+  glyphs.forEach((g, i) => {
+    const x = cx + (i - 1.5) * gap;
+    ctx.fillStyle = '#5e1520';                 // 새겨진 깊이 — 붉은 그림자 한 겹
+    ctx.fillText(g, x + 2, cy + 2);
+    ctx.fillStyle = '#e6dcc4';                 // 낡은 뼈 빛
+    ctx.fillText(g, x, cy);
+  });
+
+  // 한 글자씩 훑고 지나가는 붉은 빛 — 누가 소리 내어 읽고 있는 것처럼.
+  // sec 는 씬이 시작된 시각이 아니라 절대 시각이라 한 번만 도는 연출은 못 쓴다.
+  // 대신 계속 도는 것으로 두면 어느 시점에 들어와도 같은 그림이 된다.
+  const n = Math.floor((sec * 0.85) % 4);
+  ctx.globalAlpha = 0.4 + 0.25 * Math.sin(sec * 4);
+  ctx.fillStyle = '#c8404e';
+  ctx.fillText(glyphs[n], cx + (n - 1.5) * gap, cy);
+  ctx.globalAlpha = 1;
+
+  vignette(ctx, w, h, 0.3, 10);
+}
+
 // ---------------- mio_drawing — S-01 미오가 그린 배 (책상 위 종이) ----------------
 // 실제로 화면에 뜨는 것은 assets/scene/mio-drawing.png 다 (bgphotos.js). 이 함수는
 // **그림이 못 뜰 때의 받침**이자, 모든 씬 키가 SCENES 에 있어야 한다는 규약을 지키는 자리다.
@@ -917,6 +974,7 @@ export const SCENES = {
   workshop,
   sickroom,
   mio_drawing,
+  bulgasari_name,
   world_end,
   golden_isle,
 };

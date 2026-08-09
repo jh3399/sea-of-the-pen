@@ -45,19 +45,21 @@ export const SCRIPT = {
   // 진단을 그 방에서 듣는 편이 밖에서 듣는 것보다 무겁다.
   THE_ONLY_CURE: [
     { speaker: '포포', sprite: 'examiner', text: '루냐. 앉아라. 서서 들을 얘기가 아니야.' },
-    { speaker: '포포', sprite: 'examiner', text: '마을 약재는 다 써 봤다. 드는 게 하나도 없구나.' },
+    { speaker: '포포', sprite: 'examiner', text: '마을 약재는 다 써 봤는데 드는 게 하나도 없구나..' },
     { speaker: '루', sprite: 'ru', text: '무슨 병입니까.' },
     { speaker: '포포', sprite: 'examiner', text: '나도 모르겠구나. 여태 못 보던 병이야.' },
-    { speaker: '포포', sprite: 'examiner', text: '고칠 방도가 없다. 그런 것을 불치병이라 하지.' },
+    { speaker: '포포', sprite: 'examiner', text: '고칠 방도가 없구나.. 그런 것을 불치병이라 한단다.' },
     // 루는 여기서 말을 잃는다. 물어볼 것이 없어서가 아니라 물어봐야 소용이 없어서다.
     { speaker: '루', sprite: 'ru', text: '…' },
     { speaker: '포포', sprite: 'examiner', text: '…아주 없는 건 아니다만.' },
-    { speaker: '포포', sprite: 'examiner', text: '믿을지 말지는 네가 정해라.' },
+    { speaker: '포포', sprite: 'examiner', text: '믿을지 말지는 네가 정하려무나.' },
 
     // 전설. 이름 풀이(불가살이 = 죽일 수 없는 것)가 이 괴물의 성격을 한 줄에 담는다.
     { speaker: '포포', sprite: 'examiner', bg: 'fog_black', text: '바다 밑에 불가사리라는 게 산다더구나.' },
-    { speaker: '포포', sprite: 'examiner', text: '불가살이(不可殺伊). 죽일 수 없는 것이라는 뜻이란다.' },
-    { speaker: '포포', sprite: 'examiner', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
+    // 이름만 화면 가득. 그림이 아니라 코드로 찍는다 (bgscenes.js `bulgasari_name` 머리말).
+    { speaker: '포포', sprite: 'examiner', bg: 'bulgasari_name', text: '불가살이(不可殺伊). 죽일 수 없는 것이라는 뜻이란다.' },
+    // 이름 카드에서 다시 물속으로. 여기가 나중에 "빨아들이는" 그림이 들어올 자리다.
+    { speaker: '포포', sprite: 'examiner', bg: 'fog_black', text: '가만히 누워서 물이고 배고 고기고 다 빨아들인다지.' },
     { speaker: '포포', sprite: 'examiner', text: '삼킨 것이 몸속에 맺혀 정수가 된다고 하는구나.' },
     { speaker: '포포', sprite: 'examiner', text: '그 정수 한 모금이면 어떤 병도 낫는다고, 오래전부터 이 바다에 전해 오는 이야기란다.' },
     { speaker: '루', sprite: 'ru', text: '그 괴물이 어디 있는지 아시나요.' },
