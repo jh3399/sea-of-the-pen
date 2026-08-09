@@ -107,6 +107,37 @@ body::after {
 .btn-tool:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
 
 /* ---- 타이틀 ---- */
+
+/* 타이틀 배경 그림 — assets/menu/title-bg.png (418×235 도트, 원본 격자 4.00px).
+   **이 섹션에만** 걸려 있는 것이 요점이다: ▶ 시작하기로 섹션이 닫히면 저절로 사라지고,
+   그 아래에서 계속 돌던 절차적 배경(#bg · scene/pixelbg.js)이 컷신을 그대로 이어받는다.
+   그래서 엔진을 건드릴 일이 없다.
+
+   pixelated 를 빼면 안 된다 — 보간되면 로고(니어리스트로 또렷)와 배경(뿌옇게)이 따로 논다. */
+#screen-title {
+  position: relative;                       /* 오버레이 캔버스(#title-fx)의 기준 */
+  background-image: url('../../assets/menu/title-bg.png');
+  background-size: cover;
+  background-position: center;
+  image-rendering: pixelated;
+}
+
+/* 그림 위에서 별과 달빛만 살아 움직인다 (screen.js 의 startTitleFx).
+   **object-fit: cover 가 핵심**이다 — 캔버스의 고유 크기를 배경과 같은 418×235 로 두고
+   같은 방식으로 잘라야, 창 비율이 바뀌어도 반짝임이 그림 속 달빛 기둥 위에 그대로 얹힌다.
+   width/height 로 늘이면 비율이 어긋나는 순간 반짝임만 옆으로 밀린다. */
+#title-fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+  pointer-events: none;
+  z-index: 0;
+}
+#screen-title > *:not(#title-fx) { position: relative; z-index: 1; }
+
 .title-wrap { text-align: center; display: flex; flex-direction: column; gap: 14px; align-items: center; }
 
 .game-title {
