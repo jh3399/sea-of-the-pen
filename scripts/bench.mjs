@@ -9,6 +9,9 @@ import { strokeToHull } from '../src/hull/polygon.js';
 import { computeHullParams, HYDRO_TUNING, MATERIALS } from '../src/hull/params.js';
 import { decomposeHull } from '../src/hull/decompose.js';
 import { CORPUS, CORPUS_LABELS } from '../src/hull/corpus.js';
+import {
+  pointInHullSolid, rasterizeHullSurface, surfaceCellKey, surfaceCellPoint,
+} from '../src/hull/raster.js';
 import { Settings, Box } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
@@ -32,7 +35,7 @@ import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
 import { rateTravelTime } from '../src/game/scoring.js';
-import { DEMO_MAP, PRACTICE_MAP, MAPS, boundaryWalls } from '../src/sail/map.js';
+import { DEMO_MAP, PRACTICE_MAP, STORM_MAP, MAPS, boundaryWalls } from '../src/sail/map.js';
 import { STAGES } from '../src/game/progress.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
@@ -1623,6 +1626,82 @@ check('첫 발화는 가장 돌출한 부위에서 시작한다 (§2.2 "뾰족�
     && Math.abs(Math.hypot(exposed.x, exposed.y) - maxReach) < 1e-9,
   exposed ? `반경 ${Math.hypot(exposed.x, exposed.y).toFixed(3)} = 최대 ${maxReach.toFixed(3)} m` : 'hotspot.js 미구현');
 
+// ── ★ 파손 표면 도트가 물리 형상을 그대로 따르는가 ────────────────────────────────
+const rasterOuter = [
+  { x: -2, y: -2 }, { x: 2, y: -2 }, { x: 2, y: 2 }, { x: -2, y: 2 },
+];
+const rasterHole = [
+  { x: -0.8, y: -0.8 }, { x: 0.8, y: -0.8 }, { x: 0.8, y: 0.8 }, { x: -0.8, y: 0.8 },
+];
+const rasterA = rasterizeHullSurface({ outline: rasterOuter, holes: [rasterHole] });
+const rasterB = rasterizeHullSurface({ outline: rasterOuter, holes: [rasterHole] });
+const rasterKeysA = rasterA.cells.map(surfaceCellKey);
+const rasterKeysB = rasterB.cells.map(surfaceCellKey);
+check('선체 도트 격자는 같은 형상에서 결정론적이다',
+  rasterA.cell === rasterB.cell && rasterA.originX === rasterB.originX
+    && rasterA.originY === rasterB.originY && rasterKeysA.join('|') === rasterKeysB.join('|'),
+  `${rasterA.cells.length}칸 · cell ${rasterA.cell.toFixed(3)} m`);
+check('선체 내부 구멍에는 표면 도트가 남지 않는다',
+  rasterA.cells.every((cell) => {
+    const p = surfaceCellPoint(rasterA, cell);
+    return pointInHullSolid(p, rasterOuter, [rasterHole]);
+  }),
+  `외곽 ${rasterA.cells.length}칸 · 구멍 제외`);
+
+const surfaceSplit = (() => {
+  const world = createWorld();
+  const outline = hulls.barbell.outline;
+  const parentSurface = rasterizeHullSurface({ outline, holes: [] });
+  const body = createHullBody(world, { outline, holes: [], items: [], surface: parentSurface },
+    { position: { x: 3, y: -2 }, angle: 0.37, material: 'wood' });
+  const before = new Map(parentSurface.cells.map((cell) => {
+    const p = surfaceCellPoint(parentSurface, cell);
+    const w = body.getWorldPoint(new Vec2(p.x, p.y));
+    return [surfaceCellKey(cell), { x: w.x, y: w.y }];
+  }));
+  const out = applyImpact(world, body, body.getWorldPoint(new Vec2(0, 0)), 0.9);
+  const seen = new Set();
+  let duplicate = false;
+  let outside = false;
+  let maxDrift = 0;
+  let count = 0;
+  for (const child of out.bodies) {
+    const hull = child.getUserData().hull;
+    for (const cell of hull.surface.cells) {
+      const key = surfaceCellKey(cell);
+      if (seen.has(key)) duplicate = true;
+      seen.add(key);
+      count++;
+      const local = surfaceCellPoint(hull.surface, cell);
+      if (!pointInHullSolid(local, hull.outline, hull.holes)) outside = true;
+      const w = child.getWorldPoint(new Vec2(local.x, local.y));
+      const old = before.get(key);
+      maxDrift = Math.max(maxDrift, Math.hypot(w.x - old.x, w.y - old.y));
+    }
+  }
+  return { parent: parentSurface.cells.length, count, duplicate, outside, maxDrift, pieces: out.bodies.length };
+})();
+check('절단된 도트는 한 조각에만 속하고 새로 생기지 않는다',
+  surfaceSplit.pieces === 2 && !surfaceSplit.duplicate && !surfaceSplit.outside
+    && surfaceSplit.count < surfaceSplit.parent,
+  `${surfaceSplit.parent} → ${surfaceSplit.count}칸 · ${surfaceSplit.pieces}조각`);
+check('강체 재중심화 뒤에도 살아남은 도트의 월드 위치가 같다',
+  surfaceSplit.maxDrift < 1e-9,
+  `최대 이동 ${(surfaceSplit.maxDrift * 1e9).toFixed(3)} nm`);
+
+const surfaceMiss = (() => {
+  const world = createWorld();
+  const outline = hulls.sloop.outline;
+  const surface = rasterizeHullSurface({ outline, holes: [] });
+  const body = createHullBody(world, { outline, holes: [], items: [], surface },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const out = applyImpact(world, body, { x: 100, y: 100 }, 0.2);
+  return { sameBody: out.bodies[0] === body, sameSurface: body.getUserData().hull.surface === surface };
+})();
+check('빗맞음은 강체와 도트 표면을 재생성하지 않는다',
+  surfaceMiss.sameBody && surfaceMiss.sameSurface,
+  `body ${surfaceMiss.sameBody ? '유지' : '교체'} · surface ${surfaceMiss.sameSurface ? '유지' : '교체'}`);
+
 // ── ★ 균일한 화염 지대에서 배가 원이 되지 않는가 ─────────────────────────────────
 //
 // §6.1 의 disc 는 `radius × (1−falloff)` 안쪽이 평평하다 (화염 지대는 27 m, 화산대는 7.15 m).
@@ -1633,9 +1712,12 @@ check('첫 발화는 가장 돌출한 부위에서 시작한다 (§2.2 "뾰족�
 function burnWalk(key, mode, rounds = 12) {
   const src = hulls[key];
   const world = createWorld();
-  let body = createHullBody(world, { outline: src.outline, holes: [], items: [] },
+  const surface = rasterizeHullSurface({ outline: src.outline, holes: [] });
+  let body = createHullBody(world, { outline: src.outline, holes: [], items: [], surface },
     { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
   const octants = new Set();
+  const cellCounts = [surface.cells.length];
+  const cellHistory = [new Set(surface.cells.map(surfaceCellKey))];
   let cycles = 0;
   for (let i = 0; i < rounds; i++) {
     const h = body.getUserData().hull;
@@ -1650,11 +1732,18 @@ function burnWalk(key, mode, rounds = 12) {
     const w = body.getWorldPoint(new Vec2(local.x, local.y));
     const out = applyImpact(world, body, { x: w.x, y: w.y },
       burnRadius(mode === 'far' ? h.params.area : (h.launchArea ?? h.params.area)));
-    if (!out || out.bodies.length === 0) return { octants: octants.size, cycles, dead: true };
+    if (!out || out.bodies.length === 0) {
+      cellCounts.push(0);
+      cellHistory.push(new Set());
+      return { octants: octants.size, cycles, dead: true, cellCounts, cellHistory };
+    }
     body = out.bodies.sort((x, y) =>
       y.getUserData().hull.params.area - x.getUserData().hull.params.area)[0];
+    const cells = body.getUserData().hull.surface?.cells ?? [];
+    cellCounts.push(cells.length);
+    cellHistory.push(new Set(cells.map(surfaceCellKey)));
   }
-  return { octants: octants.size, cycles, dead: false };
+  return { octants: octants.size, cycles, dead: false, cellCounts, cellHistory };
 }
 
 const walkFar = burnWalk('round', 'far');
@@ -1668,6 +1757,15 @@ console.log(`  ${pad('슬루프', 14)}${pad(walkFarSloop.octants + '/8', 12)}${w
 check('★ 균일한 화염에서도 배가 원이 되지 않는다 (직전 화점에서 번진다)',
   walkSpread.octants < walkFar.octants && walkSpread.octants <= 4,
   `둥근 배 — 가장 먼 점 ${walkFar.octants}/8 vs 번짐 ${walkSpread.octants}/8`);
+
+const progressiveCells = walkSpread.cellCounts.every((n, i, a) => i === 0 || n <= a[i - 1]);
+const progressiveIds = walkSpread.cellHistory.every((set, i, history) => i === 0
+  || [...set].every((key) => history[i - 1].has(key)));
+const visibleDrops = walkSpread.cellCounts.reduce((n, count, i, a) =>
+  n + Number(i > 0 && count < a[i - 1]), 0);
+check('연속 파손에서 표면 도트는 단계적으로 줄고 다시 생기지 않는다',
+  progressiveCells && progressiveIds && visibleDrops >= 3,
+  `${walkSpread.cellCounts[0]} → ${walkSpread.cellCounts.at(-1)}칸 · 감소 ${visibleDrops}회`);
 
 // ── ★ 배가 유한 사이클에 전손하는가 ─────────────────────────────────────────────
 //
@@ -2732,10 +2830,17 @@ check('연습 해역이 1장보다 좁다 (넓은 바다에서 길을 잃는 것
 
 // ★ 진행 표와 맵 표가 어긋나면 화면이 빈 바다를 띄운다 (MAPS[id] 가 undefined).
 //   둘을 따로 고칠 수 있게 나눠 놓았으므로 여기서 붙여 둔다.
-check('★ STAGES 의 모든 id 에 맵이 있다 (진행 표와 맵 표가 1:1)',
-  STAGES.every((st) => Boolean(MAPS[st.id])),
-  STAGES.map((st) => `${st.id}${MAPS[st.id] ? '✓' : '✗'}`).join(' · '));
-check('연습 해역이 첫 스테이지다', STAGES[0].id === 'practice', STAGES.map((s) => s.id).join(' → '));
+const stageIds = STAGES.map((stage) => stage.id);
+const mapIds = Object.keys(MAPS);
+check('★ STAGES 와 MAPS 가 양방향 1:1 이다 (진행 표와 맵 표)',
+  STAGES.every((stage) => Boolean(MAPS[stage.id]))
+    && mapIds.every((id) => stageIds.includes(id))
+    && new Set(stageIds).size === stageIds.length,
+  stageIds.map((id) => `${id}${MAPS[id] ? '✓' : '✗'}`).join(' · '));
+check('연습 해역이 첫 스테이지다', STAGES[0].id === 'practice', stageIds.join(' → '));
+check('연습만 파손이 꺼지고 본편 해역은 파손이 켜진다',
+  MAPS.practice.damage === false && MAPS.reef.damage === true && MAPS.storm.damage === true,
+  mapIds.map((id) => `${id}:${MAPS[id].damage ? 'on' : 'off'}`).join(' · '));
 
 // 경계 벽 — 배를 계속 밀어붙여도 넘어가지 못한다. 벽을 빼면 그대로 나가 버리는 것이 대조군이다.
 const seaWalls = boundaryWalls(sea);
@@ -2773,6 +2878,101 @@ check('★ 해역 밖으로는 나갈 수 없다 (사방이 암초 벽 — 경�
   `북 ${ramNorth.toFixed(1)} ≤ ${sea.maxY} · 동 ${ramEast.toFixed(1)} ≤ ${sea.maxX}`);
 check('막는 것이 정말 벽이다 (빼면 그대로 나간다 — 대조군)', ramFree > 200,
   `벽 없이 ${ramFree.toFixed(0)} m`);
+
+// ─────────────────────────────────────────────── 레벨 2 · 시변 폭풍
+console.log('\n\x1b[36m▌레벨 2 — 성긴 암초밭 · 5초 방향 폭풍\x1b[0m\n');
+
+const playableMaps = Object.values(MAPS);
+check('기존 1장 맵은 MAPS.reef 로 그대로 보존된다', MAPS.reef === DEMO_MAP,
+  `${MAPS.practice.label} → ${MAPS.reef.label} → ${MAPS.storm.label}`);
+check('항해 레벨은 3장이고 ID가 겹치지 않는다',
+  playableMaps.length === 3
+    && new Set(playableMaps.map((map) => map.id)).size === playableMaps.length,
+  `${playableMaps.length}장 · ${playableMaps.map((map) => map.id).join(' / ')}`);
+
+function declarativeMap(value, key = '') {
+  if (typeof value === 'function') return false;
+  if (['script', 'code', 'on', 'fn', 'expr'].includes(key) || key.includes('=>')) return false;
+  if (Array.isArray(value)) return value.every((entry) => declarativeMap(entry));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).every(([childKey, child]) => declarativeMap(child, childKey));
+  }
+  return true;
+}
+check('맵 데이터에는 콜백·스크립트 실행 구멍이 없다',
+  playableMaps.every((map) => declarativeMap(map)),
+  '모든 잎이 값 데이터');
+
+const stormBands = [];
+for (let y0 = STORM_MAP.bounds.minY; y0 < STORM_MAP.bounds.maxY; y0 += BAND) {
+  stormBands.push(STORM_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length);
+}
+const stormClearance = (p) => Math.min(...STORM_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const stormStartClear = stormClearance({ x: 0, y: 0 });
+const stormGoalClear = stormClearance(STORM_MAP.goal) - STORM_MAP.goal.radius;
+console.log(`  레벨 1 암초 ${DEMO_MAP.obstacles.length}개 → 레벨 2 ${STORM_MAP.obstacles.length}개 · ` +
+  `${BAND} m 띠별 ${stormBands.join('·')}`);
+check('레벨 2 암초는 45~55개로 레벨 1보다 성기다',
+  STORM_MAP.obstacles.length >= 45 && STORM_MAP.obstacles.length <= 55
+    && STORM_MAP.obstacles.length < DEMO_MAP.obstacles.length,
+  `${STORM_MAP.obstacles.length}개 < ${DEMO_MAP.obstacles.length}개`);
+check('레벨 2도 해역 전체에 빈 암초 띠가 없고 출발·도착이 열려 있다',
+  stormBands.every((n) => n > 0) && stormStartClear > 5 && stormGoalClear > 0,
+  `띠 ${stormBands.join('·')} · 출발 ${stormStartClear.toFixed(1)} m · 골 ${stormGoalClear.toFixed(1)} m`);
+check('레벨 2 도착 지점은 해역 경계 안에 있다',
+  STORM_MAP.goal.x + STORM_MAP.goal.radius < STORM_MAP.bounds.maxX
+    && STORM_MAP.goal.y - STORM_MAP.goal.radius > STORM_MAP.bounds.minY
+    && STORM_MAP.goal.y + STORM_MAP.goal.radius < STORM_MAP.bounds.maxY,
+  `골 (${STORM_MAP.goal.x}, ${STORM_MAP.goal.y})`);
+
+const stormFields = createFields(STORM_MAP.fields);
+const windAt = (t) => stormFields.sampleVector('wind', 0, 0, t);
+const w0 = windAt(0);
+const wBefore = windAt(4.999);
+const w5 = windAt(5);
+const w10 = windAt(10);
+const w40 = windAt(40);
+const mag = (v) => Math.hypot(v.x, v.y);
+console.log(`  바람 t=0 (${w0.x.toFixed(1)},${w0.y.toFixed(1)}) → ` +
+  `5s (${w5.x.toFixed(1)},${w5.y.toFixed(1)}) → 10s (${w10.x.toFixed(1)},${w10.y.toFixed(1)})`);
+check('★ 바람은 4.999초까지 유지되고 5.000초에 다음 방향으로 바뀐다',
+  wBefore.x === w0.x && wBefore.y === w0.y && (w5.x !== w0.x || w5.y !== w0.y),
+  `4.999s (${wBefore.x.toFixed(1)},${wBefore.y.toFixed(1)}) · 5s (${w5.x.toFixed(1)},${w5.y.toFixed(1)})`);
+check('방향 목록은 5초마다 순서대로 돌고 한 주기 뒤 재현된다',
+  (w10.x !== w5.x || w10.y !== w5.y) && w40.x === w0.x && w40.y === w0.y,
+  `10s (${w10.x.toFixed(1)},${w10.y.toFixed(1)}) · 40s (${w40.x.toFixed(1)},${w40.y.toFixed(1)})`);
+check('폭풍 방향이 바뀌어도 풍속 크기는 일정하다',
+  Math.abs(mag(w0) - mag(w5)) < 1e-3 && Math.abs(mag(w0) - mag(w10)) < 1e-3,
+  `${mag(w0).toFixed(3)} / ${mag(w5).toFixed(3)} / ${mag(w10).toFixed(3)} m/s`);
+check('레벨 2 어둠과 비 강도가 유효하다',
+  stormFields.sampleScalar('darkness', 0, 0, 20) > 0.4
+    && STORM_MAP.weather.rain > 0 && STORM_MAP.weather.rain <= 1,
+  `어둠 ${stormFields.sampleScalar('darkness', 0, 0, 20).toFixed(2)} · 비 ${STORM_MAP.weather.rain.toFixed(2)}`);
+
+const stormPrediction = (() => {
+  const { world, body } = spawn('sloop', { attach: [{ type: 'sail', x: 0, y: 0, angle: 0 }] });
+  body.setLinearVelocity(new Vec2(2.5, 0.4));
+  const startTime = 4.8;
+  const horizon = 1.2;
+  const path = predictPath(body, {}, {
+    fields: stormFields, startTime, horizon, stride: 1,
+  });
+  let step = 0;
+  const live = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      step += 1;
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, stormFields, dt, startTime + step * FIXED_DT);
+    },
+  });
+  for (let i = 0; i < Math.round(horizon / FIXED_DT); i++) live.advance(FIXED_DT);
+  const actual = body.getWorldCenter();
+  const predicted = path.at(-1);
+  return Math.hypot(actual.x - predicted.x, actual.y - predicted.y);
+})();
+check('★ 5초 바람 전환을 가로질러도 예측선과 실물리가 일치한다', stormPrediction < 1e-7,
+  `최종 오차 ${(stormPrediction * 1000).toFixed(6)} mm`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +

@@ -45,6 +45,7 @@ export function predictPath(body, input, options = {}) {
   const horizon = options.horizon ?? PREDICT_DEFAULTS.horizon;
   const stride = options.stride ?? PREDICT_DEFAULTS.stride;
   const fields = options.fields ?? null;
+  const startTime = options.startTime ?? 0;
   const steps = Math.round(horizon / dt);
 
   const mass = body.getMass();
@@ -88,8 +89,12 @@ export function predictPath(body, input, options = {}) {
     const h = hydroForcesLocal(hull.params.drag, vel, mass, inertia, dt);
     // 필드도 **적분 중 좌표에서** 샘플한다. 바람 경계를 넘어가는 궤적이 경계를 무시하면
     // 궤적선이 가장 필요한 순간(돛배가 역풍 지대로 들어가기 직전)에 거짓말을 한다.
+    // 실제 onPreStep 은 스텝 번호를 먼저 올린 뒤 필드를 적용한다. 예측의 첫 샘플도 같은
+    // `현재 시각 + dt` 여야 5초 방향 전환 경계에서 한 스텝 어긋나지 않는다.
+    const sampleTime = startTime + (i + 1) * dt;
     const f = fields && !fields.isEmpty
-      ? fieldForcesLocal(hull.items, toLocalVector(fields.sampleVector('wind', x, y), angle), vel)
+      ? fieldForcesLocal(hull.items,
+        toLocalVector(fields.sampleVector('wind', x, y, sampleTime), angle), vel)
       : ZERO;
     const fx = d.fx + h.fx + f.fx;
     const fy = d.fy + h.fy + f.fy;

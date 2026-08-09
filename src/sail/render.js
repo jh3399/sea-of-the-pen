@@ -2,14 +2,13 @@
 // 안에서 벡터 대신 `ctx.fillRect` 픽셀 그리드만 채운다. 새 그래픽 자산은 0개다: 선체·바위·
 // 물은 전부 절차적으로(폴리곤 래스터화·시드 해시) 찍고, 아이템·주인공은 `draw/icons.js` 의
 // 기존 픽셀 아이콘 헬퍼를 그대로 재사용한다.
-import { bounds, pointInPolygon } from '../geom/poly.js';
 import { MATERIALS } from '../hull/params.js';
+import { surfaceCellKey, surfaceCellPoint } from '../hull/raster.js';
 import {
-  drawItemMarker, drawCrewSprite, drawPixelGrid, markerAngleToward, itemMarkerSize, OAR_PUSH,
+  drawItemMarker, drawRudderMarker, drawCrewSprite, drawPixelGrid,
+  markerAngleToward, itemMarkerSize, OAR_PUSH,
 } from '../draw/icons.js';
 
-/** 선체 폴리곤을 몇 칸 그리드로 래스터화할 것인가 (긴 변 기준). */
-const HULL_PIXEL_COLS = 28;
 /** 바위 하나를 몇 칸 그리드로 그릴 것인가 (지름 기준). */
 const ROCK_PIXEL_COLS = 18;
 /** 경계 암초 벽의 픽셀 한 칸 (m). 벽 하나가 200 m 를 넘으므로 낱개 바위보다 굵게 찍는다. */
@@ -27,6 +26,7 @@ const TAU = Math.PI * 2;
 /** 아이템·주인공 아이콘의 한 칸 크기 (m) — `draw/icons.js` 는 화면 고정 픽셀(CSS px)로 쓰지만
  *  여기는 월드 좌표라 선체 스케일에 맞는 작은 값을 쓴다. */
 const ITEM_PIXEL = 0.06;
+const RUDDER_PIXEL = ITEM_PIXEL * 2;
 const CREW_PIXEL = 0.05;
 /** 노는 선체 밖으로 뻗는 장치라 다른 마커보다 크다 (22칸 × 0.09 = 약 2 m 짜리 노). */
 const OAR_PIXEL = 0.09;
@@ -93,11 +93,6 @@ function rgba(hex, a) {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a.toFixed(3)})`;
 }
 
-function at(grid, cols, rows, r, c) {
-  if (r < 0 || r >= rows || c < 0 || c >= cols) return 0;
-  return grid[r * cols + c];
-}
-
 /** 카메라가 지금 보고 있는 월드 사각형. */
 function visibleWorldRect(view) {
   const halfW = view.width / 2 / view.ppm;
@@ -122,11 +117,12 @@ function visibleWorldRect(view) {
  *
  * @param {number} sec 경과 시간(초). 물리 시각(`simTime`)을 넣으면 일시정지도 따라 멈춘다.
  */
-export function drawWater(ctx, view, sec = 0) {
+export function drawWater(ctx, view, sec = 0, { gloom = 0 } = {}) {
   const pad = WATER_CELL * 2;
   const { x0, x1, y0, y1 } = visibleWorldRect(view);
+  const dim = clamp(gloom, 0, 1);
 
-  ctx.fillStyle = WATER_BASE;
+  ctx.fillStyle = dim > 0 ? shade(WATER_BASE, -0.42 * dim) : WATER_BASE;
   ctx.fillRect(x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2);
 
   const gx0 = Math.floor((x0 - pad) / WATER_CELL) * WATER_CELL;
@@ -167,6 +163,61 @@ export function drawWater(ctx, view, sec = 0) {
       ctx.fillRect(x, yy, WATER_CELL * 0.55, WATER_CELL * 0.22);
     }
   }
+}
+
+/** 폭풍 비 — 화면에 고정된 시드와 물리 시각만 써 프레임 드랍에도 같은 장면을 낸다. */
+export function drawWeather(ctx, view, { sec = 0, rain = 0, wind = { x: 0, y: 0 } } = {}) {
+  const amount = clamp(rain, 0, 1);
+  if (amount <= 0) return;
+
+  const count = Math.round(45 + amount * 85);
+  const speed = 430;
+  const windMag = Math.hypot(wind.x, wind.y);
+  const wx = windMag > 1e-6 ? wind.x / windMag : 0;
+  const wy = windMag > 1e-6 ? wind.y / windMag : 0;
+  const slantX = wx * 22;
+  const slantY = 34 - wy * 12;
+  const travel = Math.hypot(slantX, slantY) || 1;
+  const ux = slantX / travel;
+  const uy = slantY / travel;
+
+  view.screenSpace((c) => {
+    c.strokeStyle = `rgba(186, 220, 239, ${(0.2 + amount * 0.35).toFixed(3)})`;
+    c.lineWidth = 2;
+    c.beginPath();
+    const spanX = view.width + 100;
+    const spanY = view.height + 100;
+    for (let i = 0; i < count; i++) {
+      const phase = hash2(i * 3.17, i * 7.91);
+      const drift = (sec * speed * (0.75 + hash2(i, 19) * 0.5) + phase * spanY) % spanY;
+      const x = ((hash2(i, 31) * spanX + drift * ux) % spanX + spanX) % spanX - 50;
+      const y = ((hash2(i, 47) * spanY + drift * uy) % spanY + spanY) % spanY - 50;
+      const len = 7 + hash2(i, 59) * 9;
+      c.moveTo(Math.round(x), Math.round(y));
+      c.lineTo(Math.round(x - ux * len), Math.round(y - uy * len));
+    }
+    c.stroke();
+  });
+}
+
+/** 어둠 — 캔버스만 덮어 HUD·클리어 창·목표 나침반은 계속 읽을 수 있게 한다. */
+export function drawDarkness(ctx, view, darkness = 0) {
+  const amount = clamp(darkness, 0, 1);
+  if (amount <= 0) return;
+
+  view.screenSpace((c) => {
+    c.fillStyle = `rgba(4, 10, 29, ${(amount * 0.56).toFixed(3)})`;
+    c.fillRect(0, 0, view.width, view.height);
+    const r = Math.max(view.width, view.height) * 0.72;
+    const vignette = c.createRadialGradient(
+      view.width / 2, view.height / 2, r * 0.18,
+      view.width / 2, view.height / 2, r,
+    );
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, `rgba(0, 3, 14, ${(amount * 0.72).toFixed(3)})`);
+    c.fillStyle = vignette;
+    c.fillRect(0, 0, view.width, view.height);
+  });
 }
 
 /**
@@ -425,41 +476,39 @@ export function drawGoalCompass(ctx, view, goal, from, { cleared = false } = {})
 }
 
 /**
- * 선체 로컬 폴리곤을 픽셀 그리드로 래스터화. 호출 전 `ctx.translate/rotate` 로 강체 자세를
- * 걸어 두면(§main.js renderSail 관례) 좌표 변환 코드가 따로 필요 없다.
+ * 출항 때 고정한 선체 표면 셀을 그린다. 파손 이벤트가 기존 셀만 걷어내므로 매 프레임 폴리곤을
+ * 다시 래스터화하지 않고, 남은 도트의 크기와 위치도 절대 재배치되지 않는다.
  */
-function drawHullPixels(ctx, outline, materialKey) {
-  const mat = MATERIALS[materialKey] ?? MATERIALS.wood;
-  const bb = bounds(outline);
-  const span = Math.max(bb.width, bb.height, 0.4);
-  const cell = clamp(span / HULL_PIXEL_COLS, 0.05, 0.3);
-  const cols = Math.max(1, Math.ceil(bb.width / cell) + 2);
-  const rows = Math.max(1, Math.ceil(bb.height / cell) + 2);
-  const x0 = bb.minX - cell;
-  const y0 = bb.minY - cell;
+function drawHullPixels(ctx, hull) {
+  const surface = hull.surface;
+  if (!surface?.cells?.length) return;
 
-  const inside = new Uint8Array(cols * rows);
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const cx = x0 + (c + 0.5) * cell;
-      const cy = y0 + (r + 0.5) * cell;
-      if (pointInPolygon({ x: cx, y: cy }, outline)) inside[r * cols + c] = 1;
-    }
+  const mat = hull.params?.material ?? MATERIALS.wood;
+  const occupied = new Set(surface.cells.map(surfaceCellKey));
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const cell of surface.cells) {
+    const { x } = surfaceCellPoint(surface, cell);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
   }
-
+  const span = Math.max(maxX - minX + surface.cell, 0.4);
+  const bowBand = maxX - span * 0.14;
   const dark = shade(mat.color, -0.32);
   const bowLight = shade(mat.color, 0.16);
-  const bowBand = bb.maxX - span * 0.14;
 
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (!inside[r * cols + c]) continue;
-      const edge = !at(inside, cols, rows, r - 1, c) || !at(inside, cols, rows, r + 1, c)
-        || !at(inside, cols, rows, r, c - 1) || !at(inside, cols, rows, r, c + 1);
-      const cx = x0 + (c + 0.5) * cell;
-      ctx.fillStyle = edge ? dark : (cx > bowBand ? bowLight : mat.color);
-      ctx.fillRect(x0 + c * cell, y0 + r * cell, cell, cell);
-    }
+  for (const pixel of surface.cells) {
+    const { col, row } = pixel;
+    const edge = !occupied.has(`${col - 1},${row}`) || !occupied.has(`${col + 1},${row}`)
+      || !occupied.has(`${col},${row - 1}`) || !occupied.has(`${col},${row + 1}`);
+    const center = surfaceCellPoint(surface, pixel);
+    ctx.fillStyle = edge ? dark : (center.x > bowBand ? bowLight : mat.color);
+    ctx.fillRect(
+      surface.originX + col * surface.cell,
+      surface.originY + row * surface.cell,
+      surface.cell,
+      surface.cell,
+    );
   }
 }
 
@@ -489,11 +538,20 @@ function drawOar(ctx, item) {
     () => drawItemMarker(ctx, 'oar', 0, 0, OAR_PIXEL, markerAngleToward(0, -outward)));
 }
 
+/** 키 — 하니스와 같이 부착 축은 고정하고 막대만 실제 타각만큼 좌우로 움직인다. */
+function drawRudder(ctx, item, angle) {
+  // drawUprightIcon 안에서는 Y가 뒤집히므로 월드 타각과 같은 방향으로 보이게 부호를 뒤집는다.
+  drawUprightIcon(ctx, item.x, item.y,
+    () => drawRudderMarker(ctx, 0, 0, RUDDER_PIXEL, -angle));
+}
+
 /** 강체 하나(선체 로컬 좌표계 안에서) — 선체 + 부착 아이템 + 주인공. */
 export function drawHullBody(ctx, hull) {
-  drawHullPixels(ctx, hull.outline, hull.params.material.key);
+  drawHullPixels(ctx, hull);
+  const rudderAngle = hull.control?.rudder ?? 0;
   for (const item of hull.items) {
     if (item.type === 'oar' && item.side) { drawOar(ctx, item); continue; }
+    if (item.type === 'rudder') { drawRudder(ctx, item, rudderAngle); continue; }
     drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, item.type, 0, 0, ITEM_PIXEL));
   }
   if (hull.crew) {

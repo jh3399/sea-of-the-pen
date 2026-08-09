@@ -44,10 +44,16 @@ export const SEA_BOUNDS = { minX: -45, maxX: 178, minY: -75, maxY: 75, thickness
 export const PRACTICE_BOUNDS = { minX: -35, maxX: 118, minY: -45, maxY: 85, thickness: 12 };
 
 export const PRACTICE_MAP = {
+  id: 'practice',
+  number: 0,
+  label: '연습 해역',
   goal: { x: 80, y: 52, radius: 7, label: '시작의 섬' },
   // 직선 최소 20.5초. 70초는 "돌 줄 몰라 헤매도 3별"이 되는 값이다.
   scoring: { threeStarMaxSeconds: 70, twoStarMaxSeconds: 110 },
   bounds: PRACTICE_BOUNDS,
+  fields: {},
+  weather: { rain: 0, gloom: 0 },
+  damage: false,
   obstacles: [
     // 골로 가는 호의 **바깥**. 지나는 길에 보이지만 부딪히려면 일부러 가야 한다.
     // 항로에서 11~14 m 씩 떨어져 있다 — 눈에는 걸리고 뱃전에는 안 걸리는 거리.
@@ -63,9 +69,15 @@ export const PRACTICE_MAP = {
 
 /** 출항 지점(원점) 기준. 뱃머리(+X) 방향으로 흩어진 암초 사이를 지나 도착점까지. */
 export const DEMO_MAP = {
+  id: 'reef',
+  number: 1,
+  label: '바위 협곡',
   goal: { x: 150, y: 0, radius: 6, label: '도착' },
   scoring: { threeStarMaxSeconds: 60, twoStarMaxSeconds: 90 },
   bounds: SEA_BOUNDS,
+  fields: {},
+  weather: { rain: 0, gloom: 0 },
+  damage: true,
   obstacles: [
     // 항로 위 (원래 11개) — 골까지의 직선을 막아 지그재그를 강요하는 핵심 배치.
     { shape: 'circle', x: 25, y: 10, radius: 4 },
@@ -134,6 +146,97 @@ export const DEMO_MAP = {
   ].map((o) => ({ ...o, material: 'rock' })),
 };
 
+/** 레벨 2 — 암초 간격은 넓지만 어둠과 5초마다 바뀌는 폭풍이 항로 판단을 흔든다. */
+export const STORM_MAP = {
+  id: 'storm',
+  number: 2,
+  label: '역풍 협곡',
+  goal: { x: 150, y: -8, radius: 7, label: '등대' },
+  scoring: { threeStarMaxSeconds: 75, twoStarMaxSeconds: 110 },
+  bounds: SEA_BOUNDS,
+  fields: {
+    wind: [{
+      shape: 'uniform',
+      directionCycle: {
+        interval: 5,
+        directions: [
+          { x: 10, y: 0 },
+          { x: 7.071, y: 7.071 },
+          { x: 0, y: 10 },
+          { x: -7.071, y: 7.071 },
+          { x: -10, y: 0 },
+          { x: -7.071, y: -7.071 },
+          { x: 0, y: -10 },
+          { x: 7.071, y: -7.071 },
+        ],
+      },
+    }],
+    darkness: [{ shape: 'uniform', value: 0.58 }],
+  },
+  weather: { rain: 0.72, gloom: 0.65 },
+  damage: true,
+  obstacles: [
+    // 북쪽 바깥 해역 — 띠마다 끊어진 통로를 남겨 레벨 1보다 성기게 배치한다.
+    { shape: 'circle', x: 18, y: 60, radius: 4 },
+    { shape: 'circle', x: 42, y: 57, radius: 3.5 },
+    { shape: 'circle', x: 68, y: 64, radius: 4.5 },
+    { shape: 'circle', x: 96, y: 55, radius: 4 },
+    { shape: 'circle', x: 124, y: 62, radius: 3.5 },
+    { shape: 'circle', x: 158, y: 57, radius: 4.5 },
+
+    { shape: 'circle', x: 30, y: 40, radius: 4.5 },
+    { shape: 'circle', x: 56, y: 34, radius: 3.5 },
+    { shape: 'circle', x: 84, y: 43, radius: 4 },
+    { shape: 'circle', x: 112, y: 36, radius: 5 },
+    { shape: 'circle', x: 140, y: 44, radius: 3.5 },
+    { shape: 'circle', x: 166, y: 34, radius: 4 },
+
+    { shape: 'circle', x: 16, y: 21, radius: 3.5 },
+    { shape: 'circle', x: 44, y: 18, radius: 4 },
+    { shape: 'circle', x: 72, y: 26, radius: 5 },
+    { shape: 'circle', x: 102, y: 17, radius: 3.5 },
+    { shape: 'circle', x: 132, y: 25, radius: 4.5 },
+    { shape: 'circle', x: 160, y: 16, radius: 3.5 },
+
+    // 중앙 항로 — 한 줄 벽이 아니라 좌우 선택이 생기는 넓은 지그재그다.
+    { shape: 'circle', x: 26, y: 5, radius: 4 },
+    { shape: 'circle', x: 52, y: -5, radius: 4.5 },
+    { shape: 'circle', x: 78, y: 7, radius: 3.5 },
+    { shape: 'circle', x: 106, y: -4, radius: 5 },
+    { shape: 'circle', x: 134, y: 8, radius: 4 },
+    { shape: 'circle', x: 164, y: -3, radius: 3.5 },
+
+    { shape: 'circle', x: 17, y: -18, radius: 4.5 },
+    { shape: 'circle', x: 43, y: -25, radius: 3.5 },
+    { shape: 'circle', x: 70, y: -16, radius: 4 },
+    { shape: 'circle', x: 98, y: -27, radius: 4.5 },
+    { shape: 'circle', x: 126, y: -18, radius: 3.5 },
+    { shape: 'circle', x: 166, y: -22, radius: 4 },
+
+    { shape: 'circle', x: 29, y: -42, radius: 4 },
+    { shape: 'circle', x: 57, y: -35, radius: 5 },
+    { shape: 'circle', x: 86, y: -45, radius: 3.5 },
+    { shape: 'circle', x: 114, y: -37, radius: 4 },
+    { shape: 'circle', x: 143, y: -46, radius: 4.5 },
+    { shape: 'circle', x: 163, y: -35, radius: 3.5 },
+
+    { shape: 'circle', x: 16, y: -60, radius: 3.5 },
+    { shape: 'circle', x: 45, y: -56, radius: 4.5 },
+    { shape: 'circle', x: 74, y: -64, radius: 4 },
+    { shape: 'circle', x: 104, y: -55, radius: 3.5 },
+    { shape: 'circle', x: 132, y: -62, radius: 5 },
+    { shape: 'circle', x: 164, y: -58, radius: 4 },
+
+    // 띠 사이의 대각선 연결점 — 넓은 빈 복도를 직선으로 관통하지 못하게만 한다.
+    { shape: 'circle', x: 38, y: 29, radius: 3 },
+    { shape: 'circle', x: 64, y: 10, radius: 3 },
+    { shape: 'circle', x: 91, y: 31, radius: 3.5 },
+    { shape: 'circle', x: 119, y: -30, radius: 3 },
+    { shape: 'circle', x: 146, y: 29, radius: 3.5 },
+    { shape: 'circle', x: 151, y: -31, radius: 3 },
+  ].map((o) => ({ ...o, material: 'rock' })),
+};
+
 /**
  * 해역 경계 → 사방을 두르는 암초 벽 넷 (정적 poly 강체 스펙).
  *
@@ -181,4 +284,5 @@ export function boundaryWalls(b) {
 export const MAPS = {
   practice: PRACTICE_MAP,
   reef: DEMO_MAP,
+  storm: STORM_MAP,
 };

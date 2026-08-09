@@ -2,16 +2,14 @@
 // `main.js` 하니스가 이미 가진 순수 모듈을 그대로 재사용하고(설계 원칙 3), 렌더링만 하니스의
 // 벡터 그림 대신 픽셀 그래픽(`sail/render.js`)으로 새로 짠다.
 //
-// 이번 화면은 손상 파이프라인을 연결하지 않는다 — 암초는 `hull` 이 없는 정적 강체라 물리로만
-// 막히고 깎이지 않는다 (`physics/obstacle.js` 머리말). 암초 배치·도착 지점은 `sail/map.js` 에
-// 하드코딩돼 있다 — `docs/d3_handoff.md` §S4 의 `maps.json` 이 이 자리를 나중에 대체한다.
+// 암초·화재가 만드는 손상도 하니스와 같은 `applyImpact` 한 경로를 탄다. 암초 자신은 `hull` 이
+// 없는 정적 강체라 깎이지 않고, 맞은 선체의 폴리곤과 고정 픽셀 표면만 함께 줄어든다.
 import './sail.css';
-import { createWorld, FixedStepper, FIXED_DT } from '../physics/world.js';
+import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../physics/world.js';
 import { applyHydroToWorld } from '../physics/hydro.js';
 import { applyFieldsToWorld } from '../physics/fields.js';
 import { createFields } from '../field/field.js';
 import { createRuleEngine, loadRules } from '../rules/engine.js';
-import ZONES from '../field/zones.json';
 import RULE_TABLE from '../rules/table.json';
 import { applyDevices, STROKE_KEYMAP } from '../physics/devices.js';
 import { createHullBody } from '../physics/body.js';
@@ -19,7 +17,13 @@ import { createObstacle } from '../physics/obstacle.js';
 import { defaultDevices } from '../items/defaults.js';
 import { itemsExtraMass } from '../items/attach.js';
 import { strokeToHull, HULL_DEFAULTS } from '../hull/polygon.js';
+import { rasterizeHullSurface } from '../hull/raster.js';
 import { CORPUS } from '../hull/corpus.js';
+import { applyImpact } from '../damage/apply.js';
+import { hottestOutlinePoint, nearestOutlinePoint, mostExposedPoint } from '../damage/hotspot.js';
+import { burnRadius } from '../damage/impact.js';
+import { installImpactListener } from '../damage/contact.js';
+import { fieldBehind } from '../rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
@@ -27,7 +31,10 @@ import { currentStage, hasNextStage, ROUTE, routeIndex } from '../game/progress.
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { drawVoyageMap } from '../scene/voyagemap.js';
 import { View } from '../render/view.js';
-import { drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
+import {
+  drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass,
+  drawWeather, drawDarkness,
+} from './render.js';
 import { MAPS, boundaryWalls } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
@@ -124,15 +131,20 @@ class SailScreen {
     this.view = new View(this.canvas);
     this.view.ppm = PPM * 0.5;
 
+    // 어느 바다인가는 progress.js 가 정하고, 맵은 id 로 한 번만 고른다.
+    this.stage = currentStage();
+    this.map = MAPS[this.stage.id];
+    if (!this.map) throw new Error(`스테이지에 대응하는 맵이 없습니다: ${this.stage.id}`);
+
     this.world = createWorld();
     this.rules = loadRules(RULE_TABLE);
-    // 잔잔한 바다 — 필드가 없어 화재·발화 규칙이 조건을 못 만족한다. 이 화면이 손상 파이프라인을
-    // 안 붙이고도 "파손 없음"인 이유는 이 존 선택이다 (계산 코드가 아니라 데이터 선택).
-    this.fields = createFields(ZONES.zones.calm.fields ?? {});
+    // 맵은 필드 데이터만 고르고, 힘·규칙·파손 경로는 모든 레벨이 똑같이 탄다.
+    this.fields = createFields(this.map.fields ?? {});
     this.engine = createRuleEngine(this.rules, this.fields);
 
     this.stepIndex = 0;
     this.simTime = 0;
+    this.impacts = installImpactListener(this.world, { now: () => this.simTime });
     this.bodies = new Set();
     this.obstacles = new Set();
     this.heldStrokes = new Set();
@@ -152,8 +164,8 @@ class SailScreen {
         // 창이 열려 있으면 조종을 받지 않는다 — 지도를 보는 동안 배가 혼자 달리면 안 된다.
         if (!this.cleared && !this.panelOpen()) this.applyControls(dt);
         applyHydroToWorld(this.world, dt);
-        applyFieldsToWorld(this.world, this.fields, dt);
-        this.engine.tick(this.world, dt);
+        applyFieldsToWorld(this.world, this.fields, dt, this.simTime);
+        this.engine.tick(this.world, dt, this.simTime);
         if (this.stepIndex % WAKE_EVERY_STEPS === 0) this.sampleWake();
       },
     });
@@ -163,11 +175,6 @@ class SailScreen {
       barFill: document.getElementById('hud-bar-fill'),
       distance: document.getElementById('hud-distance'),
     };
-    // ★ 어느 바다인가는 `game/progress.js` 가 정하고, 그 id 로 맵을 꺼내는 것이 이 한 줄이다.
-    //   맵별 분기는 여기에도 없다 — 아래는 전부 `this.map` 의 데이터만 읽는다.
-    this.stage = currentStage();
-    this.map = MAPS[this.stage.id];
-
     this.clearUi = {
       overlay: document.getElementById('clear-overlay'),
       stars: [...document.querySelectorAll('#clear-stars span')],
@@ -221,9 +228,17 @@ class SailScreen {
     // 없으므로 그때는 D1~D3 의 자동 배치(station)로 되돌아간다.
     const items = defaultDevices(design.outline, { oarX: design.oarX ?? null })
       .concat((design.items ?? []).map((it) => ({ ...it })));
+    const holes = design.holes ?? [];
     const body = createHullBody(
       this.world,
-      { outline: design.outline, holes: [], items, crew: design.crew ?? { x: 0, y: 0 }, tag: null },
+      {
+        outline: design.outline,
+        holes,
+        items,
+        crew: design.crew ?? { x: 0, y: 0 },
+        surface: rasterizeHullSurface({ outline: design.outline, holes }),
+        tag: null,
+      },
       {
         position: { x: 0, y: 0 },
         angle: 0,
@@ -239,6 +254,68 @@ class SailScreen {
     const body = createObstacle(this.world, spec);
     if (body) this.obstacles.add(body);
     return body;
+  }
+
+  // ------------------------------------------------------------ 파손
+
+  /** 이벤트가 이미 지목한 강체만 깎고, 재생성된 조각으로 Set 을 원자적으로 갈아 끼운다. */
+  carveBody(target, worldPoint, radius) {
+    if (!target || !this.bodies.has(target) || this.map.damage === false) return null;
+    const outcome = applyImpact(this.world, target, worldPoint, radius);
+    if (!outcome) return null;
+
+    this.bodies.delete(target);
+    for (const body of outcome.bodies) this.bodies.add(body);
+
+    if (outcome.result.destroyed || outcome.result.crewLost) {
+      this.heldStrokes.clear();
+      this.tappedStrokes.clear();
+      this.keys.clear();
+      this.held = {};
+    }
+    return outcome;
+  }
+
+  /** 연소 파괴 지점 — 규칙표가 가리킨 필드의 뜨거운 외곽, 없으면 직전 화점에서 번진다. */
+  burnSpot(ev) {
+    const hull = ev.target;
+    const body = ev.body;
+    const field = fieldBehind(this.rules, ev.ruleId);
+    const local = (() => {
+      if (field) {
+        const hot = hottestOutlinePoint(
+          hull.outline,
+          (x, y) => body.getWorldPoint(new Vec2(x, y)),
+          (x, y) => this.fields.sampleScalar(field, x, y, this.simTime),
+        );
+        if (hot && hot.spread > 1e-3) return hot.local;
+      }
+      return nearestOutlinePoint(hull.outline, hull.burnAt)
+        ?? mostExposedPoint(hull.outline)
+        ?? { x: 0, y: 0 };
+    })();
+
+    hull.burnAt = { x: local.x, y: local.y };
+    const world = body.getWorldPoint(new Vec2(local.x, local.y));
+    return { x: world.x, y: world.y };
+  }
+
+  consumeRuleEvents() {
+    for (const ev of this.engine.drain()) {
+      if (ev.type !== 'destroyed' || !this.bodies.has(ev.body)) continue;
+      const spot = this.burnSpot(ev);
+      this.carveBody(ev.body, spot, burnRadius(ev.target.launchArea ?? ev.target.params.area));
+    }
+  }
+
+  consumeImpacts() {
+    // 현재 항해 HUD 에 튕김 문구는 없지만 큐 상한에 고이지 않도록 항상 비운다.
+    this.impacts.drainGlances();
+    for (const impact of this.impacts.drain()) {
+      if (!this.bodies.has(impact.body)) continue;
+      if (impact.projectile) impact.projectile.getUserData().projectile.spent = true;
+      this.carveBody(impact.body, impact.at, impact.radius);
+    }
   }
 
   // ------------------------------------------------------------ 입력
@@ -512,7 +589,7 @@ class SailScreen {
     this.clearUi.next.disabled = !next;
     this.clearUi.nextNote.textContent = next
       ? '이어서 다음 바다로'
-      : '다음 스테이지 준비 중';
+      : '모든 스테이지 완료';
 
     this.clearUi.overlay.classList.remove('hidden');
     // 이어서 갈 수 있으면 그쪽에 초점을 준다 — 키보드만 쓰는 사람에게 「다시하기」가
@@ -535,12 +612,12 @@ class SailScreen {
   }
 
   updateCamera() {
-    const primary = findCrewBody(this.bodies) ?? [...this.bodies][0];
-    if (primary) this.view.follow(crewWorldPoint(primary) ?? primary.getPosition());
+    const primary = findCrewBody(this.bodies);
+    if (primary) this.view.follow(crewWorldPoint(primary));
   }
 
   sampleWake() {
-    const body = [...this.bodies][0];
+    const body = findCrewBody(this.bodies);
     if (!body) return;
     const p = body.getPosition();
     this.wake.push({ x: p.x, y: p.y });
@@ -553,9 +630,9 @@ class SailScreen {
     const elapsed = Math.min((now - this.lastFrame) / 1000, 0.25);
     this.lastFrame = now;
     this.stepper.advance(elapsed);
-    // 이 화면은 파손을 연결하지 않는다 — 규칙 이벤트는 소비하지 않고 버린다(잔잔한 바다라
-    // 실제로는 발생하지 않지만, 큐가 무한정 쌓이지 않도록 매 프레임 비워 둔다).
-    this.engine.drain();
+    // 하니스와 같은 순서 — 규칙·충돌이 지목한 강체를 물리 스텝 밖에서 재생성한다.
+    this.consumeRuleEvents();
+    this.consumeImpacts();
     this.drawMapIfOpen();
     this.updateHints();
     this.checkGoal();
@@ -572,7 +649,7 @@ class SailScreen {
     ctx.imageSmoothingEnabled = false;
 
     // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 물결만 따로 흐른다.
-    drawWater(ctx, view, this.simTime);
+    drawWater(ctx, view, this.simTime, this.map.weather);
     // 도착 지점은 수면 위 표식이라 배·암초보다 **아래**에 깐다 — 도착하는 순간 배가 고리를
     // 가리는 것이 맞다 (고리 위에 배가 올라앉아야 "들어갔다"로 읽힌다).
     drawGoal(ctx, view, this.goal, { cleared: this.cleared, sec: this.simTime });
@@ -589,10 +666,15 @@ class SailScreen {
       drawHullBody(ctx, body.getUserData().hull);
       ctx.restore();
     }
+
+    const crewAt = crewWorldPoint(findCrewBody(this.bodies)) ?? view.center;
+    const wind = this.fields.sampleVector('wind', view.center.x, view.center.y, this.simTime);
+    drawWeather(ctx, view, { sec: this.simTime, rain: this.map.weather?.rain ?? 0, wind });
+    drawDarkness(ctx, view,
+      this.fields.sampleScalar('darkness', crewAt.x, crewAt.y, this.simTime));
+
     // 화면 밖일 때만 가장자리 화살표가 뜬다 — 판단은 `drawGoalCompass` 안에서 한다.
-    drawGoalCompass(ctx, view, this.goal, crewWorldPoint(findCrewBody(this.bodies)), {
-      cleared: this.cleared,
-    });
+    drawGoalCompass(ctx, view, this.goal, crewAt, { cleared: this.cleared });
   }
 
   updateHud() {
