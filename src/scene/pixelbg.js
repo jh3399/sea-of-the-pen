@@ -9,6 +9,7 @@
 
 import { SCENES, DEFAULT_SCENE } from './bgscenes.js';
 import { BG_PHOTOS } from './bgphotos.js';
+import { startSceneFx, stopSceneFx } from './scenefx.js';
 
 const MIN_SIDE = 200;   // 짧은 쪽 논리 픽셀 수 (도트 크기 기준)
 const FADE_MS = 650;
@@ -27,12 +28,16 @@ let engine = null;
 function syncPhoto(key) {
   const el = typeof document === 'undefined' ? null : document.getElementById('bg-photo');
   if (!el) return;
+  const fx = document.getElementById('scene-fx');
   const src = BG_PHOTOS[key];
   if (src) {
     if (el.getAttribute('src') !== src) el.setAttribute('src', src);
     el.dataset.on = '1';
+    // 움직임(창밖 바다·숨)은 그림이 있는 씬에만 있다. 정의가 없으면 startSceneFx 가 끄기만 한다.
+    if (fx) { fx.dataset.on = '1'; startSceneFx(fx, key, src); }
   } else {
     el.dataset.on = '0';
+    if (fx) { fx.dataset.on = '0'; stopSceneFx(); }
   }
 }
 
