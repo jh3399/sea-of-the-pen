@@ -2,8 +2,8 @@
 // 구현 전이라, `main.js` 의 `DEMO_GOAL`/`startTurretDrill` 과 같은 처지의 하드코딩이다.
 // S4 가 `session.js` + `maps.json` 을 갖추면 이 파일은 그 맵 하나를 읽는 걸로 대체된다.
 //
-// 이 화면은 손상 파이프라인을 연결하지 않는다 — 암초는 `physics/obstacle.js` 의 정적 강체라
-// `hull` 이 없고, 배는 부딪히면 물리적으로만 막힌다 (파손 없음).
+// 항해 화면은 공용 손상 파이프라인을 연결한다. 암초는 `hull` 이 없는 정적 강체라 스스로는
+// 깎이지 않지만, 플레이어와 수동 표적 선체는 충돌·포탄 에너지에 따라 같은 규칙으로 파손된다.
 //
 // ★ 암초는 **화면 한 폭보다 넓게** 깔아야 한다. 항해 화면의 줌은 20 px/m 이라 한 화면에
 //   담기는 것이 대략 70 m × 40 m 다 — 골까지의 항로(x=0→150) 주변에만 깔면 y 로 스무 걸음만
@@ -18,6 +18,13 @@ export const DEMO_MAP = {
   goal: { x: 150, y: 0, radius: 6, label: '도착' },
   scoring: { threeStarMaxSeconds: 60, twoStarMaxSeconds: 90 },
   bounds: SEA_BOUNDS,
+  // 선택 배선용 수동 표적. screen 이 아직 만들지 않아도 되는 순수 맵 스펙이며, 연결할 때는
+  // game/targets.js 의 createPassiveTargets 로 동적 나무 선체를 만든다.
+  targets: [
+    { entityId: 'route-target-1', x: 42, y: -20, angle: 0.10, width: 4.5, height: 3, material: 'wood' },
+    { entityId: 'route-target-2', x: 82, y: 27, angle: -0.18, width: 5, height: 3.2, material: 'wood' },
+    { entityId: 'route-target-3', x: 138, y: -2, angle: 0.22, width: 4, height: 3.5, material: 'wood' },
+  ],
   obstacles: [
     // 항로 위 (원래 11개) — 골까지의 직선을 막아 지그재그를 강요하는 핵심 배치.
     { shape: 'circle', x: 25, y: 10, radius: 4 },
