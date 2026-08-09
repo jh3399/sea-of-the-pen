@@ -18,11 +18,21 @@ import { createHullBody } from '../src/physics/body.js';
 import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
 import {
   applyDevices, DEVICE_TUNING, oarFalloff, strokeGate, STROKE_KEYMAP,
+  deviceForcesLocal, createControl, cloneControl,
 } from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
 import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
 import { attachItem, itemsExtraMass, canAttachAt } from '../src/items/attach.js';
 import { ITEM_CATALOG } from '../src/items/catalog.js';
+import {
+  CANNON_TUNING, cannonEnvelope, cannonPeakForce, furthestRayOutlineHit,
+  cannonMuzzleLocal, cannonShotRequest,
+} from '../src/items/cannon.js';
+import { createPassiveTarget, createPassiveTargets } from '../src/game/targets.js';
+import {
+  createPirate, createPirates, buildPathTable, pathProgress, stepPirateMotion, stepPirateCannons,
+  rebindPirate,
+} from '../src/game/pirates.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { burnRadius, carveRadiusFromImpact, DAMAGE_TUNING } from '../src/damage/impact.js';
 import { installImpactListener, offCooldown, CONTACT_TUNING } from '../src/damage/contact.js';
@@ -3117,6 +3127,429 @@ const currentPrediction = (() => {
 })();
 check('★ 해류 띠 경계를 지나도 예측선과 실물리가 일치한다', currentPrediction < 1e-7,
   `최종 오차 ${(currentPrediction * 1000).toFixed(6)} mm`);
+
+// ─────────────────────────────────────────────── 플레이어 대포 코어 회귀
+console.log('\n\x1b[36m▌플레이어 대포 — 입력 엣지 · 반동 · 포구 · 표적 파손\x1b[0m\n');
+
+function cannonItem(overrides = {}) {
+  return {
+    key: overrides.key ?? 'bench-cannon', type: 'cannon', kind: ITEM_CATALOG.cannon.kind,
+    side: null, name: ITEM_CATALOG.cannon.name, mass: ITEM_CATALOG.cannon.mass,
+    material: ITEM_CATALOG.cannon.material, impulse: ITEM_CATALOG.cannon.impulse,
+    bind: overrides.bind ?? 'KeyF', angle: overrides.angle ?? 0,
+    x: overrides.x ?? 0, y: overrides.y ?? 0, status: {}, ...overrides,
+  };
+}
+
+function cannonRig({ outline = hulls.sloop.outline, items = [cannonItem()], position = { x: 0, y: 0 } } = {}) {
+  const world = createWorld();
+  const body = createHullBody(world, { outline, holes: [], items }, {
+    position, angle: 0, material: 'wood', extraMass: itemsExtraMass(items),
+  });
+  return { world, body, items };
+}
+
+// 홀드 입력은 상승 엣지 한 번만 소비한다. 장전이 끝나도 손을 놓지 않으면 자동 연사하지 않는다.
+const heldEdge = (() => {
+  const { body } = cannonRig();
+  let shots = applyDevices(body, { held: { KeyF: true }, now: 0 }, FIXED_DT).length;
+  for (let i = 1; i <= Math.ceil((CANNON_TUNING.reload + 0.2) / FIXED_DT); i++) {
+    shots += applyDevices(body, { held: { KeyF: true }, now: i * FIXED_DT }, FIXED_DT).length;
+  }
+  return { body, shots };
+})();
+check('대포 키를 계속 눌러도 한 발만 나간다 (홀드 자동 연사 없음)',
+  heldEdge.shots === 1, `${(CANNON_TUNING.reload + 0.2).toFixed(1)}초 홀드 → ${heldEdge.shots}발`);
+
+const repress = (() => {
+  const body = heldEdge.body;
+  applyDevices(body, { held: {}, now: 1.1 }, FIXED_DT);
+  return applyDevices(body, { held: { KeyF: true }, now: 1.1 + FIXED_DT }, FIXED_DT).length;
+})();
+check('장전 뒤 키를 놓았다 다시 누르면 다음 한 발이 나간다', repress === 1,
+  `release → repress ${repress}발`);
+
+const rejectedReload = (() => {
+  const { body } = cannonRig();
+  let now = 0;
+  const first = applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  for (let i = 0; i < 6; i++) { now += FIXED_DT; applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT); }
+  now += FIXED_DT;
+  applyDevices(body, { held: {}, now }, FIXED_DT);
+  now += FIXED_DT;
+  const early = applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  let delayed = 0;
+  for (let i = 0; i < Math.ceil((CANNON_TUNING.reload + 0.2) / FIXED_DT); i++) {
+    now += FIXED_DT;
+    delayed += applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  }
+  now += FIXED_DT;
+  applyDevices(body, { held: {}, now }, FIXED_DT);
+  now += FIXED_DT;
+  const fresh = applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  return { first, early, delayed, fresh };
+})();
+check('재장전 중 입력은 거절되고 장전 완료 뒤 지연 발사되지 않는다',
+  rejectedReload.first === 1 && rejectedReload.early === 0
+    && rejectedReload.delayed === 0 && rejectedReload.fresh === 1,
+  `첫 ${rejectedReload.first} · 조기 ${rejectedReload.early} · 지연 ${rejectedReload.delayed} · 새 엣지 ${rejectedReload.fresh}`);
+
+const substepTap = (() => {
+  const { body } = cannonRig();
+  return applyDevices(body, { held: {}, pressed: { KeyF: true }, now: 0 }, FIXED_DT).length;
+})();
+check('물리 스텝 사이의 짧은 탭도 pressed 래치로 한 발 나간다', substepTap === 1,
+  `held 없이 pressed → ${substepTap}발`);
+
+const recoilD = CANNON_TUNING.recoilDuration;
+const envA = cannonEnvelope(recoilD * 0.17);
+const envB = cannonEnvelope(recoilD * 0.83);
+check('반동 봉투는 양 끝이 0이고 시간 대칭이다',
+  cannonEnvelope(-FIXED_DT) === 0 && cannonEnvelope(0) === 0
+    && cannonEnvelope(recoilD) === 0 && Math.abs(envA - envB) < 1e-12,
+  `env(0)=0 · env(D)=0 · 대칭 오차 ${Math.abs(envA - envB).toExponential(1)}`);
+
+let integratedRecoil = 0;
+for (let t = 0; t < recoilD - 1e-12; t += FIXED_DT) {
+  integratedRecoil += cannonPeakForce(ITEM_CATALOG.cannon.impulse) * cannonEnvelope(t) * FIXED_DT;
+}
+check('고정 스텝으로 적분한 반동 총충격량이 카탈로그 6000 N·s 와 같다',
+  Math.abs(integratedRecoil - 6000) < 1e-9 && ITEM_CATALOG.cannon.impulse === 6000,
+  `${integratedRecoil.toFixed(6)} N·s`);
+
+const recoilForces = (() => {
+  const params = paramTable.sloop.p;
+  const full = cannonItem({ key: 'full', y: 2, impulse: ITEM_CATALOG.cannon.impulse });
+  const half = cannonItem({ key: 'half', y: 2, impulse: ITEM_CATALOG.cannon.impulse / 2 });
+  const control = createControl();
+  control.cannons.full = { t: recoilD / 2, wasHeld: true };
+  const a = deviceForcesLocal(params, [full], { u: 0, v: 0, w: 0 }, control);
+  control.cannons = { half: { t: recoilD / 2, wasHeld: true } };
+  const b = deviceForcesLocal(params, [half], { u: 0, v: 0, w: 0 }, control);
+  return { a, b };
+})();
+check('반동은 포신 반대 방향이고 비중심 대포의 토크가 아이템 impulse 에 비례한다',
+  recoilForces.a.fx < 0 && recoilForces.a.torque > 0
+    && Math.abs(recoilForces.a.fx / recoilForces.b.fx - 2) < 1e-12
+    && Math.abs(recoilForces.a.torque / recoilForces.b.torque - 2) < 1e-12,
+  `Fx ${recoilForces.a.fx.toFixed(0)} N · τ ${recoilForces.a.torque.toFixed(0)} N·m · 절반 impulse 에 정확히 1/2`);
+
+const cannonPrediction = (() => {
+  const item = cannonItem({ y: 1.4 });
+  const { world, body } = cannonRig({ items: [item] });
+  let first = true;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, first ? { held: { KeyF: true }, now: 0 } : { held: {} }, dt);
+      first = false;
+      applyHydroToWorld(world, dt);
+    },
+  });
+  for (let i = 0; i < 4; i++) stepper.advance(FIXED_DT);
+
+  const live = body.getUserData().hull.control;
+  const copy = cloneControl(live);
+  copy.cannons[item.key].t += 10;
+  copy.held.KeyF = true;
+  const before = JSON.stringify(live);
+  const horizon = 0.3;
+  const path = predictPath(body, { held: {} }, { horizon, stride: 1 });
+  const after = JSON.stringify(live);
+  for (let i = 0; i < Math.round(horizon / FIXED_DT); i++) stepper.advance(FIXED_DT);
+  const actual = body.getWorldCenter();
+  const predicted = path.at(-1);
+  return {
+    cloneIndependent: copy.cannons[item.key].t !== live.cannons[item.key].t && !live.held.KeyF,
+    untouched: before === after,
+    gap: Math.hypot(actual.x - predicted.x, actual.y - predicted.y),
+  };
+})();
+check('cloneControl 과 predictPath 가 실제 대포 시계·held 상태를 바꾸지 않는다',
+  cannonPrediction.cloneIndependent && cannonPrediction.untouched,
+  `깊은 복사 ${cannonPrediction.cloneIndependent ? '독립' : '공유'} · 예측 전후 ${cannonPrediction.untouched ? '동일' : '변경'}`);
+check('진행 중인 대포 반동 예측이 실제 고정 스텝 주행과 일치한다',
+  cannonPrediction.gap < 1e-6, `0.3초 오차 ${(cannonPrediction.gap * 1e6).toFixed(3)} µm`);
+
+const convexOutline = [
+  { x: -5, y: -2 }, { x: 5, y: -2 }, { x: 5, y: 2 }, { x: -5, y: 2 },
+];
+// U자 오목선체: 왼쪽 팔에서 +X 로 쏘면 외곽을 나갔다 오른쪽 팔에 다시 들어간다.
+const concaveOutline = [
+  { x: -3, y: -3 }, { x: 3, y: -3 }, { x: 3, y: 3 }, { x: 1, y: 3 },
+  { x: 1, y: -1 }, { x: -1, y: -1 }, { x: -1, y: 3 }, { x: -3, y: 3 },
+];
+const convexCannon = cannonItem({ x: 0, y: 0 });
+const concaveCannon = cannonItem({ x: -2, y: 1 });
+const convexHit = furthestRayOutlineHit(convexOutline, convexCannon, 0);
+const concaveHit = furthestRayOutlineHit(concaveOutline, concaveCannon, 0);
+const convexMuzzle = cannonMuzzleLocal(convexOutline, convexCannon);
+const concaveMuzzle = cannonMuzzleLocal(concaveOutline, concaveCannon);
+const muzzleClearance = CANNON_TUNING.radius + CANNON_TUNING.margin;
+check('볼록·오목 선체 모두 가장 먼 외곽 뒤에 포구 여유를 둔다',
+  Math.abs(convexHit - 5) < 1e-9 && Math.abs(convexMuzzle.x - (5 + muzzleClearance)) < 1e-9
+    && Math.abs(concaveHit - 5) < 1e-9 && Math.abs(concaveMuzzle.x - (3 + muzzleClearance)) < 1e-9,
+  `볼록 hit ${convexHit.toFixed(2)} → muzzle ${convexMuzzle.x.toFixed(2)} · ` +
+  `오목 hit ${concaveHit.toFixed(2)} → muzzle ${concaveMuzzle.x.toFixed(2)}`);
+
+const selfEscape = (() => {
+  const item = cannonItem();
+  const { world, body } = cannonRig({ outline: convexOutline, items: [item] });
+  installProjectileContacts(world);
+  const request = cannonShotRequest(body, item, 0);
+  const shot = spawnProjectile(world, request);
+  let elapsed = 0;
+  let first = true;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, first ? { held: { KeyF: true }, now: 0 } : { held: {} }, dt);
+      first = false;
+    },
+  });
+  const steps = Math.ceil((CONTACT_TUNING.armDelay + 0.1) / FIXED_DT);
+  for (let i = 0; i < steps; i++) { stepper.advance(FIXED_DT); elapsed += FIXED_DT; }
+  return {
+    elapsed, spent: shot.getUserData().projectile.spent,
+    alive: countProjectiles(world), separation: shot.getPosition().x - body.getPosition().x,
+  };
+})();
+check('플레이어 포탄이 자기 선체를 건드리지 않고 무장 지연 너머까지 살아서 빠져나간다',
+  selfEscape.elapsed > CONTACT_TUNING.armDelay && !selfEscape.spent
+    && selfEscape.alive === 1 && selfEscape.separation > 5 + muzzleClearance,
+  `${selfEscape.elapsed.toFixed(3)}초 · 선체 앞 ${selfEscape.separation.toFixed(2)} m · spent ${selfEscape.spent}`);
+
+const cannonCarve = (() => {
+  const outline = hulls.barbell.outline;
+  const b = bounds(outline);
+  const survivor = cannonItem({ key: 'survivor', x: b.minX + b.width * 0.15, y: 0 });
+  const lost = cannonItem({ key: 'lost', x: 0, y: 0, bind: 'KeyG' });
+  const { world, body } = cannonRig({ outline, items: [survivor, lost] });
+  const control = createControl();
+  control.cannons.survivor = { t: 0.31, wasHeld: true };
+  control.cannons.lost = { t: 0.47, wasHeld: false };
+  body.getUserData().hull.control = control;
+  const oldState = control.cannons.survivor;
+  const out = applyImpact(world, body, { x: 0, y: 0 }, 0.9);
+  const carrier = out.bodies.find((bd) => bd.getUserData().hull.items.some((it) => it.key === 'survivor'));
+  const nextState = carrier?.getUserData().hull.control?.cannons?.survivor;
+  return {
+    pieces: out.bodies.length,
+    lost: out.result.droppedItems.some((it) => it.key === 'lost'),
+    kept: !!nextState && nextState.t === 0.31 && nextState.wasHeld === true,
+    copied: !!nextState && nextState !== oldState,
+    strayLostState: out.bodies.some((bd) => bd.getUserData().hull.control?.cannons?.lost),
+  };
+})();
+check('절단 시 잃은 대포는 사라지고 살아남은 대포의 재장전 상태만 깊은 복사된다',
+  cannonCarve.pieces === 2 && cannonCarve.lost && cannonCarve.kept
+    && cannonCarve.copied && !cannonCarve.strayLostState,
+  `조각 ${cannonCarve.pieces} · 탈락 ${cannonCarve.lost} · 상태 승계 ${cannonCarve.kept} · 독립 ${cannonCarve.copied}`);
+
+const passiveTargets = (() => {
+  const world = createWorld();
+  return createPassiveTargets(world, [
+    { entityId: 'target-a', x: 8, y: 0, width: 4, height: 4 },
+    { entityId: 'target-b', x: 16, y: 2, width: 3, height: 2, material: 'iron' },
+  ]).map((body) => body.getUserData().hull);
+})();
+check('수동 표적은 일반 선체이면서 role=target 과 entityId 를 유지한다',
+  passiveTargets.every((h, i) => h.role === 'target' && h.entityId === `target-${i ? 'b' : 'a'}`),
+  passiveTargets.map((h) => `${h.entityId}:${h.role}`).join(' · '));
+
+const targetHit = (() => {
+  const world = createWorld();
+  let elapsed = 0;
+  let target = createPassiveTarget(world, { entityId: 'damage-target', x: 10, y: 0, width: 4, height: 4 });
+  installProjectileContacts(world);
+  const queue = installImpactListener(world, { now: () => elapsed });
+  const shot = spawnProjectile(world, {
+    x: 0, y: 0, angle: 0, speed: CANNON_TUNING.speed, radius: CANNON_TUNING.radius,
+    mass: CANNON_TUNING.mass, material: CANNON_TUNING.material, bornAt: 0,
+    lifetime: CANNON_TUNING.lifetime,
+  });
+  const stepper = new FixedStepper(world, {});
+  let impact = null;
+  let removed = 0;
+  let roleKept = false;
+  for (let i = 0; i < 60 && !impact; i++) {
+    stepper.advance(FIXED_DT);
+    elapsed += FIXED_DT;
+    for (const im of queue.drain()) {
+      if (im.body !== target) continue;
+      impact = im;
+      const out = applyImpact(world, target, im.at, im.radius);
+      removed = out?.result.removedArea ?? 0;
+      roleKept = out?.bodies.every((b) => {
+        const h = b.getUserData().hull;
+        return h.role === 'target' && h.entityId === 'damage-target';
+      }) ?? false;
+      target = out?.bodies[0] ?? target;
+      break;
+    }
+  }
+  return { impact, removed, roleKept, spent: shot.getUserData().projectile.spent };
+})();
+check('플레이어 포탄도 generic contact → impact → carve 경로로 수동 표적을 파손한다',
+  targetHit.impact?.source === 'shot' && targetHit.removed > 0
+    && targetHit.roleKept && targetHit.spent,
+  `source ${targetHit.impact?.source ?? '없음'} · 제거 ${targetHit.removed.toFixed(3)} m² · role 승계 ${targetHit.roleKept}`);
+
+// ─────────────────────────────────────────────── D3 ④ — 해적선
+//
+// 조준·추적 로직은 0줄이다(turrets.js 와 같은 전제). 새로 짠 것은 "경로를 따라 걷는 시계"뿐이고,
+// 선체 파손은 game/targets.js 의 표적과, 대포 발사는 items/cannon.js + physics/devices.js 의
+// 플레이어 파이프라인과 완전히 같은 경로를 탄다.
+console.log('\n\x1b[36m▌D3 ④ — 해적선\x1b[0m\n');
+
+const pirateThrows = [
+  ['미지 키', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }], script: 'boom' }],
+  ['entityId 없음', { width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['path 점 1개', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['path 중복점(길이 0 구간)', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 0, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['cannons 비어있음', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [] }],
+  [`대포 period < ${CANNON_TUNING.reload}s`, { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0, period: 0.3 }] }],
+  ['대포 부착점이 선체 밖', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 10, y: 0, angle: 0 }] }],
+  ['모르는 재질', { entityId: 'p', width: 4, height: 2, material: 'adamantium', path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+];
+const pirateThrowWorld = createWorld();
+const pirateRejected = pirateThrows.filter(([, spec]) => {
+  try { createPirate(pirateThrowWorld, spec); return false; } catch { return true; }
+});
+check('해적 스펙이 스키마 밖이면 로드 시점에 던진다 (표적·포탑과 같은 원칙)',
+  pirateRejected.length === pirateThrows.length,
+  `${pirateRejected.length}/${pirateThrows.length}종 거부`);
+
+// ── 경로 진행은 turrets.js 의 fireTime 과 같은 급의 순수 함수여야 한다. 값 자체를 기하로 검증한다.
+const straightTable = buildPathTable([{ x: 0, y: 0 }, { x: 10, y: 0 }], false);
+const midOutbound = pathProgress(straightTable, false, 2, 2.5); // 5 m, 정방향
+const atTurn = pathProgress(straightTable, false, 2, 5); // 10 m, 끝점
+const midReturn = pathProgress(straightTable, false, 2, 7.5); // 15 m → 5 m 되짚음
+const pingpongOk = Math.abs(midOutbound.x - 5) < 1e-9 && midOutbound.angle === 0
+  && Math.abs(atTurn.x - 10) < 1e-9
+  && Math.abs(midReturn.x - 5) < 1e-9 && midReturn.angle === Math.PI;
+check('왕복(loop:false) 경로는 끝에서 정확히 되짚어 오고, 되짚는 구간은 방향이 뒤집힌다',
+  pingpongOk,
+  `왕복 중간 x=${midOutbound.x.toFixed(2)} · 끝점 x=${atTurn.x.toFixed(2)} · 되짚음 중간 x=${midReturn.x.toFixed(2)},각 ${midReturn.angle.toFixed(2)}`);
+
+const loopTable = buildPathTable([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], true);
+const afterOneLap = pathProgress(loopTable, true, loopTable.total, 1);
+check('순환(loop:true) 경로는 한 바퀴 뒤 시작점으로 돌아온다',
+  Math.abs(afterOneLap.x) < 1e-6 && Math.abs(afterOneLap.y) < 1e-6,
+  `한 바퀴(${loopTable.total.toFixed(2)} m) 후 (${afterOneLap.x.toFixed(4)}, ${afterOneLap.y.toFixed(4)})`);
+
+// ★★ 누산 드리프트 회귀 — turrets.js 의 것과 같은 종류. 대포 시계(`n`)는 컨트롤러에 남는
+//    가변 상태라, 호출을 걸러 내면(스텝을 건너뛰면) 씹히는 구현이 되기 쉽다.
+//    `pressed` 는 turrets.js 의 `firedAt` 처럼 정확한 발사 시각을 들고 있지 않으므로(그 순간의
+//    edge 만 전달), 여기서 보증하는 것은 시각 일치가 아니라 **발사 횟수 일치**다.
+const pirateScheduleSpec = () => [
+  { body: {}, cannons: [{ bind: 'a', period: 1.5, phase: 0, n: 1 }] },
+  { body: {}, cannons: [{ bind: 'b', period: 0.4, phase: 0.17, n: 1 }] },
+];
+const denseSchedule = pirateScheduleSpec();
+const sparseSchedule = pirateScheduleSpec();
+const firedPirateDense = [[], []];
+const firedPirateSparse = [[], []];
+for (let k = 1; k <= 1200; k++) {
+  const now = k * FIXED_DT;
+  denseSchedule.forEach((p, i) => { if (stepPirateCannons([p], now).get(p.body)) firedPirateDense[i].push(now); });
+  if (k % 5 === 0) {
+    sparseSchedule.forEach((p, i) => { if (stepPirateCannons([p], now).get(p.body)) firedPirateSparse[i].push(now); });
+  }
+}
+check('★ 해적 대포 발사 횟수는 now 의 순수 함수다 (호출을 걸러 내도 같은 발사 수가 나온다 = 프레임률 독립)',
+  firedPirateDense.every((seq, i) => seq.length > 0 && seq.length === firedPirateSparse[i].length),
+  `[${firedPirateDense.map((a) => a.length)}] / [${firedPirateSparse.map((a) => a.length)}]`);
+
+// ── 통합: 실제 파손 가능 선체 + 실제 발사 → 플레이어와 같은 손상 파이프라인을 태워 표적을 맞힌다.
+const pirateShotHitsTarget = (() => {
+  const world = createWorld();
+  installProjectileContacts(world);
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  const [pirate] = createPirates(world, [{
+    entityId: 'bench-pirate-shot',
+    width: 4,
+    height: 2,
+    material: 'wood',
+    path: [{ x: 0, y: 0 }, { x: 0.4, y: 0 }],
+    speed: 0.05,
+    cannons: [{ x: 1.8, y: 0, angle: 0, period: 1.0, phase: 0 }],
+  }]);
+  let target = createPassiveTarget(world, { entityId: 'pirate-shot-victim', x: 14, y: 0, width: 4, height: 4 });
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      elapsed += dt;
+      stepPirateMotion([pirate], elapsed);
+      const pressed = stepPirateCannons([pirate], elapsed).get(pirate.body) ?? {};
+      const events = applyDevices(pirate.body, {
+        strokes: [], held: {}, pressed, anchor: false, now: elapsed,
+      }, dt);
+      for (const event of events) {
+        if (event.type !== 'cannonFire' || !event.request) continue;
+        spawnProjectile(world, event.request);
+      }
+    },
+  });
+  let impact = null;
+  let removed = 0;
+  for (let i = 0; i < 300 && !impact; i++) {
+    stepper.advance(FIXED_DT);
+    for (const im of queue.drain()) {
+      if (im.body !== target) continue;
+      impact = im;
+      const out = applyImpact(world, target, im.at, im.radius);
+      removed = out?.result.removedArea ?? 0;
+      target = out?.bodies[0] ?? target;
+      break;
+    }
+  }
+  return { impact, removed };
+})();
+check('해적 대포도 플레이어와 완전히 같은 발사·손상 파이프라인을 타 표적을 맞힌다',
+  pirateShotHitsTarget.impact?.source === 'shot' && pirateShotHitsTarget.removed > 0,
+  `source ${pirateShotHitsTarget.impact?.source ?? '없음'} · 제거 ${pirateShotHitsTarget.removed.toFixed(3)} m²`);
+
+// ── 절단 승계: fireCannons 가 탈락한 대포의 재장전 시계를 지우는 것과 같은 이유로, 조각에
+//    남지 않은 대포의 발사 스케줄도 rebindPirate 가 함께 버려야 한다 (안 지우면 죽은 대포가
+//    영원히 pressed 를 찍어 대는 유령 시계가 된다).
+const rebindTest = (() => {
+  const world = createWorld();
+  const [pirate] = createPirates(world, [{
+    entityId: 'rebind-test',
+    width: 4,
+    height: 2,
+    material: 'wood',
+    path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    speed: 1,
+    cannons: [{ x: 1, y: 0.5, angle: 0, period: 1.0 }, { x: 1, y: -0.5, angle: 0, period: 1.0 }],
+  }]);
+  const survivingBind = pirate.cannons[0].bind;
+  // 조각 하나에 대포 하나만 남았다고 가정 — 실제 carve 가 만들어 낼 hull.items 모양을 흉내낸다.
+  const survivingItem = pirate.body.getUserData().hull.items.find((it) => it.bind === survivingBind);
+  const newBody = createHullBody(
+    world,
+    { outline: hulls.sloop.outline, holes: [], items: [survivingItem], crew: null, role: 'pirate', entityId: 'rebind-test' },
+    { position: { x: 5, y: 5 }, angle: 0, material: 'wood', role: 'pirate', entityId: 'rebind-test' },
+  );
+  const rebound = rebindPirate(pirate, newBody);
+  return {
+    keptCount: rebound.cannons.length,
+    keptBind: rebound.cannons[0]?.bind,
+    survivingBind,
+    bodyUpdated: rebound.body === newBody,
+    independentCopy: rebound.cannons[0] !== pirate.cannons[0],
+  };
+})();
+check('절단 조각에 없는 대포의 발사 스케줄은 함께 버려진다 (devices.js#fireCannons 와 같은 원칙)',
+  rebindTest.keptCount === 1 && rebindTest.keptBind === rebindTest.survivingBind
+    && rebindTest.bodyUpdated && rebindTest.independentCopy,
+  `승계 ${rebindTest.keptCount}개(bind ${rebindTest.keptBind}) · body 갱신 ${rebindTest.bodyUpdated} · 독립 복사 ${rebindTest.independentCopy}`);
+
+// 해적선은 데모 맵에서 빠졌다(스톰 맵으로 이관 예정) — DEMO_MAP.pirates 는 없거나 빈 배열이어야
+// createPirates 가 빈 배열을 그대로 돌려주는지만 확인한다. 스펙 파싱 자체는 위 pirateThrows 와
+// 아래 스케줄/명중/승계 테스트가 명시적 스펙으로 이미 덮는다.
+check('DEMO_MAP 에는 해적선이 배치되어 있지 않다 (테스트용 배치 제거됨)',
+  createPirates(createWorld(), DEMO_MAP.pirates ?? []).length === 0,
+  `${(DEMO_MAP.pirates ?? []).length}척`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +

@@ -8,7 +8,7 @@
 //   식을 다시 쓰면 그 순간부터 예측선이 거짓말을 시작하고, 없느니만 못한 UI 가 된다.
 import { hydroForcesLocal } from './hydro.js';
 import {
-  deviceForcesLocal, stepRudder, advanceStrokes, cloneStrokeState, steerFromHeld,
+  deviceForcesLocal, stepRudder, advanceStrokes, advanceCannons, cloneControl, steerFromHeld,
 } from './devices.js';
 import { FIXED_DT } from './world.js';
 import { toLocalVector } from '../field/forces.js';
@@ -55,16 +55,15 @@ export function predictPath(body, input, options = {}) {
 
   const devices = hull.items.filter((it) => it.type);
   const live = hull.control;
-  const control = {
-    // 스트로크 시계는 **복사**한다 — 예측이 실제 조종 상태를 앞당겨 돌리면 안 된다.
-    stroke: cloneStrokeState(live?.stroke),
-    // 트리거(부스터·키)는 **지금 눌린 상태가 유지된다**고 본다. 스트로크와 달리 홀드 입력은
-    // "유지 가정"이 정의되고, 부스터를 켜 둔 채 궤적선이 그것을 무시하면 거짓말이 된다.
-    held: input.held ?? live?.held ?? {},
-    steer: input.steer ?? steerFromHeld(input.held ?? live?.held),
-    // 조타 지연까지 재현해야 "지금 꺾는 중"인 상태의 예측이 맞는다.
-    rudder: live?.rudder ?? 0,
-  };
+  // 스트로크와 대포 시계를 모두 **깊은 복사**한다 — 예측이 실제 재장전·반동 상태를 앞당기거나
+  // wasHeld 를 바꾸면 다음 실제 스텝의 발사 엣지까지 달라진다.
+  const control = cloneControl(live);
+  // 트리거(부스터·키)는 **지금 눌린 상태가 유지된다**고 본다. 대포는 엣지 장치라 예측 중 신규
+  // 발사를 만들지 않고, 이미 시작된 반동 봉투만 끝까지 재생한다.
+  control.held = { ...(input.held ?? live?.held ?? {}) };
+  control.steer = input.steer ?? steerFromHeld(input.held ?? live?.held);
+  // 조타 지연까지 재현해야 "지금 꺾는 중"인 상태의 예측이 맞는다.
+  control.rudder = live?.rudder ?? 0;
 
   const center = body.getWorldCenter();
   const velocity = body.getLinearVelocity();
@@ -78,8 +77,8 @@ export function predictPath(body, input, options = {}) {
   const path = [{ x, y }];
   for (let i = 0; i < steps; i++) {
     // devices.js 의 applyDevices 와 **같은 순서**로 돈다:
-    //   ① 스트로크 요청 소비(예측에는 신규 입력이 없다) → ② 조타 지연 → ③ 힘 → ④ 적분
-    //   → ⑤ 스트로크 시계 전진. 이 순서가 어긋나면 비트 단위 일치가 깨진다.
+    //   ① 스트로크·대포 엣지 소비(예측에는 신규 입력이 없다) → ② 조타 지연 → ③ 힘 → ④ 적분
+    //   → ⑤ 스트로크·대포 시계 전진. 이 순서가 어긋나면 비트 단위 일치가 깨진다.
     control.rudder = stepRudder(control.rudder, control.steer, dt);
 
     const c = Math.cos(angle);
@@ -113,6 +112,7 @@ export function predictPath(body, input, options = {}) {
     y += vy * dt;
     angle += w * dt;
     advanceStrokes(control, dt);
+    advanceCannons(control, dt);
 
     if (i % stride === stride - 1) path.push({ x, y });
   }

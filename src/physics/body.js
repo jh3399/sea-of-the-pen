@@ -7,12 +7,14 @@ import { decomposeHull } from '../hull/decompose.js';
 import { computeHullParams } from '../hull/params.js';
 import { polygonMoments, translate } from '../geom/poly.js';
 import { translateHullSurface } from '../hull/raster.js';
+import { createControl, cloneCannonState } from './devices.js';
 
 /**
  * 선체 조각 하나를 강체로 만든다.
  * @param {World} world
  * @param {{outline: Array<{x,y}>, holes?: Array}} piece 선체 로컬 폴리곤
- * @param {{position:{x,y}, angle:number, material?:string, extraMass?:number}} placement
+ * @param {{position:{x,y}, angle:number, material?:string, extraMass?:number,
+ *          role?:string|null, entityId?:string|null}} placement
  */
 export function createHullBody(world, piece, placement) {
   const parts = decomposeHull(piece.outline, piece.holes ?? []);
@@ -53,6 +55,9 @@ export function createHullBody(world, piece, placement) {
 
   body.setUserData({
     hull: {
+      /** 게임 계층의 분류·고유 ID. 물리식은 읽지 않고 표적/플레이어 선택과 조각 추적에 쓴다. */
+      role: piece.role ?? placement.role ?? null,
+      entityId: piece.entityId ?? placement.entityId ?? null,
       outline: piece.outline,
       holes: piece.holes ?? [],
       // 부착물(§4.1) — D1 부터 여기에 기본 3종 장치가 들어온다. 파손 시 소속 폴리곤을
@@ -128,6 +133,9 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       //   로컬 원점이 그 조각의 새 무게중심으로 옮겨간다. oldHull 에서 그대로 물려받으면
       //   두 조각 다 주인공을 태우게 되어 절단 판정이 무의미해진다.
       crew: piece.crew ? { x: piece.crew.x - m.cx, y: piece.crew.y - m.cy } : null,
+      // 표적 같은 게임 역할은 형상과 무관한 정체성이므로 모든 생존 조각에 그대로 남긴다.
+      role: oldHull?.role ?? null,
+      entityId: oldHull?.entityId ?? null,
       tag: oldHull?.tag ?? null,
       // 불·젖음은 조각을 따라간다 (§6.2). 타는 배를 쪼개서 불을 끌 수는 없다.
       status: oldHull?.status ?? {},
@@ -155,6 +163,19 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       extraMass: items.reduce((s, it) => s + (it.mass ?? 0), 0),
     });
     if (!body) continue;
+
+    // 다른 조종 상태(노 봉투·타각·닻)는 강체 재생성 때 의도대로 초기화한다. 단, 살아남은 대포의
+    // 재장전·반동 시계와 wasHeld 는 아이템 고유 key 로 깊은 복사한다. 이를 버리면 파손 직후
+    // 즉시 재발사할 수 있고, 객체를 공유하면 한 조각의 시계가 다른 조각을 앞당긴다.
+    const oldCannons = oldHull?.control?.cannons ?? {};
+    const survivingCannons = items.filter((it) => it.type === 'cannon' && it.key && oldCannons[it.key]);
+    if (survivingCannons.length > 0) {
+      const control = createControl();
+      for (const item of survivingCannons) {
+        control.cannons[item.key] = cloneCannonState(oldCannons[item.key]);
+      }
+      body.getUserData().hull.control = control;
+    }
 
     // 강체 분리 시 회전에서 오는 접선 속도를 각 조각에 반영한다.
     const r = Vec2.sub(body.getWorldCenter(), oldCenter);

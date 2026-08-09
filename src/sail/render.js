@@ -4,6 +4,7 @@
 // 기존 픽셀 아이콘 헬퍼를 그대로 재사용한다.
 import { MATERIALS } from '../hull/params.js';
 import { surfaceCellKey, surfaceCellPoint } from '../hull/raster.js';
+import { cannonMuzzleLocal, CANNON_TUNING } from '../items/cannon.js';
 import {
   drawItemMarker, drawRudderMarker, drawCrewSprite, drawPixelGrid,
   markerAngleToward, itemMarkerSize, OAR_PUSH,
@@ -30,6 +31,7 @@ const RUDDER_PIXEL = ITEM_PIXEL * 2;
 const CREW_PIXEL = 0.05;
 /** 노는 선체 밖으로 뻗는 장치라 다른 마커보다 크다 (22칸 × 0.09 = 약 2 m 짜리 노). */
 const OAR_PIXEL = 0.09;
+const CANNON_BARREL_WIDTH = 0.18;
 
 const WATER_BASE = '#1c4fae';
 const WATER_DEEP = 'rgba(6, 22, 64, 0.28)';
@@ -492,7 +494,7 @@ export function drawGoalCompass(ctx, view, goal, from, { cleared = false } = {})
  * 출항 때 고정한 선체 표면 셀을 그린다. 파손 이벤트가 기존 셀만 걷어내므로 매 프레임 폴리곤을
  * 다시 래스터화하지 않고, 남은 도트의 크기와 위치도 절대 재배치되지 않는다.
  */
-function drawHullPixels(ctx, hull) {
+function drawHullPixels(ctx, hull, target = false) {
   const surface = hull.surface;
   if (!surface?.cells?.length) return;
 
@@ -507,8 +509,8 @@ function drawHullPixels(ctx, hull) {
   }
   const span = Math.max(maxX - minX + surface.cell, 0.4);
   const bowBand = maxX - span * 0.14;
-  const dark = shade(mat.color, -0.32);
-  const bowLight = shade(mat.color, 0.16);
+  const dark = target ? '#7c302f' : shade(mat.color, -0.32);
+  const bowLight = target ? shade(mat.color, 0.06) : shade(mat.color, 0.16);
 
   for (const pixel of surface.cells) {
     const { col, row } = pixel;
@@ -558,17 +560,92 @@ function drawRudder(ctx, item, angle) {
     () => drawRudderMarker(ctx, 0, 0, RUDDER_PIXEL, -angle));
 }
 
+/** 대포 — 포구 계산과 같은 방향·외곽 교점을 써서 보이는 포신과 실제 발사선이 일치한다. */
+function drawCannon(ctx, hull, item) {
+  const muzzle = cannonMuzzleLocal(hull.outline, item);
+  const angle = item.angle ?? 0;
+  const full = Math.hypot(muzzle.x - item.x, muzzle.y - item.y);
+  const length = Math.max(0.28, full - CANNON_TUNING.radius - CANNON_TUNING.margin * 0.5);
+  ctx.save();
+  ctx.translate(item.x, item.y);
+  ctx.rotate(angle);
+  ctx.fillStyle = '#182233';
+  ctx.fillRect(0, -CANNON_BARREL_WIDTH / 2, length, CANNON_BARREL_WIDTH);
+  ctx.fillStyle = '#65758a';
+  ctx.fillRect(length - 0.12, -CANNON_BARREL_WIDTH * 0.72, 0.12, CANNON_BARREL_WIDTH * 1.44);
+  ctx.restore();
+  drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, 'cannon', 0, 0, ITEM_PIXEL));
+}
+
 /** 강체 하나(선체 로컬 좌표계 안에서) — 선체 + 부착 아이템 + 주인공. */
-export function drawHullBody(ctx, hull) {
-  drawHullPixels(ctx, hull);
+export function drawHullBody(ctx, hull, { target = false } = {}) {
+  drawHullPixels(ctx, hull, target);
   const rudderAngle = hull.control?.rudder ?? 0;
   for (const item of hull.items) {
     if (item.type === 'oar' && item.side) { drawOar(ctx, item); continue; }
     if (item.type === 'rudder') { drawRudder(ctx, item, rudderAngle); continue; }
+    if (item.type === 'cannon') { drawCannon(ctx, hull, item); continue; }
     drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, item.type, 0, 0, ITEM_PIXEL));
   }
   if (hull.crew) {
     drawUprightIcon(ctx, hull.crew.x, hull.crew.y, () => drawCrewSprite(ctx, 0, 0, CREW_PIXEL));
+  }
+}
+
+/** 포탄과 유계 섬광. 반경·잔상 길이는 월드 단위라 보이는 궤적과 실제 충돌 크기가 일치한다. */
+export function drawCombatEffects(ctx, view, projectiles, sparks, now, sparkLife = 0.35) {
+  for (const body of projectiles) {
+    const shot = body.getUserData()?.projectile;
+    if (!shot) continue;
+    const p = body.getPosition();
+    const v = body.getLinearVelocity();
+    ctx.strokeStyle = 'rgba(255, 211, 92, 0.58)';
+    ctx.lineWidth = view.px(2);
+    ctx.beginPath();
+    ctx.moveTo(p.x - v.x * 0.05, p.y - v.y * 0.05);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    // ⚠ 포탄만은 **콜라이더 크기가 곧 게임플레이 정보**라 `view.px()` 로 부풀리면 안 된다
+    // (d3_handoff §⑧). 아슬아슬한 회피가 거짓말이 된다. 멀리서도 보이게 하는 일은 채워진
+    // 몸통이 아니라 **바깥쪽 후광**이 맡는다 — 후광은 반투명이라 경계가 콜라이더로 읽히지 않는다.
+    const glow = view.px(2.5);
+    if (glow > shot.radius) {
+      ctx.fillStyle = 'rgba(255, 211, 92, 0.35)';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, glow, 0, TAU);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#ffd35c';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, shot.radius, 0, TAU);
+    ctx.fill();
+  }
+
+  for (const spark of sparks) {
+    const age = (now - spark.at) / sparkLife;
+    if (age < 0 || age > 1) continue;
+    const fade = 1 - age;
+    const glance = spark.kind === 'glance';
+    ctx.globalAlpha = fade;
+    ctx.strokeStyle = glance ? '#b9f2ff' : '#ffd35c';
+    ctx.lineWidth = view.px(1 + 3 * fade);
+    ctx.beginPath();
+    if (glance) {
+      const r = 0.35 + age * 1.1;
+      ctx.moveTo(spark.x - r, spark.y - r * 0.35);
+      ctx.lineTo(spark.x + r, spark.y + r * 0.35);
+      ctx.moveTo(spark.x - r * 0.35, spark.y + r);
+      ctx.lineTo(spark.x + r * 0.35, spark.y - r);
+    } else {
+      ctx.arc(spark.x, spark.y, 0.45 + age * 1.5, 0, TAU);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = fade * fade;
+    ctx.fillStyle = glance ? '#effcff' : '#fff6d8';
+    ctx.beginPath();
+    ctx.arc(spark.x, spark.y, Math.max(spark.radius * 1.6, view.px(2)), 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 }
 
