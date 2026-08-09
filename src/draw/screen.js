@@ -7,7 +7,7 @@ import { StrokeCapture } from '../hull/strokes.js';
 import {
   strokeToHull, toHullLocal, toHullWorld, pxToMetric, metricToPx, HULL_DEFAULTS,
 } from '../hull/polygon.js';
-import { canAttachAt, attachItem, detachItem } from '../items/attach.js';
+import { canAttachAt, attachItem, detachItem, nextBind } from '../items/attach.js';
 import { ITEM_CATALOG } from '../items/catalog.js';
 import { oarAnchorsAt } from '../items/defaults.js';
 import { MATERIALS } from '../hull/params.js';
@@ -38,6 +38,30 @@ const RUDDER_MARKER_PIXEL = ITEM_MARKER_PIXEL * 2;
 /** 노 배치 모드의 의사 타입 — 노는 카탈로그 아이템이 아니라 기본 장치라 `placing` 에만 산다. */
 const PLACING_OAR = 'oar';
 
+/**
+ * §4.1 의 "방향"을 실제로 쓰는 `kind` 들 — 이것만 휠로 돌린다.
+ *
+ * ★ 타입이 아니라 **kind** 로 판별한다. 새 아이템이 카탈로그에 들어와도 이 파일은 안 고친다
+ *   (팔레트 필터가 진행도를 읽는 것과 같은 이유).
+ *   thruster·impulse 는 **미는 방향**, sail 은 **돛면의 법선**이라 뜻이 다르다 — 라벨을
+ *   나누는 것이 그래서다.
+ * ⚠ foil(키)·mass(밸러스트)·joint(닻)은 `angle` 을 아예 안 읽는다. 돌리게 두면 아무 일도
+ *   안 일어나는 노브가 되어 "고장 났나"가 된다.
+ */
+const ANGLE_KINDS = new Set(['thruster', 'impulse', 'sail']);
+
+/** 휠 한 칸 = 45°. 8방향이면 픽셀 마커가 또렷하게 읽힌다 (더 잘게 쪼개면 구분이 안 된다). */
+const ANGLE_STEP = Math.PI / 4;
+
+/** 8방향 이름 — 뱃머리(+X)가 0 이고 반시계로 돈다 (물리각과 같은 방향). */
+const ANGLE_LABELS = ['앞', '앞왼쪽', '왼쪽', '뒤왼쪽', '뒤', '뒤오른쪽', '오른쪽', '앞오른쪽'];
+
+/** 물리각(rad) → 8방향 이름. */
+function angleLabel(angle) {
+  const step = Math.round(angle / ANGLE_STEP);
+  return ANGLE_LABELS[((step % 8) + 8) % 8];
+}
+
 /** 노 마커의 한 칸 크기 (px). 부착 아이템 마커(3)보다 큰 것은 노가 **선체 밖으로 뻗는**
  *  장치라서다 — 다른 마커처럼 선체 안 점으로 찍으면 방향이 읽히지 않는다. */
 const OAR_MARKER_PIXEL = 4;
@@ -63,6 +87,8 @@ class DrawScreen {
     this.design = null; // strokeToHull() 결과 — 유효한 폐곡선이 확정되면 채워진다
     this.hull = { items: [] }; // items/attach.js 가 기대하는 최소 형태
     this.placing = null; // 배치 모드 중인 아이템 타입
+    /** 다음에 붙일 아이템의 방향 (선체 로컬 rad, 반시계 +). 휠로 돌린다. */
+    this.attachAngle = 0;
     this.finished = false;
     this.finishedDesign = null;
     this.liveRawPoints = null;
@@ -265,22 +291,57 @@ class DrawScreen {
     }
   }
 
+  /** 지금 고른 것이 방향을 쓰는 아이템인가 (휠이 의미 있는가). */
+  placingUsesAngle() {
+    return Boolean(this.placing)
+      && this.placing !== PLACING_OAR
+      && ANGLE_KINDS.has(ITEM_CATALOG[this.placing]?.kind);
+  }
+
+  /** 배치 모드의 안내 문구 — 방향을 쓰는 아이템이면 지금 방향과 휠 안내를 함께 적는다. */
+  placingStatus() {
+    if (this.placing === PLACING_OAR) {
+      return '노를 달 앞뒤 위치를 클릭하세요 — 좌우로는 알아서 선체 가장자리에 붙습니다.';
+    }
+    if (!this.placing) return '선체가 확정됐습니다.';
+    const name = ITEM_CATALOG[this.placing].name;
+    if (!this.placingUsesAngle()) {
+      return `${name}를 붙일 자리를 선체 안에서 클릭하세요 (다시 누르면 뗍니다).`;
+    }
+    // 돛의 angle 은 미는 방향이 아니라 **돛면의 법선**이라 말을 바꾼다.
+    const what = ITEM_CATALOG[this.placing].kind === 'sail' ? '돛이 향한 쪽' : '미는 방향';
+    return `${name} — ${what}: ${angleLabel(this.attachAngle)}. `
+      + '휠을 굴려 방향을 정하고 선체 안을 클릭하세요 (다시 누르면 뗍니다).';
+  }
+
   togglePlacing(type) {
     if (!this.design?.ok || this.finished) return;
     this.placing = this.placing === type ? null : type;
     this.oarHoverX = null;
     this.itemHoverLocal = null;
+    // 아이템을 바꾸면 방향은 앞으로 되돌린다. 앞 아이템에 맞춰 돌려 둔 각이 남아 있으면
+    // 다음 것이 엉뚱한 쪽을 보고 붙는다 (그리고 그건 화면에 안 보이는 상태다).
+    this.attachAngle = 0;
     this.capture.enabled = !this.placing;
     this.buildDeviceList();
     this.buildItemList();
-    this.setStatus(
-      this.placing === PLACING_OAR
-        ? '노를 달 앞뒤 위치를 클릭하세요 — 좌우로는 알아서 선체 가장자리에 붙습니다.'
-        : this.placing
-          ? `${ITEM_CATALOG[type].name}를 붙일 자리를 선체 안에서 클릭하세요 (다시 누르면 뗍니다).`
-          : '선체가 확정됐습니다.',
-      'ok',
-    );
+    this.setStatus(this.placingStatus(), 'ok');
+    this.render();
+  }
+
+  /**
+   * 휠로 부착 방향을 돌린다 — **화면에서 시계방향**이 아래로 굴리는 쪽이다.
+   *
+   * ⚠ 물리는 Y-up, 캔버스는 Y-down 이라 **화면 시계방향 = 물리각 감소**다
+   *   (`metricToPx` 가 y 를 뒤집는다). 부호를 뒤집으면 눈에 보이는 회전과 실제 추력
+   *   방향이 반대가 되는데, 그건 배를 띄워 봐야 드러나는 종류의 버그다.
+   */
+  handleCanvasWheel(e) {
+    if (!this.placingUsesAngle() || !this.design?.ok) return;
+    e.preventDefault();   // 페이지가 같이 스크롤되면 그리는 손이 화면을 잃는다
+    const dir = e.deltaY > 0 ? -1 : 1;
+    this.attachAngle = (this.attachAngle + dir * ANGLE_STEP) % (Math.PI * 2);
+    this.setStatus(this.placingStatus(), 'ok');
     this.render();
   }
 
@@ -320,7 +381,17 @@ class DrawScreen {
       this.setStatus('선체 안쪽에 붙여야 해요.', 'bad');
       return;
     }
-    attachItem(this.hull, this.placing, { x: local.x, y: local.y, angle: 0 });
+    attachItem(this.hull, this.placing, {
+      x: local.x, y: local.y,
+      angle: this.attachAngle,
+      // ★ 트리거는 **비어 있는 것을 하나 골라** 준다 (하니스와 같은 `nextBind`).
+      //   예전엔 bind 를 안 넘겨 카탈로그 기본값으로 떨어졌는데, 그러면 부스터를 둘 달면
+      //   **둘 다 A** 가 되어 한 키에 같이 켜졌다 — 좌우로 나눠 번갈아 누르는 슬라럼이
+      //   아예 불가능했다. 빈 키가 A·S·D·F·G·H 여섯이나 있는데 안 쓰이고 있었다.
+      // ⚠ `bind: null` 인 아이템(돛)은 트리거가 없는 것이 사양이므로 배정하지 않는다.
+      bind: ITEM_CATALOG[this.placing].bind === null ? null : nextBind(this.hull.items),
+    });
+    this.setStatus(this.placingStatus(), 'ok');
     this.render();
   }
 
@@ -352,6 +423,8 @@ class DrawScreen {
     // 상대경로 — base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 (finish() 와 같은 방식).
     this.menuBtn.addEventListener('click', () => { location.href = 'index.html'; });
     this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
+    // passive:false — 안에서 preventDefault 로 페이지 스크롤을 막는다.
+    this.canvas.addEventListener('wheel', (e) => this.handleCanvasWheel(e), { passive: false });
     this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMove(e));
     this.canvas.addEventListener('mouseleave', () => {
       if (this.oarHoverX === null && this.itemHoverLocal === null) return;
@@ -469,18 +542,25 @@ class DrawScreen {
     // 확정된 장치가 먼저, 그 위에 커서를 따라다니는 반투명 미리보기.
     if (this.oarX !== null) this.renderOarPair(ctx, this.oarPlacementAt(this.oarX), 1);
     for (const item of this.hull.items) {
-      this.renderItemMarker(ctx, item.type, { x: item.x, y: item.y });
+      this.renderItemMarker(ctx, item.type, { x: item.x, y: item.y }, 1, null, item.angle ?? 0);
     }
     if (this.placing === PLACING_OAR && this.oarHoverX !== null) {
       this.renderOarPair(ctx, this.oarPlacementAt(this.oarHoverX), 0.55);
     } else if (this.placing && this.itemHoverLocal) {
       const ok = canAttachAt(this.design.outline, [], this.itemHoverLocal);
-      this.renderItemMarker(ctx, this.placing, this.itemHoverLocal, 0.55, ok);
+      this.renderItemMarker(ctx, this.placing, this.itemHoverLocal, 0.55, ok, this.attachAngle);
     }
   }
 
-  /** 부착 아이템 — 미리보기일 때는 정확한 부착점을 점선 고리로 함께 표시한다. */
-  renderItemMarker(ctx, type, local, alpha = 1, ok = null) {
+  /**
+   * 부착 아이템 — 미리보기일 때는 정확한 부착점을 점선 고리로 함께 표시한다.
+   *
+   * ★ `angle` 은 **선체 로컬 물리각**(Y-up, 반시계 +)이고, 화면 회전으로는 노 한 쌍과
+   *   **같은 경로**로 바꾼다: 방향을 화면 픽셀 벡터로 만든 뒤 `markerAngleToward` 에 넘긴다.
+   *   그래야 선체가 어떤 각도로 놓여 있어도(`design.angle`) 마커가 따라온다 — 노가 좌우
+   *   고정값을 안 쓰는 것과 같은 이유이고, 변환을 두 벌 만들면 반드시 한쪽이 틀어진다.
+   */
+  renderItemMarker(ctx, type, local, alpha = 1, ok = null, angle = 0) {
     const p = this.localToPx(local);
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -493,8 +573,16 @@ class DrawScreen {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (type === 'rudder') drawRudderMarker(ctx, p.x, p.y, RUDDER_MARKER_PIXEL);
-    else drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);
+    if (type === 'rudder') {
+      drawRudderMarker(ctx, p.x, p.y, RUDDER_MARKER_PIXEL);
+    } else if (ANGLE_KINDS.has(ITEM_CATALOG[type]?.kind)) {
+      // 월드 물리각 → 화면 픽셀 벡터 (metricToPx 가 y 를 뒤집는다) → 마커 회전각.
+      const world = (this.design?.angle ?? 0) + angle;
+      const marker = markerAngleToward(Math.cos(world), -Math.sin(world));
+      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL, marker);
+    } else {
+      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);
+    }
     ctx.restore();
   }
 
