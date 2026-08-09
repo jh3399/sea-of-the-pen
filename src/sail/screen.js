@@ -35,12 +35,15 @@ import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/au
 import { drawVoyageMap } from '../scene/voyagemap.js';
 import { createPassiveTargets } from '../game/targets.js';
 import { createPirates, stepPirateMotion, stepPirateCannons, rebindPirate } from '../game/pirates.js';
+import { createBoss, BOSS_TUNING } from '../game/boss.js';
 import { spawnProjectile, cullProjectiles, installProjectileContacts } from '../damage/projectile.js';
+import { polygonMoments, translate } from '../geom/poly.js';
 import { View } from '../render/view.js';
 import {
   drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass, drawCombatEffects,
   drawWeather, drawDarkness,
 } from './render.js';
+import { drawBoss, drawBeam } from './bossart.js';
 import { MAPS, boundaryWalls } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
@@ -52,6 +55,8 @@ const WAKE_EVERY_STEPS = 4;
 const WAKE_MAX = 16;
 const SPARK_LIFE = 0.35;
 const SPARK_MAX = 24;
+/** 맵의 각도는 도(degree)로 적는다 — 손으로 쓰는 파일에 라디안을 적게 하지 않는다. */
+const DEG = Math.PI / 180;
 
 const MUTED_KEY = 'shipwright:muted';   // local — 메뉴와 같은 키를 쓴다 (취향은 화면을 넘어 남는다)
 const BGM_VOL = 0.7;
@@ -137,12 +142,15 @@ class SailScreen {
   constructor() {
     this.canvas = document.getElementById('sea');
     this.view = new View(this.canvas);
-    this.view.ppm = PPM * 0.5;
 
     // 어느 바다인가는 progress.js 가 정하고, 맵은 id 로 한 번만 고른다.
     this.stage = currentStage();
     this.map = MAPS[this.stage.id];
     if (!this.map) throw new Error(`스테이지에 대응하는 맵이 없습니다: ${this.stage.id}`);
+    // 고정 아레나는 추적하지 않고 줌을 창에 맞춘다. 그 밖의 바다는 지금까지 그대로 20 px/m.
+    this.arena = this.map.camera?.mode === 'arena' ? this.map.camera : null;
+    if (this.arena) this.applyArena();
+    else this.view.ppm = PPM * 0.5;
 
     this.world = createWorld();
     this.rules = loadRules(RULE_TABLE);
@@ -159,6 +167,20 @@ class SailScreen {
     this.pirates = new Map();
     this.projectiles = new Set();
     this.obstacles = new Set();
+    /** 보스 몸통 조각 — `boss.parts` 와 같은 Set 을 공유한다 (game/boss.js). */
+    this.boss = null;
+    /** 보스가 던진 난파선. 플레이어 조각과 섞이면 카메라·장비창이 헷갈리므로 따로 둔다. */
+    this.wrecks = new Set();
+    /**
+     * 보스 전용 시계. `simTime` 과 나눠 두는 이유는 **창이 열려도 물리가 안 멈추기** 때문이다
+     * (`panelOpen` 은 조종만 끊는다). 설정창은 절대 막을 수 없으니 여기서 시간을 멈춰
+     * 탄막이 창 뒤에서 쌓이는 것을 막는다. 멈춘 채 `simTime` 을 넘기면 재개하는 순간
+     * `turrets.js` 의 while 백스톱이 밀린 발사를 한 스텝에 쏟아 낸다.
+     */
+    this.bossClock = 0;
+    this.wreckSeq = 0;
+    this.failed = false;
+    this.sinkCause = null;
     this.sparks = [];
     this.heldStrokes = new Set();
     this.tappedStrokes = new Set();
@@ -182,6 +204,8 @@ class SailScreen {
         // 해적선은 조준·추적이 없다 — 항로 위 자리가 `now` 의 순수 함수로 정해진다. 대포가
         // 이번 스텝의 최신 포구 위치를 쓰도록 발사(applyControls)보다 먼저 옮겨 둔다.
         stepPirateMotion(this.pirates.values(), this.simTime);
+        // 보스도 같은 자리에서 움직인다 — 다만 누워 있으므로 경로조차 없고 상수에 못 박는다.
+        this.stepBoss(dt);
         // 창이 열려 있으면 조종을 받지 않는다 — 지도를 보는 동안 배가 혼자 달리면 안 된다.
         if (!this.cleared && !this.panelOpen()) this.applyControls(dt);
         else this.pressed = {};
@@ -197,6 +221,9 @@ class SailScreen {
       barFill: document.getElementById('hud-bar-fill'),
       distance: document.getElementById('hud-distance'),
       equipment: document.getElementById('hud-equipment'),
+      bossHp: document.getElementById('boss-hp'),
+      bossBar: document.getElementById('boss-bar-fill'),
+      bossPhase: document.getElementById('boss-phase'),
     };
     this.clearUi = {
       overlay: document.getElementById('clear-overlay'),
@@ -221,7 +248,24 @@ class SailScreen {
     });
     this.clearUi.next.addEventListener('click', () => this.toNextStage());
 
-    window.addEventListener('resize', () => this.view.resize());
+    this.failUi = {
+      overlay: document.getElementById('fail-overlay'),
+      badge: document.getElementById('fail-badge'),
+      time: document.getElementById('fail-time'),
+    };
+    // 클리어 화면의 두 출구와 **같은 규칙** — 아무것도 지우지 않는다.
+    document.getElementById('btn-fail-retry')?.addEventListener('click', () => {
+      location.href = 'sail.html';
+    });
+    document.getElementById('btn-fail-menu')?.addEventListener('click', () => {
+      location.href = 'index.html';
+    });
+
+    // ⚠ `applyArena` 는 반드시 `resize()` **뒤에** 온다 — width/height 를 갱신하는 것이 resize 다.
+    window.addEventListener('resize', () => {
+      this.view.resize();
+      if (this.arena) this.applyArena();
+    });
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     // ⚠ 창이 포커스를 잃으면 keyup 이 오지 않는다. Alt-Tab 을 트리거를 누른 채로 하면
@@ -232,6 +276,7 @@ class SailScreen {
     this.launch(loadHandoff() ?? fallbackDesign());
     for (const body of createPassiveTargets(this.world, this.map.targets ?? [])) this.targets.add(body);
     for (const p of createPirates(this.world, this.map.pirates ?? [])) this.pirates.set(p.body, p);
+    if (this.map.boss) this.spawnBoss(this.map.boss);
     for (const spec of this.map.obstacles) this.placeObstacle(spec);
     // 해역 경계 — 벽도 그냥 암초다 (같은 `placeObstacle`, 같은 재질). 경계 전용 물리·판정
     // 코드가 0줄인 이유이고, 그래서 "여기서부터 못 간다"를 규칙이 아니라 지형이 말한다.
@@ -249,7 +294,19 @@ class SailScreen {
     requestAnimationFrame((t) => this.loop(t));
   }
 
-  // ------------------------------------------------------------ 출항
+  // ------------------------------------------------------------ 카메라 · 출항
+
+  /**
+   * 고정 아레나 — 카메라를 못 박고 줌을 창에 맞춘다.
+   *
+   * `View` 는 `center`·`ppm` 이 그냥 필드라 밖에서 넣으면 되고, `begin()` 이 매 프레임 새로
+   * 읽는다. 회전 금지 규칙(`render/view.js`)은 그대로 지킨다 — 끄는 것은 **추적**뿐이다.
+   */
+  applyArena() {
+    const { at, fit } = this.arena;
+    this.view.snapTo(at);
+    this.view.ppm = Math.min(this.view.width / fit.w, this.view.height / fit.h);
+  }
 
   /** 선체 로컬 폴리곤 + 손으로 붙인 아이템을 기본 장치 위에 얹어 강체로 만든다 (main.js#launch). */
   launch(design) {
@@ -258,6 +315,7 @@ class SailScreen {
     const items = defaultDevices(design.outline, { oarX: design.oarX ?? null })
       .concat((design.items ?? []).map((it) => ({ ...it })));
     const holes = design.holes ?? [];
+    const start = this.map.start ?? { x: 0, y: 0, angle: 0 };
     const body = createHullBody(
       this.world,
       {
@@ -269,8 +327,10 @@ class SailScreen {
         tag: null,
       },
       {
-        position: { x: 0, y: 0 },
-        angle: 0,
+        // 출항 자세는 맵 데이터다. 없으면 지금까지의 원점·정동(正東) 그대로라 앞 네 바다는
+        // 비트 단위로 동일하다. 탄막 아레나만 이걸 써서 배를 화면 아래에 세운다.
+        position: { x: start.x, y: start.y },
+        angle: (start.angle ?? 0) * DEG,
         material: design.material ?? 'wood',
         extraMass: itemsExtraMass(items),
         role: 'player',
@@ -285,6 +345,106 @@ class SailScreen {
     const body = createObstacle(this.world, spec);
     if (body) this.obstacles.add(body);
     return body;
+  }
+
+  // ------------------------------------------------------------ 보스
+
+  /**
+   * 보스를 띄운다. 몸통(핵)은 **깎이는 선체**라 플레이어 대포가 이미 있는 경로로 그대로
+   * 파손시키고, 팔은 `createObstacle` 이 만드는 안 깎이는 암초다 — 보스 전용 물리도
+   * 전용 파손도 없다 (`game/targets.js` 의 원칙).
+   */
+  spawnBoss(spec) {
+    this.boss = createBoss(this.world, spec, this.fields, {
+      onFall: () => this.onBossFall(),
+      onPhase: () => this.cue('roar'),
+      onSuck: () => this.cue('suck'),
+      // ⚠ 상태가 **바뀌는 순간에만** 온다 (boss.js#setBeam). 매 프레임 부르면 스윕이
+      //   겹쳐 쌓여 화이트노이즈가 된다.
+      onBeam: (state) => this.cue(state.phase === 'telegraph' ? 'charge' : 'hit'),
+    });
+    for (const arm of spec.arms) this.placeObstacle(arm);
+  }
+
+  /** 보스 시계를 전진시키고 이번 스텝의 포탄을 낳는다. `onPreStep` 안이라 강체 생성이 안전하다. */
+  stepBoss(dt) {
+    const boss = this.boss;
+    if (!boss) return;
+    boss.pin();
+    if (this.cleared || this.failed) return;
+    // 창이 열려 있는 동안은 시계를 세운다 — 탄막이 창 뒤에서 쌓이면 안 된다.
+    if (this.panelOpen()) return;
+    this.bossClock += dt;
+    for (const req of boss.step(this.bossClock)) {
+      const shot = spawnProjectile(this.world, { ...req, bornAt: this.simTime });
+      if (shot) this.projectiles.add(shot);
+    }
+    for (const req of boss.drainWrecks()) this.throwWreck(req);
+  }
+
+  /**
+   * 난파선 한 조각 — 플레이어 배와 **완전히 같은** 선체다 (`createHullBody`). 그래서 유체
+   * 저항·흡입·규칙 엔진·파손이 전부 공짜로 따라온다. 대신 주인공도 장치도 없다.
+   *
+   * ⚠ 폴리곤을 **먼저 무게중심으로 옮긴다.** `computeHullParams` 도 hydro 회전 클램프도
+   *   `respawnPieces` 도 전부 무게중심이 로컬 원점이라고 가정한다.
+   * ⚠ 속도를 14 m/s 로 묶는다. `createHullBody` 에는 CCD 옵션이 없고 동적↔동적 TOI 는 한쪽이
+   *   bullet 이어야 도는데, 판자 두께가 1.4 m 라 0.23 m/step 이면 6배 여유가 남는다.
+   */
+  throwWreck(req) {
+    if (this.wrecks.size >= req.max) return null;
+    const m = polygonMoments(req.outline);
+    const centred = translate(req.outline, -m.cx, -m.cy);
+    const body = createHullBody(
+      this.world,
+      {
+        outline: centred,
+        holes: [],
+        items: [],
+        crew: null,
+        surface: rasterizeHullSurface({ outline: centred, holes: [] }),
+        role: 'wreck',
+        entityId: `wreck-${this.wreckSeq++}`,
+      },
+      {
+        position: { x: req.x, y: req.y },
+        angle: req.angle,
+        material: 'wood',
+        extraMass: 0,
+        role: 'wreck',
+        entityId: `wreck-${this.wreckSeq}`,
+      },
+    );
+    if (!body) return null;
+    body.setLinearVelocity(new Vec2(Math.cos(req.angle) * req.speed, Math.sin(req.angle) * req.speed));
+    body.setAngularVelocity((this.wreckSeq % 2 ? 1 : -1) * 0.6);
+    this.wrecks.add(body);
+    return body;
+  }
+
+  /** 흡입이 켜져 있으면 입 가까이 온 난파선을 삼킨다 — 판이 영영 어지러워지지 않게 하는 청소부. */
+  swallowWrecks() {
+    const boss = this.boss;
+    if (!boss?.sucking) return;
+    for (const body of [...this.wrecks]) {
+      const p = body.getPosition();
+      if (!boss.swallows(p)) continue;
+      this.addSpark(p, 'hit', 0.6);
+      this.world.destroyBody(body);
+      this.wrecks.delete(body);
+    }
+  }
+
+  /**
+   * 보스가 쓰러졌다 — **죽은 것이 아니다** (不可殺伊). 공격을 그만두고 늘어질 뿐이고,
+   * 벌어진 입이 그대로 도착 지점이 된다.
+   */
+  onBossFall() {
+    this.goal = createGoal({ x: this.boss.coreAt.x, y: this.boss.coreAt.y, radius: 5, label: '정수' });
+    // ★ 반드시 다시 잰다. 골이 없던 동안 `initialDistance` 가 Infinity 라, 안 고치면
+    //   진행 바가 `clamp01(NaN)` 으로 굳어 골이 생겨도 복구되지 않는다.
+    this.initialDistance = this.currentDistance();
+    this.cue('win');
   }
 
   // ------------------------------------------------------------ 파손
@@ -303,6 +463,7 @@ class SailScreen {
       this.tappedStrokes.clear();
       this.keys.clear();
       this.held = {};
+      this.showFailResult(outcome.result.crewLost ? 'crewLost' : 'destroyed');
     }
     return outcome;
   }
@@ -334,6 +495,9 @@ class SailScreen {
   consumeRuleEvents() {
     for (const ev of this.engine.drain()) {
       if (ev.type !== 'destroyed' || !this.bodies.has(ev.body)) continue;
+      // 침몰 사유는 **깎기 전에** 잡는다 — 깎는 순간 실패 화면이 뜨므로 그 뒤에 적으면 늦다.
+      // 어느 규칙이 죽였는지는 `ruleId` 가 들고 있다 (rules/engine.js).
+      this.sinkCause = ev.ruleId === 'iron-melts-down' ? 'melted' : 'burned';
       const spot = this.burnSpot(ev);
       this.carveBody(ev.body, spot, burnRadius(ev.target.launchArea ?? ev.target.params.area));
     }
@@ -419,6 +583,14 @@ class SailScreen {
     };
     window.addEventListener('pointerdown', wake, { once: true });
     window.addEventListener('keydown', wake, { once: true });
+  }
+
+  /**
+   * 효과음 한 번. 오디오가 아직 안 깨어 있으면 조용히 흘린다 (첫 입력 전에는 AudioContext 가
+   * 잠겨 있다 — `initAudioUi`). 부르는 쪽마다 `if (this.audioReady)` 를 쓰지 않기 위한 것.
+   */
+  cue(name) {
+    if (this.audioReady) sfx(name);
   }
 
   applyVolumes() {
@@ -666,9 +838,39 @@ class SailScreen {
       : '모든 스테이지 완료';
 
     this.clearUi.overlay.classList.remove('hidden');
+    // 도착 팡파르. `victory` 는 loop:false 라 한 번 울리고 끝난다.
+    if (this.audioReady) playBgm('victory');
     // 이어서 갈 수 있으면 그쪽에 초점을 준다 — 키보드만 쓰는 사람에게 「다시하기」가
     // 기본이면 클리어할 때마다 같은 바다를 한 번 더 돌게 된다.
     (next ? this.clearUi.next : this.clearUi.retry).focus();
+  }
+
+  /**
+   * 침몰 — 지금까지 어느 바다에도 없던 상태다. 배가 부서지면 조종 불가능한 잔해로 영원히
+   * 표류하는 것이 기존 거동이었다 (`CLAUDE.md` 의 ⚠ 남은 것 ②).
+   *
+   * 배지는 **왜 졌는지**를 한 줄로 말한다. 다시 그릴 때 무엇을 고쳐야 하는지가 여기서 나와야
+   * 실패가 벌이 아니라 정보가 된다 — 이 게임의 실패는 언제나 설계로 되돌아가는 문이다.
+   * 사유는 `consumeRuleEvents` 가 규칙 id 에서 미리 잡아 둔다 (`sinkCause`).
+   *
+   * ⚠ 래치가 필요하다. `carveBody`·`consumeImpacts` 양쪽에서 불릴 수 있고, 한 프레임에 조각이
+   *   여러 번 깎이면 중복 호출된다.
+   */
+  showFailResult(reason) {
+    if (this.failed || this.cleared) return;
+    this.failed = true;
+    const cause = this.sinkCause;
+    const label = (() => {
+      if (cause === 'melted') return '철이 녹아내렸다';
+      if (cause === 'burned') return '불타 무너졌다';
+      if (reason === 'crewLost') return '발밑이 잘려 나갔다';
+      return '배가 부서졌다';
+    })();
+    if (this.failUi.badge) this.failUi.badge.textContent = label;
+    if (this.failUi.time) this.failUi.time.textContent = formatClearTime(this.simTime);
+    this.failUi.overlay?.classList.remove('hidden');
+    document.getElementById('btn-fail-retry')?.focus();
+    this.cue('lose');
   }
 
   /**
@@ -690,6 +892,8 @@ class SailScreen {
   }
 
   updateCamera() {
+    // 고정 아레나는 추적하지 않는다. 카메라는 생성자·resize 에서 이미 못 박혀 있다.
+    if (this.arena) return;
     const player = findCrewBody(this.bodies);
     const at = crewWorldPoint(player);
     if (at) this.view.follow(at);
@@ -711,13 +915,14 @@ class SailScreen {
     if (this.sparks.length > SPARK_MAX) this.sparks.splice(0, this.sparks.length - SPARK_MAX);
   }
 
+  /** @returns {object|null} `applyImpact` 결과. 호출부는 지금까지처럼 진리값으로 써도 된다. */
   carveMember(set, body, at, radius) {
-    if (!set.has(body) || this.map.damage === false) return false;
+    if (!set.has(body) || this.map.damage === false) return null;
     const outcome = applyImpact(this.world, body, at, radius);
-    if (!outcome) return false;
+    if (!outcome) return null;
     set.delete(body);
     for (const next of outcome.bodies) set.add(next);
-    return true;
+    return outcome;
   }
 
   /**
@@ -743,10 +948,41 @@ class SailScreen {
     for (const impact of this.impacts.drain()) {
       if (impact.projectile) impact.projectile.getUserData().projectile.spent = true;
       this.addSpark(impact.at, 'hit', impact.projectile?.getUserData()?.projectile?.radius);
-      if (this.bodies.has(impact.body)) this.carveMember(this.bodies, impact.body, impact.at, impact.radius);
-      else if (this.targets.has(impact.body)) this.carveMember(this.targets, impact.body, impact.at, impact.radius);
+      if (this.bodies.has(impact.body)) {
+        // 주인공의 배만 실패 판정을 낸다 — 표적·해적·난파선은 부서져도 항해가 계속된다.
+        const out = this.carveMember(this.bodies, impact.body, impact.at, impact.radius);
+        // 내 배가 깎였다 — 네 바다 전부에서 이제 소리가 난다 (지금까지 미배선이었다).
+        if (out) this.cue('damage');
+        if (out?.result.destroyed || out?.result.crewLost) {
+          this.releaseInput();
+          this.showFailResult(out.result.crewLost ? 'crewLost' : 'destroyed');
+        }
+      } else if (this.targets.has(impact.body)) this.carveMember(this.targets, impact.body, impact.at, impact.radius);
       else if (this.pirates.has(impact.body)) this.carvePirate(impact.body, impact.at, impact.radius);
+      else if (this.wrecks.has(impact.body)) this.carveMember(this.wrecks, impact.body, impact.at, impact.radius);
+      else if (this.boss?.parts.has(impact.body)) this.carveBoss(impact.body, impact.at, impact.radius);
     }
+  }
+
+  /**
+   * 보스 피격 — **깎는 것은 모두와 같은 `carveMember`** 이고, 다른 것은 그 결과를 보스에게
+   * 알려 페이즈를 옮기는 한 줄뿐이다.
+   *
+   * ★ 입이 닫혀 있으면 **아예 깎지 않는다.** 몸만 깎고 진행을 막으면 "때렸는데 아무 일도
+   *   없다"가 되어 플레이어가 무엇이 유효타인지 배울 수 없다. 흡입 직후의 취약 창이 유일한
+   *   진행 수단이라는 규칙이 화면에서도 그대로 읽혀야 한다.
+   */
+  carveBoss(body, at, radius) {
+    const boss = this.boss;
+    if (!boss.open || boss.fallen) {
+      // 튕겨 냈다는 표시만 남긴다 — 무반응이면 버그처럼 보인다.
+      this.addSpark(at, 'glance', Math.max(radius, CANNON_TUNING.radius));
+      return false;
+    }
+    if (!this.carveMember(boss.parts, body, at, radius)) return false;
+    boss.takeHit();
+    this.cue('hit');
+    return true;
   }
 
   cullShots() {
@@ -775,6 +1011,7 @@ class SailScreen {
     this.consumeRuleEvents();
     this.consumeImpacts();
     this.cullShots();
+    this.swallowWrecks();
     this.drawMapIfOpen();
     this.updateHints();
     this.checkGoal();
@@ -792,20 +1029,36 @@ class SailScreen {
 
     // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 표면만 따로 흐른다.
     const surface = this.map.surface ?? null;
-    const flow = surface?.flowField
+    // 흡입이 있는 바다는 **칸마다** 흐름을 묻는다 — 방사장을 카메라 중심 한 점으로 재면
+    // 화면 전체가 한쪽으로 미끄러져 물이 어디로 가는지 거짓말을 한다 (`drawWater` 주석).
+    const flowAt = surface?.flowField && this.boss
+      ? (x, y) => this.fields.sampleVector(surface.flowField, x, y, this.simTime)
+      : null;
+    const flow = surface?.flowField && !flowAt
       ? this.fields.sampleVector(surface.flowField, view.center.x, view.center.y, this.simTime)
       : { x: 0, y: 0 };
-    drawWater(ctx, view, this.simTime, { ...this.map.weather, surface, flow });
+    drawWater(ctx, view, this.simTime, { ...this.map.weather, surface, flow, flowAt });
+    // 콜라이더가 없는 하반신 — 물 **위에** 그리고 그 위에 수몰 베일을 덮는다. 물이 맨 처음
+    // 불투명하게 화면을 덮으므로(render.js) 물보다 먼저 그린 것은 어차피 지워진다.
+    if (this.boss) drawBoss(ctx, view, this.boss, { sec: this.simTime, pass: 'deep', surface });
     // 도착 지점은 수면 위 표식이라 배·암초보다 **아래**에 깐다 — 도착하는 순간 배가 고리를
     // 가리는 것이 맞다 (고리 위에 배가 올라앉아야 "들어갔다"로 읽힌다).
     drawGoal(ctx, view, this.goal, { cleared: this.cleared, sec: this.simTime });
     // 화면 밖 장애물을 거르는 것은 `drawObstacle` 안에서 한다 — 암초밭이 해역 전체를 덮어
     // 60개가 넘고, 그중 화면에 걸치는 것은 늘 몇 개뿐이다.
     for (const body of this.obstacles) {
-      drawObstacle(ctx, view, body.getUserData()?.obstacle?.spec, { shoal: surface?.shoal });
+      const spec = body.getUserData()?.obstacle?.spec;
+      // 보스의 팔은 암초가 아니다 — 회색 바위로 칠하고 톱니를 내면 안 된다. `bossart.js` 가
+      // **createObstacle 에 넘긴 바로 그 점 목록**을 그린다.
+      if (spec?.boss) continue;
+      drawObstacle(ctx, view, spec, { shoal: surface?.shoal });
     }
+    // 빔 — 수면 위, 배 아래. 경고선과 발사선이 같은 [from,to] 를 쓴다.
+    if (this.boss) drawBeam(ctx, view, this.boss, { sec: this.simTime });
     drawWake(ctx, this.wake, { color: surface?.wake });
-    for (const [set, target] of [[this.targets, true], [this.pirates.keys(), true], [this.bodies, false]]) {
+    for (const [set, target] of [
+      [this.targets, true], [this.pirates.keys(), true], [this.wrecks, true], [this.bodies, false],
+    ]) {
       for (const body of set) {
         const p = body.getPosition();
         const angle = body.getAngle();
@@ -816,6 +1069,9 @@ class SailScreen {
         ctx.restore();
       }
     }
+    // ★ 보스의 콜라이더는 **배보다 위**다. 배가 팔을 덮으면 지나갈 수 있다고 읽히는데,
+    //   물리적으로 겹칠 수 없으니 팔이 위에 있어도 잃는 것이 없고 불변식을 산다.
+    if (this.boss) drawBoss(ctx, view, this.boss, { sec: this.simTime, pass: 'solid', surface });
 
     const crewAt = crewWorldPoint(findCrewBody(this.bodies)) ?? view.center;
     const wind = this.fields.sampleVector('wind', view.center.x, view.center.y, this.simTime);
@@ -864,8 +1120,32 @@ class SailScreen {
     this.hud.equipment.classList.remove('hidden');
   }
 
+  /**
+   * 보스의 잔여 몸.
+   *
+   * ★ **HP 가 아니라 남은 선체 면적이다.** 대포가 실제로 깎아 낸 폴리곤 면적을 그대로
+   *   읽으므로 새 상태가 하나도 없고, 화면에 보이는 형상 손실과 항상 같은 값을 말한다.
+   *   §7.1 이 "배는 닳는 것이지 체력이 줄지 않는다"고 쓴 것과 어긋나지 않는 이유다 —
+   *   닳는 것을 세는 계기판이지 별도 자원이 아니다.
+   */
+  updateBossHud() {
+    const el = this.hud.bossHp;
+    if (!el) return;
+    if (!this.boss) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    const boss = this.boss;
+    boss.measure();
+    // 쓰러지는 문턱(`fallAt`)을 0 으로 보이게 다시 스케일한다 — 바가 62% 에서 멈추면
+    // 플레이어는 "아직 남았는데 왜 끝났지"로 읽는다. 눈금은 **싸움의 진행도**여야 한다.
+    const span = 1 - BOSS_TUNING.fallAt;
+    const left = clamp01(span > 0 ? (boss.health - BOSS_TUNING.fallAt) / span : 0);
+    this.hud.bossBar.style.width = `${(left * 100).toFixed(1)}%`;
+    this.hud.bossPhase.textContent = boss.fallen ? '쓰러졌다' : boss.phase.name;
+  }
+
   updateHud() {
     this.updateEquipmentHud();
+    this.updateBossHud();
     // 도착하면 시계·거리 바를 그 순간 값에 고정한다 — 이후 배가 표류해도 숫자가 흔들리지 않는다.
     if (this.cleared && this._huddedAtClear) return;
 

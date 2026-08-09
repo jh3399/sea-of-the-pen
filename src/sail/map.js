@@ -361,6 +361,129 @@ export const VOLCANO_MAP = {
 };
 
 /**
+ * 4장 「불가사리의 바다」 — 고전 탄막 구도의 고정 아레나.
+ *
+ * ★ **이 맵만 카메라를 안 따라간다.** `camera.mode === 'arena'` 한 줄이 추적을 끄고 줌을
+ *   창 크기에 맞춘다 (`sail/screen.js`). 회전 금지 규칙은 그대로다 — 끄는 것은 추적뿐이다.
+ *   플레이어가 화면 아래, 보스가 화면 위에 **고정**돼야 "부채꼴이 내려온다"가 성립한다.
+ *
+ * ★ **뱃머리가 +X 인 것이 이 맵의 조작이다.** 보스는 +Y 쪽에 있으므로 배는 위협에 대해
+ *   옆으로 서 있다 — 이방성 항력이 횡:종 약 3.9배라 **좌우 회피는 싸고**(저항 작은 축),
+ *   보스에게 다가가려면 느린 90° 선회를 해야 한다. 새 물리 코드 0줄로 나오는 트레이드오프다.
+ *
+ * ★ 몸통(핵)은 **깎이는 선체**이고 팔은 **안 깎이는 암초**다. 그래서 대포는 핵에만 통하고,
+ *   팔은 넘을 수 없는 벽으로 남아 270° 노치가 유일한 접근로가 된다. 팔은 전부 사다리꼴
+ *   (볼록 확정)이다 — planck 이 오목 폴리곤의 볼록껍질을 조용히 취하는 탓에, 곡선으로 그리면
+ *   보이는 가장자리와 멈추는 자리가 어긋난다 (`physics/obstacle.js:36`).
+ */
+export const BULGASARI_BOUNDS = { minX: -28, maxX: 28, minY: -14, maxY: 26, thickness: 9 };
+
+/** 보스 핵의 중심 (m). 맵·보스·골이 같은 값을 봐야 해서 상수로 뽑는다. */
+const CORE_AT = { x: 0, y: 14 };
+/** 위에서 비스듬히 내려다보는 단축률. 팔이 세로로 눌려 "수면에 누워 있다"로 읽힌다. */
+const SQUASH = 0.6;
+
+/**
+ * 핵(입) — 무게중심이 원점인 볼록 십각형 (선체 로컬 좌표).
+ *
+ * ★ **덩치는 팔이 내고 핵은 작다.** 처음엔 반경 6(면적 85 m²)이었는데, 대포 한 발이 뜯는
+ *   것이 둥근 표면에 빗맞아 평균 0.3 m² 라 쓰러뜨리는 데 100발 넘게 걸렸다. 핵은 몸이
+ *   아니라 **입**이고, 40 m 짜리 불가사리에 폭 8 m 짜리 입은 이상하지 않다.
+ *   작아진 대신 조준이 필요해져 탄막 게임으로서도 맞다.
+ */
+const CORE_POINTS = (() => {
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const t = (i / 10) * Math.PI * 2;
+    // 살짝 들쭉날쭉하게 — 완전한 원이면 생물이 아니라 공으로 보인다. 해시가 아니라
+    // 고정 수열이라 매번 같은 모양이 나온다.
+    const r = 5 + [0.4, -0.25, 0.35, -0.4, 0.25, 0.4, -0.35, 0.25, -0.25, 0.35][i];
+    pts.push([r * Math.cos(t), r * Math.sin(t) * 0.78]);
+  }
+  return pts;
+})();
+
+/**
+ * 팔 하나 → 사다리꼴 두 마디. 안쪽 마디는 핵에 겹치게 시작해 이음매가 안 보이게 한다.
+ * 각 마디는 정점 4개짜리 **볼록** 폴리곤이라 planck 의 볼록껍질이 형상을 바꾸지 않는다.
+ */
+function bossArm(deg, reach = 19.5) {
+  const t = (deg * Math.PI) / 180;
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  const px = -s;   // 진행 방향의 수직 (폭 방향)
+  const py = c;
+  const pt = (r, w) => [
+    CORE_AT.x + c * r + px * w,
+    CORE_AT.y + (s * r + py * w) * SQUASH,
+  ];
+  const seg = (r0, w0, r1, w1) => ({
+    shape: 'poly',
+    x: 0,
+    y: 0,
+    points: [pt(r0, w0), pt(r1, w1), pt(r1, -w1), pt(r0, -w0)],
+    material: 'rock',
+    boss: 'arm',
+  });
+  const mid = 5.2 + (reach - 5.2) * 0.45;
+  return [seg(5.2, 2.2, mid, 2.4), seg(mid, 2.4, reach, 0.8)];
+}
+
+export const BULGASARI_MAP = {
+  id: 'bulgasari',
+  number: 4,
+  label: '불가사리의 바다',
+  bgm: 'boss',
+  camera: { mode: 'arena', at: { x: 0, y: 3 }, fit: { w: 64, h: 38 } },
+  // 뱃머리는 +X (동). 위협은 +Y 라 배는 옆으로 서서 출발한다 — 위 ★ 참조.
+  start: { x: 0, y: -9, angle: 0 },
+  // ★ 처음에는 도착 지점이 **없다.** 보스가 쓰러져야 입이 열리고 그때 생긴다 (game/boss.js).
+  //   `createGoal(null)` 이 null 을 돌려주고 판정·나침반·HUD 가 전부 null 을 견딘다.
+  goal: null,
+  scoring: { threeStarMaxSeconds: 150, twoStarMaxSeconds: 240 },
+  bounds: BULGASARI_BOUNDS,
+  fields: {
+    darkness: [{ shape: 'uniform', value: 0.26 }],
+  },
+  weather: { rain: 0, gloom: 0.3 },
+  surface: {
+    base: '#101a3a',
+    deep: 'rgba(6, 10, 34, 0.5)',
+    glint: '#8fb4ff',
+    shoal: 'rgba(150, 120, 220, 0.6)',
+    wake: '#c9b6ff',
+    // 흡입이 켜지면 이 필드가 방사장이 되고, 물이 **칸마다** 안쪽으로 흐른다.
+    flowField: 'current',
+  },
+  damage: true,
+  /**
+   * 보스 정의. 팔은 `obstacles` 와 같은 스펙 형식이라 `createObstacle` 이 그대로 만든다.
+   * 18° / 90° / 162° / 234° / 306° — **270° 가 비어 있고 그것이 접근로다.**
+   */
+  boss: {
+    core: { x: CORE_AT.x, y: CORE_AT.y, points: CORE_POINTS },
+    /**
+     * ⚠ **정오각별이 아니다.** 아래 두 팔이 뒤로 젖혀져 있고(218°·322°) 짧다.
+     *
+     * 처음엔 234°·306° 의 정오각별이었는데, 그 둘이 아래로 V 를 만들어 핵을 가렸다.
+     * 실측: 아래에서 핵을 직접 맞힐 수 있는 폭이 **4.4 m** — 배 한 척 폭이 2.1 m 이니
+     * 사실상 한 줄뿐이고, 그 줄은 하필 부채꼴이 가장 촘촘한 정중앙이라 **유일한 사격
+     * 자리가 곧 유일한 사지**가 됐다. 게다가 한 자리를 계속 뚫는 것은 흩어 쏘는 것보다
+     * 2.7배 비효율이라(이미 깎인 자리는 다시 깎이지 않는다) 그 한 줄조차 나빴다.
+     * 젖히고 나니 사격 폭 11 m · 접근 통로 8.9 m 가 됐다.
+     * 팔이 제각각인 것은 불가사리로서 이상하지 않다 — 오래 싸운 몸이고, 입이 플레이어를
+     * 향해 열려 있다는 것이 이 형상의 뜻이다.
+     */
+    arms: [[18, 19.5], [90, 19.5], [162, 19.5], [218, 12.5], [322, 12.5]]
+      .flatMap(([deg, reach]) => bossArm(deg, reach)),
+    /** 장식(콜라이더 없음)이 물에 잠겨 보이기 시작하는 반경 (m). */
+    submergeFrom: 15,
+  },
+  // 아레나에 암초는 없다 — 피할 것은 탄막이지 지형이 아니다. 경계 벽만 두른다.
+  obstacles: [],
+};
+
+/**
  * 해역 경계 → 사방을 두르는 암초 벽 넷 (정적 poly 강체 스펙).
  *
  * ★ 막는 방식이 **보이지 않는 벽이 아니라 암초**인 것이 요점이다. `createObstacle` 이 이미
@@ -409,4 +532,5 @@ export const MAPS = {
   reef: DEMO_MAP,
   storm: STORM_MAP,
   volcano: VOLCANO_MAP,
+  bulgasari: BULGASARI_MAP,
 };

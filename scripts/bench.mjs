@@ -5,7 +5,7 @@
 //
 // D0 은 성능("세 스파이크가 프레임 드랍 없이 도는가")을, D1 은 설계 의도가 코드로 성립하는지를
 // 묻는다 — 정지 시 키가 무효인가, 비대칭 선체가 조향 코드 0줄로 도는가, 예측선이 정직한가.
-import { strokeToHull } from '../src/hull/polygon.js';
+import { strokeToHull, HULL_DEFAULTS } from '../src/hull/polygon.js';
 import { computeHullParams, HYDRO_TUNING, MATERIALS } from '../src/hull/params.js';
 import { decomposeHull } from '../src/hull/decompose.js';
 import { CORPUS, CORPUS_LABELS } from '../src/hull/corpus.js';
@@ -46,8 +46,9 @@ import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
 import { rateTravelTime } from '../src/game/scoring.js';
 import {
-  DEMO_MAP, PRACTICE_MAP, STORM_MAP, VOLCANO_MAP, MAPS, boundaryWalls,
+  DEMO_MAP, PRACTICE_MAP, STORM_MAP, VOLCANO_MAP, BULGASARI_MAP, MAPS, boundaryWalls,
 } from '../src/sail/map.js';
+import { createBoss, BOSS_PHASES, BOSS_TUNING } from '../src/game/boss.js';
 import { STAGES, ROUTE } from '../src/game/progress.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
@@ -2898,11 +2899,14 @@ console.log('\n\x1b[36m▌레벨 2 — 성긴 암초밭 · 5초 방향 폭풍\x1
 const playableMaps = Object.values(MAPS);
 check('기존 1장 맵은 MAPS.reef 로 그대로 보존된다', MAPS.reef === DEMO_MAP,
   playableMaps.map((map) => map.label).join(' → '));
-check('연습 0장과 본편 1~3장이 있고 ID·번호가 겹치지 않는다',
-  playableMaps.length === 4
-    && new Set(playableMaps.map((map) => map.id)).size === playableMaps.length
+// 번호는 **0부터 빈틈없이** 이어져야 한다. 개수를 리터럴로 박으면 바다를 더할 때마다
+// 여기를 고쳐야 하고, 그러다 보면 정작 "번호가 겹쳤다"를 놓친다.
+check('연습 0장부터 마지막 장까지 ID·번호가 겹치지 않고 빈틈없이 이어진다',
+  new Set(playableMaps.map((map) => map.id)).size === playableMaps.length
     && new Set(playableMaps.map((map) => map.number)).size === playableMaps.length
-    && playableMaps.map((map) => map.number).sort((a, b) => a - b).join(',') === '0,1,2,3',
+    && playableMaps.map((map) => map.number).sort((a, b) => a - b)
+      .every((n, i) => n === i)
+    && playableMaps.length === STAGES.length,
   `${playableMaps.length}장 · ${playableMaps.map((map) => `${map.id}:${map.number}`).join(' / ')}`);
 
 function declarativeMap(value, key = '') {
@@ -3010,8 +3014,7 @@ check('레벨 3 도착 지점은 해역 경계 안에 있다',
   `골 (${VOLCANO_MAP.goal.x}, ${VOLCANO_MAP.goal.y})`);
 check('불의 바다는 storm 다음 플레이 스테이지이며 지도에서 열려 있다',
   STAGES.findIndex((stage) => stage.id === 'volcano') === STAGES.findIndex((stage) => stage.id === 'storm') + 1
-    && ROUTE.find((node) => node.id === 'volcano')?.locked !== true
-    && ROUTE.find((node) => node.id === 'bulgasari')?.locked === true,
+    && ROUTE.find((node) => node.id === 'volcano')?.locked !== true,
   STAGES.map((stage) => stage.id).join(' → '));
 
 const volcanoFields = createFields(VOLCANO_MAP.fields);
@@ -3551,7 +3554,317 @@ check('DEMO_MAP 에는 해적선이 배치되어 있지 않다 (테스트용 배
   createPirates(createWorld(), DEMO_MAP.pirates ?? []).length === 0,
   `${(DEMO_MAP.pirates ?? []).length}척`);
 
-// ─────────────────────────────────────────────── 종합
+// ─────────────────────────────────────────────── D3 ⑤ — 보스전 (4장 불가사리의 바다)
+//
+// ★ 이 절의 설계 제약은 위 3장 절의 교훈 하나다: **필드 값을 재는 것으로는 아무것도
+//   증명되지 않는다.** 온도만 검사하면 규칙 엔진도 파손 경로도 통째로 빠진 채 통과한다.
+//   그래서 아래는 전부 (a) 실제로 시뮬레이션을 돌려 결과를 보거나 (b) 임계를 규칙표·튜닝
+//   상수에서 **읽는다**. 리터럴로 박으면 노브를 돌릴 때 회귀가 조용히 뜻을 잃는다.
+console.log('\n\x1b[36m▌D3 ⑥ — 보스전 (불가사리의 바다)\x1b[0m\n');
+
+check('불가사리의 바다는 volcano 다음 플레이 스테이지이며 지도에서 열려 있다',
+  STAGES.findIndex((s) => s.id === 'bulgasari') === STAGES.findIndex((s) => s.id === 'volcano') + 1
+    && ROUTE.find((node) => node.id === 'bulgasari')?.locked !== true
+    && Boolean(MAPS.bulgasari),
+  STAGES.map((s) => s.id).join(' → '));
+
+// 아레나 줌이 다른 바다와 같은 자릿수인가. 리터럴이 아니라 기존 줌에서 범위를 만든다 —
+// 여기가 어긋나면 물 타일·바위 그리드 등 모든 렌더 튜닝이 같이 어긋난다.
+const arenaPpm = Math.min(1280 / BULGASARI_MAP.camera.fit.w, 720 / BULGASARI_MAP.camera.fit.h);
+const sailPpm = HULL_DEFAULTS.pixelsPerMeter * 0.5;
+check('고정 아레나의 줌이 다른 바다(20 px/m)와 같은 자릿수다',
+  BULGASARI_MAP.camera.mode === 'arena' && arenaPpm > sailPpm * 0.7 && arenaPpm < sailPpm * 1.3,
+  `${arenaPpm.toFixed(2)} px/m (기준 ${sailPpm})`);
+
+// 탄막 구도를 **기하로** 단정한다 — 플레이어가 아래, 보스가 위, 뱃머리는 옆(+X).
+check('플레이어는 화면 아래·보스는 화면 위이고 뱃머리는 위협과 직각이다',
+  BULGASARI_MAP.start.y < 0 && BULGASARI_MAP.start.y < BULGASARI_MAP.boss.core.y
+    && BULGASARI_MAP.start.angle === 0,
+  `출발 y ${BULGASARI_MAP.start.y} · 핵 y ${BULGASARI_MAP.boss.core.y} · 뱃머리 ${BULGASARI_MAP.start.angle}°`);
+
+// ★ 기존 네 바다가 안 건드려졌다. "모든 맵에 기본값을 준다"가 하나를 바꿨을 때 잡는 회귀다.
+check('앞의 네 바다는 camera·start 가 없고 도착 지점을 그대로 갖는다',
+  [PRACTICE_MAP, DEMO_MAP, STORM_MAP, VOLCANO_MAP]
+    .every((m) => m.camera === undefined && m.start === undefined && m.goal != null),
+  '4/4');
+
+// ★ planck 이 오목 폴리곤의 볼록껍질을 **조용히** 취하므로, 볼록이 아닌 팔은 보이는
+//   가장자리와 멈추는 자리가 갈라진다. 이 검사가 그 유일한 기계적 방어선이다.
+const isConvex = (pts) => {
+  let sign = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length]; const c = pts[(i + 2) % pts.length];
+    const z = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (Math.abs(z) < 1e-9) continue;
+    if (sign === 0) sign = Math.sign(z);
+    else if (Math.sign(z) !== sign) return false;
+  }
+  return true;
+};
+const bossArms = BULGASARI_MAP.boss.arms;
+check('보스의 팔은 전부 볼록이라 planck 의 볼록껍질이 형상을 바꾸지 않는다',
+  bossArms.length > 0 && bossArms.every((a) => isConvex(a.points) && a.points.length <= 12),
+  `${bossArms.length}마디 · 최대 정점 ${Math.max(...bossArms.map((a) => a.points.length))}`);
+
+// 접근로 — 270° 노치가 배가 지나갈 만큼 열려 있는가. 리터럴 3 m 가 아니라 **실제 슬루프의
+// 선폭**과 비교한다. 선체 튜닝이 바뀌면 이 회귀도 같이 따라와야 한다.
+const segDistTo = (p, a, b) => {
+  const vx = b[0] - a[0]; const vy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / (vx * vx + vy * vy || 1)));
+  return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
+};
+let corridorHalf = Infinity;
+for (let y = BULGASARI_MAP.start.y; y <= BULGASARI_MAP.boss.core.y - 6; y += 0.25) {
+  for (const arm of bossArms) {
+    for (let i = 0; i < arm.points.length; i++) {
+      const d = segDistTo([0, y], arm.points[i], arm.points[(i + 1) % arm.points.length]);
+      if (d < corridorHalf) corridorHalf = d;
+    }
+  }
+}
+const sloopBeam = spawn('sloop', { devices: true }).body.getUserData().hull.params.beam;
+check('270° 접근로가 슬루프 선폭보다 넓다 (지나갈 수 있되 공짜는 아니다)',
+  corridorHalf * 2 > sloopBeam,
+  `통로 ${(corridorHalf * 2).toFixed(2)} m vs 선폭 ${sloopBeam.toFixed(2)} m`);
+
+// ── 규칙표 — 임계는 전부 **읽는다** ──────────────────────────────────────
+const ruleOf = (id) => RULES.find((r) => r.id === id);
+const ironMelts = ruleOf('iron-melts');
+const ironMeltsDown = ruleOf('iron-melts-down');
+const lavaTemp = VOLCANO_MAP.fields.temperature[0].value;
+check('★ 철이 녹는 임계는 용암보다 위다 — 3장의 교훈(철은 용암에 안 탄다)이 그대로 산다',
+  ironMelts && ironMelts.when.gte > lavaTemp,
+  `iron-melts ${ironMelts?.when.gte}° > 용암 ${lavaTemp}°`);
+
+const beamValue = BOSS_PHASES.find((p) => p.beam)?.beam.value;
+check('빔은 모든 재질의 발화 임계 위다 — 재질 검사가 아니라 회피 아니면 죽음이다',
+  ['iron-melts', 'wood-ignites', 'cloth-ignites'].every((id) => beamValue >= ruleOf(id).when.gte),
+  `빔 ${beamValue}° ≥ max(${['iron-melts', 'wood-ignites', 'cloth-ignites'].map((id) => ruleOf(id).when.gte).join(', ')})`);
+
+check('★ 철의 파괴 조건은 "1.2초 뒤에도 레인 안" 이다 — 빠져나오면 산다',
+  ironMeltsDown?.when.field === 'temperature' && ironMeltsDown.when.gte >= ironMelts.when.gte
+    && ironMeltsDown.when.elapsed > 0,
+  `state+elapsed ${ironMeltsDown?.when.elapsed}s + field ≥ ${ironMeltsDown?.when.gte}°`);
+
+// ── 부채꼴 스케줄러 ────────────────────────────────────────────────────
+const fanSpec = [{ x: 0, y: 0, angle: -90, count: 7, spread: 96, period: 1.4, spin: 30 }];
+const fanDense = createTurrets(fanSpec, 0);
+const fanSparse = createTurrets(fanSpec, 0);
+const denseShots = [];
+for (let t = 0; t <= 10; t += FIXED_DT) denseShots.push(...fanDense.step(t));
+const sparseShots = [];
+for (let t = 0; t <= 10; t += 0.37) sparseShots.push(...fanSparse.step(t));
+const sameAngles = denseShots.length === sparseShots.length
+  && denseShots.every((s, i) => Math.abs(s.angle - sparseShots[i].angle) < 1e-12
+    && Math.abs(s.firedAt - sparseShots[i].firedAt) < 1e-12);
+check('★ 부채꼴 발사는 각도까지 now 의 순수 함수다 (호출을 걸러 내도 같은 열)',
+  sameAngles && denseShots.length > 0,
+  `${denseShots.length}발 · 각도 오차 0 (spin 을 now 로 재면 여기서 깨진다)`);
+
+const oneVolley = createTurrets(fanSpec, 0);
+const burst = oneVolley.step(10);   // 10초를 통째로 건너뛴 뒤 한 번 — 설정창을 열어 둔 상황
+check('★ 시계를 멈췄다 재개해도 볼리가 폭발하지 않는다 (페이즈마다 스케줄러를 새로 만든다)',
+  createTurrets(fanSpec, 10).step(10 + 1.4).length === fanSpec[0].count,
+  `건너뛴 스케줄러 ${burst.length}발 vs 새로 만든 것 ${createTurrets(fanSpec, 10).step(10 + 1.4).length}발`);
+
+const fanGeom = createTurrets([{ x: 0, y: 5, angle: -90, count: 5, spread: 80, period: 1, radius: 6, projectileRadius: 0.3 }], 0).step(1);
+const fanSpan = (Math.max(...fanGeom.map((s) => s.angle)) - Math.min(...fanGeom.map((s) => s.angle))) * (180 / Math.PI);
+const muzzleOut = fanGeom.every((s) => Math.hypot(s.x - 0, s.y - 5) > 6);
+check('부채는 기준 방위를 가운데 두고 spread 만큼 펴지며, 총구가 전부 몸체 밖이다',
+  Math.abs(fanSpan - 80) < 1e-9 && fanGeom.length === 5 && muzzleOut,
+  `${fanGeom.length}발 · 폭 ${fanSpan.toFixed(1)}° · 총구 반경 밖 ${muzzleOut}`);
+
+// ── 흡입 — 방사 벡터장 ─────────────────────────────────────────────────
+const suckField = createFields({ current: [] });
+suckField.setSource('current', 'test:suck', {
+  shape: 'disc', mode: 'radial', at: { x: 0, y: 0 }, radius: 40, falloff: 0.85, strength: -5,
+});
+const suckAt = (x, y) => suckField.sampleVector('current', x, y, 0);
+const sRight = suckAt(20, 0);
+const sUp = suckAt(0, 20);
+check('방사장은 어느 자리에서든 중심을 향한다 (흡입) · 중심에서는 0 이다',
+  sRight.x < 0 && Math.abs(sRight.y) < 1e-9 && sUp.y < 0 && Math.abs(sUp.x) < 1e-9
+    && Math.hypot(...Object.values(suckAt(0, 0))) === 0,
+  `(20,0)→(${sRight.x.toFixed(2)}, ${sRight.y.toFixed(2)}) · (0,20)→(${sUp.x.toFixed(2)}, ${sUp.y.toFixed(2)})`);
+
+check('오버레이를 빼면 필드가 즉시 비고, isEmpty 가 그것을 따라온다 (getter 여야 한다)',
+  (() => {
+    const f = createFields({});
+    if (!f.isEmpty) return false;
+    f.setSource('current', 'k', { shape: 'uniform', x: 1, y: 0 });
+    if (f.isEmpty || f.sampleVector('current', 0, 0, 0).x !== 1) return false;
+    f.setSource('current', 'k', null);
+    return f.isEmpty && f.sampleVector('current', 0, 0, 0).x === 0;
+  })(),
+  '빈 맵 → 추가 → 제거 왕복');
+
+/** 흡입 켠 채로 선체를 놓아 두고 표류시킨다. 재질만 바꿔 두 번 돌린다. */
+function suckDrift(material) {
+  const { world, body } = spawn('sloop', { devices: false, material });
+  body.setPosition(new Vec2(0, -26));
+  const f = createFields({ current: [] });
+  f.setSource('current', 'boss:suck', {
+    shape: 'disc', mode: 'radial', at: { x: 0, y: 0 }, radius: 40, falloff: 0.85, strength: -5,
+  });
+  let t = 0;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => { applyHydroToWorld(world, dt); applyFieldsToWorld(world, f, dt, t); t += dt; },
+  });
+  for (let i = 0; i < Math.round(3 / FIXED_DT); i++) stepper.advance(FIXED_DT);
+  return body.getPosition().y + 26;   // 중심(0,0) 쪽으로 올라온 거리
+}
+const suckWood = suckDrift('wood');
+const suckIron = suckDrift('iron');
+check('★ 흡입은 물체를 끌어당기고 **재질을 가리지 않는다** (drag ∝ mass 라 종단이 같다)',
+  suckWood > 1 && suckIron > 1 && Math.abs(suckWood - suckIron) / suckWood < 0.02,
+  `나무 ${suckWood.toFixed(2)} m · 철 ${suckIron.toFixed(2)} m (차이 ${(Math.abs(suckWood - suckIron) / suckWood * 100).toFixed(1)}%)`);
+
+// 포탄은 hull 이 없어 필드를 안 탄다 — 탄도가 휘면 "먼저 경고, 그 다음 회피"가 성립 안 한다.
+const shotWorld = createWorld();
+const shotFields = createFields({ current: [] });
+shotFields.setSource('current', 'boss:suck', {
+  shape: 'disc', mode: 'radial', at: { x: 0, y: 20 }, radius: 60, falloff: 0.5, strength: -8,
+});
+const straight = spawnProjectile(shotWorld, {
+  x: -20, y: 0, angle: 0, speed: 30, radius: 0.3, mass: 12, bornAt: 0, lifetime: 9,
+});
+{
+  let t = 0;
+  const st = new FixedStepper(shotWorld, {
+    onPreStep: (dt) => { applyHydroToWorld(shotWorld, dt); applyFieldsToWorld(shotWorld, shotFields, dt, t); t += dt; },
+  });
+  for (let i = 0; i < 60; i++) st.advance(FIXED_DT);
+}
+check('포탄은 흡입에 안 끌린다 (hull 키가 없어 필드·항력을 통째로 건너뛴다)',
+  Math.abs(straight.getPosition().y) < 1e-9
+    && Math.abs(straight.getLinearVelocity().x - 30) < 1e-9,
+  `y ${straight.getPosition().y.toFixed(9)} · vx ${straight.getLinearVelocity().x.toFixed(6)}`);
+
+// ── 실제로 돌려 본 전투 ────────────────────────────────────────────────
+// ★ 여기가 이 절의 심장이다. 위의 데이터 검사는 전부 규칙 엔진도 파손 경로도 빠진 채
+//   통과할 수 있다 (3장에서 실제로 그 틈으로 샜다). 아래는 배를 띄우고 포탄을 먹여
+//   **결과**를 본다.
+
+/**
+ * 보스를 세우고 아래에서 조준 사격한다.
+ * @param {{open:boolean, shells:number}} opts `open:false` 면 입을 닫아 둔다.
+ */
+function bossFight({ open = true, shells = 40 } = {}) {
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  for (const arm of BULGASARI_MAP.boss.arms) createObstacle(world, arm);
+  const startArea = [...boss.parts][0].getUserData().hull.params.area;
+  const stepper = new FixedStepper(world, {
+    onPreStep: () => {
+      simTime += FIXED_DT;
+      boss.pin();
+      boss.open = open && !boss.fallen;
+      boss.openUntil = open ? 1e9 : 0;
+    },
+  });
+  const lane = [0, -1.2, 1.2, -0.6, 0.6, -1.5, 1.5, 0.3];
+  let fired = 0;
+  let landed = 0;
+  let blocked = 0;
+  while (fired < shells && !boss.fallen) {
+    spawnProjectile(world, {
+      x: lane[fired % lane.length], y: BULGASARI_MAP.boss.core.y - 11, angle: Math.PI / 2,
+      speed: 55, radius: 0.15, mass: 12, material: 'iron', bornAt: simTime, lifetime: 2,
+    });
+    fired += 1;
+    for (let i = 0; i < 26 && !boss.fallen; i++) {
+      stepper.advance(FIXED_DT);
+      for (const im of impacts.drain()) {
+        if (!boss.parts.has(im.body)) continue;
+        // 화면(`sail/screen.js#carveBoss`)과 같은 규칙 — 입이 닫혀 있으면 **깎지도 않는다.**
+        if (!boss.open) { blocked += 1; continue; }
+        const out = applyImpact(world, im.body, im.at, im.radius);
+        if (!out) continue;
+        boss.parts.delete(im.body);
+        for (const b of out.bodies) boss.parts.add(b);
+        landed += 1;
+        boss.takeHit();
+      }
+      impacts.drainGlances();
+    }
+  }
+  boss.measure();
+  return { boss, fired, landed, blocked, startArea, seconds: simTime };
+}
+
+const openFight = bossFight({ open: true, shells: 60 });
+check('★ 입이 열렸을 때 대포가 핵을 깎고, 잔여 면적이 그만큼 줄어든다 (HP 는 면적 그 자체다)',
+  openFight.landed > 0 && openFight.boss.health < 1
+    && openFight.boss.health <= BOSS_TUNING.fallAt && openFight.boss.fallen,
+  `${openFight.fired}발 · 명중 ${openFight.landed} · 잔여 ${(openFight.boss.health * 100).toFixed(1)}% ` +
+  `(핵 ${openFight.startArea.toFixed(1)} m²)`);
+
+const shutFight = bossFight({ open: false, shells: 20 });
+check('★ 입이 닫혀 있으면 무적이다 — 몸도 안 깎이고 페이즈도 안 넘어간다',
+  shutFight.blocked > 0 && shutFight.landed === 0
+    && shutFight.boss.health === 1 && shutFight.boss.phaseIndex === 0 && !shutFight.boss.fallen,
+  `튕김 ${shutFight.blocked}회 · 잔여 ${(shutFight.boss.health * 100).toFixed(0)}%`);
+
+// 페이즈가 잔여 면적에서 갈리는가 — 문턱을 리터럴이 아니라 표에서 읽는다.
+check('페이즈는 잔여 면적 문턱에서 순서대로 넘어가고 패턴이 누적된다',
+  BOSS_PHASES.length === 3
+    && BOSS_PHASES[0].until > BOSS_PHASES[1].until && BOSS_PHASES[1].until > BOSS_TUNING.fallAt
+    && BOSS_PHASES.every((p) => p.suck) && !BOSS_PHASES[0].beam && BOSS_PHASES[1].beam
+    && !BOSS_PHASES[1].wreck && BOSS_PHASES[2].beam && BOSS_PHASES[2].wreck,
+  `문턱 ${BOSS_PHASES.map((p) => p.until).join(' → ')} · 쓰러짐 ${BOSS_TUNING.fallAt}`);
+
+// ★ 쓰러지면 도착 지점이 생기고 주인공이 들어가 클리어한다. `game/goal.js` 는 한 줄도 안 고쳤다.
+const fallen = openFight.boss;
+const essence = createGoal({ x: fallen.coreAt.x, y: fallen.coreAt.y, radius: 5, label: '정수' });
+check('★ 쓰러진 자리가 도착 지점이 되고 주인공이 들어가면 클리어다 (goal.js 무수정)',
+  fallen.fallen && essence !== null
+    && goalReached(essence, { x: fallen.coreAt.x, y: fallen.coreAt.y })
+    && !goalReached(essence, { x: fallen.coreAt.x, y: BULGASARI_MAP.start.y })
+    && Number.isFinite(goalDistance(essence, { x: 0, y: BULGASARI_MAP.start.y }))
+    && rateTravelTime(90, BULGASARI_MAP.scoring) >= 1,
+  `입까지 ${goalDistance(essence, { x: 0, y: BULGASARI_MAP.start.y }).toFixed(1)} m · ` +
+  `별 ${rateTravelTime(90, BULGASARI_MAP.scoring)}개`);
+
+// 쓰러지면 필드 오버레이가 **둘 다** 걷힌다 — 늘어진 보스가 계속 빨아들이면 안 된다.
+check('쓰러지면 흡입·빔이 걷히고 발사가 멈춘다',
+  !fallen.sucking && fallen.beam === null && fallen.turrets === null
+    && fallen.step(fallen.clock + 5).length === 0,
+  '흡입·빔·발사 전부 정지');
+
+// 한 발이 뜯는 면적이 캡에 물려 고른가 — 잔여 면적 바가 계기판 노릇을 하려면 필요하다.
+check('한 발이 뜯는 면적이 재질 캡에 물려 널뛰지 않는다 (잔여 면적 바가 읽히는 조건)',
+  MATERIALS.flesh.maxCarveRadius > 0
+    && carveRadiusFromImpact({
+      impulse: 12 * 55, effectiveMass: 12, material: MATERIALS.flesh,
+      hullArea: openFight.startArea, strikeEnergy: 0.5 * 12 * 55 * 55,
+    }) === MATERIALS.flesh.maxCarveRadius,
+  `캡 ${MATERIALS.flesh.maxCarveRadius} m → 발당 최대 ${(Math.PI * MATERIALS.flesh.maxCarveRadius ** 2).toFixed(2)} m²`);
+
+// ★ 보스 포탄이 **두 재질 임계 사이**에 있는가. 아래로 내려가면 철 선체가 완전 면역이 되어
+//   탄막이 통째로 무의미해진다 (실측으로 그 값이었다: 120발 맞고 흠집 0). 위로 너무 올리면
+//   철의 §7.4 "함몰만" 성질이 사라진다. 임계는 MATERIALS 에서 **읽는다**.
+const bossShellEnergies = BOSS_PHASES.flatMap((p) => p.emitters)
+  .map((e) => 0.5 * e.mass * e.speed * e.speed);
+check('★ 보스 포탄은 나무 임계 위·철 임계 위다 (철이 면역이 되면 탄막이 무의미해진다)',
+  bossShellEnergies.every((E) => E > MATERIALS.iron.impactThreshold
+    && E > MATERIALS.wood.impactThreshold),
+  `${Math.min(...bossShellEnergies) / 1000}~${Math.max(...bossShellEnergies) / 1000} kJ > ` +
+  `철 ${MATERIALS.iron.impactThreshold / 1000} kJ · 나무 ${MATERIALS.wood.impactThreshold / 1000} kJ`);
+
+// 살에는 온도 규칙이 없다 — 자기 빔에 자기가 녹지 않는 것이 **규칙 부재**로 성립한다.
+check('★ 살은 규칙표에 한 줄도 없어서 자기 빔(1400°)에 안 녹는다 (철의 내화와 같은 원리)',
+  RULES.every((r) => r.material !== 'flesh')
+    && !Object.keys(MATERIALS).filter((k) => k === 'flesh').some(() => false),
+  `flesh 관련 규칙 ${RULES.filter((r) => r.material === 'flesh').length}줄`);
+
+console.log(`  전투 실측: ${openFight.fired}발 · ${openFight.seconds.toFixed(0)}s(창을 계속 열어 둔 기준) · ` +
+  `창 하나에 ${Math.floor(BOSS_TUNING.openFor / 0.8)}발 → 실제 약 ` +
+  `${Math.ceil(openFight.fired / Math.floor(BOSS_TUNING.openFor / 0.8)) * BOSS_TUNING.suckEvery}s`);
+
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
   'D2 "배치에서 조향이 창발하는가?"\x1b[0m\n');
 if (failures.length === 0) {

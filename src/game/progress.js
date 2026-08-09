@@ -67,6 +67,19 @@ export const STAGES = [
     items: [],
     materials: [],
   },
+  {
+    id: 'bulgasari',
+    label: '불가사리의 바다',
+    interlude: null,
+    hints: false,
+    // ⚠ `gear: false` 는 **일시정지 문제** 때문이다. Tab 도 Esc 도 물리를 멈추지 않고
+    //   조종만 끊으므로(`sail/screen.js` 의 `panelOpen`), 탄막 한복판에서 창이 열리면
+    //   그대로 맞는다. 설정(Esc)은 끌 수 없으니 보스 시계를 멈춰 막고, 지도(Tab)는
+    //   **데이터로** 막는다. 서사적으로도 공짜다 — 여기가 노선의 끝이라 읽을 해도가 없다.
+    gear: false,
+    items: [],
+    materials: [],
+  },
 ];
 
 /** 지금까지 열린 것들을 모은다 (앞 바다 것 포함). */
@@ -147,7 +160,7 @@ export const ROUTE = [
   { id: 'reef', kind: 'reef', name: '바위 협곡', note: '바람은 등을 밀어주지만, 주변이 온통 바위' },
   { id: 'storm', kind: 'storm', name: '역풍 협곡', note: '바람이 막아서고, 해적이 들끓는다' },
   { id: 'volcano', kind: 'volcano', name: '불의 바다', note: '물 대신 용암이 흐르는 곳' },
-  { id: 'bulgasari', kind: 'abyss', name: '불가사리의 바다', note: '전설로만 전해지던 그것', locked: true },
+  { id: 'bulgasari', kind: 'abyss', name: '불가사리의 바다', note: '전설로만 전해지던 그것' },
 ];
 
 /** 지도에서 "여기까지 왔다" 를 표시할 지점. ROUTE 인덱스. */
