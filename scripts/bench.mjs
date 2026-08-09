@@ -26,6 +26,10 @@ import {
   cannonMuzzleLocal, cannonShotRequest,
 } from '../src/items/cannon.js';
 import { createPassiveTarget, createPassiveTargets } from '../src/game/targets.js';
+import {
+  createPirate, createPirates, buildPathTable, pathProgress, stepPirateMotion, stepPirateCannons,
+  rebindPirate,
+} from '../src/game/pirates.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { burnRadius, carveRadiusFromImpact, DAMAGE_TUNING } from '../src/damage/impact.js';
 import { installImpactListener, offCooldown, CONTACT_TUNING } from '../src/damage/contact.js';
@@ -2966,6 +2970,163 @@ check('플레이어 포탄도 generic contact → impact → carve 경로로 수
   targetHit.impact?.source === 'shot' && targetHit.removed > 0
     && targetHit.roleKept && targetHit.spent,
   `source ${targetHit.impact?.source ?? '없음'} · 제거 ${targetHit.removed.toFixed(3)} m² · role 승계 ${targetHit.roleKept}`);
+
+// ─────────────────────────────────────────────── D3 ④ — 해적선
+//
+// 조준·추적 로직은 0줄이다(turrets.js 와 같은 전제). 새로 짠 것은 "경로를 따라 걷는 시계"뿐이고,
+// 선체 파손은 game/targets.js 의 표적과, 대포 발사는 items/cannon.js + physics/devices.js 의
+// 플레이어 파이프라인과 완전히 같은 경로를 탄다.
+console.log('\n\x1b[36m▌D3 ④ — 해적선\x1b[0m\n');
+
+const pirateThrows = [
+  ['미지 키', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }], script: 'boom' }],
+  ['entityId 없음', { width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['path 점 1개', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['path 중복점(길이 0 구간)', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 0, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['cannons 비어있음', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [] }],
+  [`대포 period < ${CANNON_TUNING.reload}s`, { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0, period: 0.3 }] }],
+  ['대포 부착점이 선체 밖', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 10, y: 0, angle: 0 }] }],
+  ['모르는 재질', { entityId: 'p', width: 4, height: 2, material: 'adamantium', path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+];
+const pirateThrowWorld = createWorld();
+const pirateRejected = pirateThrows.filter(([, spec]) => {
+  try { createPirate(pirateThrowWorld, spec); return false; } catch { return true; }
+});
+check('해적 스펙이 스키마 밖이면 로드 시점에 던진다 (표적·포탑과 같은 원칙)',
+  pirateRejected.length === pirateThrows.length,
+  `${pirateRejected.length}/${pirateThrows.length}종 거부`);
+
+// ── 경로 진행은 turrets.js 의 fireTime 과 같은 급의 순수 함수여야 한다. 값 자체를 기하로 검증한다.
+const straightTable = buildPathTable([{ x: 0, y: 0 }, { x: 10, y: 0 }], false);
+const midOutbound = pathProgress(straightTable, false, 2, 2.5); // 5 m, 정방향
+const atTurn = pathProgress(straightTable, false, 2, 5); // 10 m, 끝점
+const midReturn = pathProgress(straightTable, false, 2, 7.5); // 15 m → 5 m 되짚음
+const pingpongOk = Math.abs(midOutbound.x - 5) < 1e-9 && midOutbound.angle === 0
+  && Math.abs(atTurn.x - 10) < 1e-9
+  && Math.abs(midReturn.x - 5) < 1e-9 && midReturn.angle === Math.PI;
+check('왕복(loop:false) 경로는 끝에서 정확히 되짚어 오고, 되짚는 구간은 방향이 뒤집힌다',
+  pingpongOk,
+  `왕복 중간 x=${midOutbound.x.toFixed(2)} · 끝점 x=${atTurn.x.toFixed(2)} · 되짚음 중간 x=${midReturn.x.toFixed(2)},각 ${midReturn.angle.toFixed(2)}`);
+
+const loopTable = buildPathTable([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], true);
+const afterOneLap = pathProgress(loopTable, true, loopTable.total, 1);
+check('순환(loop:true) 경로는 한 바퀴 뒤 시작점으로 돌아온다',
+  Math.abs(afterOneLap.x) < 1e-6 && Math.abs(afterOneLap.y) < 1e-6,
+  `한 바퀴(${loopTable.total.toFixed(2)} m) 후 (${afterOneLap.x.toFixed(4)}, ${afterOneLap.y.toFixed(4)})`);
+
+// ★★ 누산 드리프트 회귀 — turrets.js 의 것과 같은 종류. 대포 시계(`n`)는 컨트롤러에 남는
+//    가변 상태라, 호출을 걸러 내면(스텝을 건너뛰면) 씹히는 구현이 되기 쉽다.
+//    `pressed` 는 turrets.js 의 `firedAt` 처럼 정확한 발사 시각을 들고 있지 않으므로(그 순간의
+//    edge 만 전달), 여기서 보증하는 것은 시각 일치가 아니라 **발사 횟수 일치**다.
+const pirateScheduleSpec = () => [
+  { body: {}, cannons: [{ bind: 'a', period: 1.5, phase: 0, n: 1 }] },
+  { body: {}, cannons: [{ bind: 'b', period: 0.4, phase: 0.17, n: 1 }] },
+];
+const denseSchedule = pirateScheduleSpec();
+const sparseSchedule = pirateScheduleSpec();
+const firedPirateDense = [[], []];
+const firedPirateSparse = [[], []];
+for (let k = 1; k <= 1200; k++) {
+  const now = k * FIXED_DT;
+  denseSchedule.forEach((p, i) => { if (stepPirateCannons([p], now).get(p.body)) firedPirateDense[i].push(now); });
+  if (k % 5 === 0) {
+    sparseSchedule.forEach((p, i) => { if (stepPirateCannons([p], now).get(p.body)) firedPirateSparse[i].push(now); });
+  }
+}
+check('★ 해적 대포 발사 횟수는 now 의 순수 함수다 (호출을 걸러 내도 같은 발사 수가 나온다 = 프레임률 독립)',
+  firedPirateDense.every((seq, i) => seq.length > 0 && seq.length === firedPirateSparse[i].length),
+  `[${firedPirateDense.map((a) => a.length)}] / [${firedPirateSparse.map((a) => a.length)}]`);
+
+// ── 통합: 실제 파손 가능 선체 + 실제 발사 → 플레이어와 같은 손상 파이프라인을 태워 표적을 맞힌다.
+const pirateShotHitsTarget = (() => {
+  const world = createWorld();
+  installProjectileContacts(world);
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  const [pirate] = createPirates(world, [{
+    entityId: 'bench-pirate-shot',
+    width: 4,
+    height: 2,
+    material: 'wood',
+    path: [{ x: 0, y: 0 }, { x: 0.4, y: 0 }],
+    speed: 0.05,
+    cannons: [{ x: 1.8, y: 0, angle: 0, period: 1.0, phase: 0 }],
+  }]);
+  let target = createPassiveTarget(world, { entityId: 'pirate-shot-victim', x: 14, y: 0, width: 4, height: 4 });
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      elapsed += dt;
+      stepPirateMotion([pirate], elapsed);
+      const pressed = stepPirateCannons([pirate], elapsed).get(pirate.body) ?? {};
+      const events = applyDevices(pirate.body, {
+        strokes: [], held: {}, pressed, anchor: false, now: elapsed,
+      }, dt);
+      for (const event of events) {
+        if (event.type !== 'cannonFire' || !event.request) continue;
+        spawnProjectile(world, event.request);
+      }
+    },
+  });
+  let impact = null;
+  let removed = 0;
+  for (let i = 0; i < 300 && !impact; i++) {
+    stepper.advance(FIXED_DT);
+    for (const im of queue.drain()) {
+      if (im.body !== target) continue;
+      impact = im;
+      const out = applyImpact(world, target, im.at, im.radius);
+      removed = out?.result.removedArea ?? 0;
+      target = out?.bodies[0] ?? target;
+      break;
+    }
+  }
+  return { impact, removed };
+})();
+check('해적 대포도 플레이어와 완전히 같은 발사·손상 파이프라인을 타 표적을 맞힌다',
+  pirateShotHitsTarget.impact?.source === 'shot' && pirateShotHitsTarget.removed > 0,
+  `source ${pirateShotHitsTarget.impact?.source ?? '없음'} · 제거 ${pirateShotHitsTarget.removed.toFixed(3)} m²`);
+
+// ── 절단 승계: fireCannons 가 탈락한 대포의 재장전 시계를 지우는 것과 같은 이유로, 조각에
+//    남지 않은 대포의 발사 스케줄도 rebindPirate 가 함께 버려야 한다 (안 지우면 죽은 대포가
+//    영원히 pressed 를 찍어 대는 유령 시계가 된다).
+const rebindTest = (() => {
+  const world = createWorld();
+  const [pirate] = createPirates(world, [{
+    entityId: 'rebind-test',
+    width: 4,
+    height: 2,
+    material: 'wood',
+    path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    speed: 1,
+    cannons: [{ x: 1, y: 0.5, angle: 0, period: 1.0 }, { x: 1, y: -0.5, angle: 0, period: 1.0 }],
+  }]);
+  const survivingBind = pirate.cannons[0].bind;
+  // 조각 하나에 대포 하나만 남았다고 가정 — 실제 carve 가 만들어 낼 hull.items 모양을 흉내낸다.
+  const survivingItem = pirate.body.getUserData().hull.items.find((it) => it.bind === survivingBind);
+  const newBody = createHullBody(
+    world,
+    { outline: hulls.sloop.outline, holes: [], items: [survivingItem], crew: null, role: 'pirate', entityId: 'rebind-test' },
+    { position: { x: 5, y: 5 }, angle: 0, material: 'wood', role: 'pirate', entityId: 'rebind-test' },
+  );
+  const rebound = rebindPirate(pirate, newBody);
+  return {
+    keptCount: rebound.cannons.length,
+    keptBind: rebound.cannons[0]?.bind,
+    survivingBind,
+    bodyUpdated: rebound.body === newBody,
+    independentCopy: rebound.cannons[0] !== pirate.cannons[0],
+  };
+})();
+check('절단 조각에 없는 대포의 발사 스케줄은 함께 버려진다 (devices.js#fireCannons 와 같은 원칙)',
+  rebindTest.keptCount === 1 && rebindTest.keptBind === rebindTest.survivingBind
+    && rebindTest.bodyUpdated && rebindTest.independentCopy,
+  `승계 ${rebindTest.keptCount}개(bind ${rebindTest.keptBind}) · body 갱신 ${rebindTest.bodyUpdated} · 독립 복사 ${rebindTest.independentCopy}`);
+
+// 데모 맵에 실제로 배치한 해적이 스키마를 통과하는지 — 데이터 오타는 맵 파일에서 가장 흔하다.
+const demoMapPirates = createPirates(createWorld(), DEMO_MAP.pirates ?? []);
+check('DEMO_MAP.pirates 가 유효한 스펙으로 로드된다',
+  demoMapPirates.length === (DEMO_MAP.pirates ?? []).length && demoMapPirates.length > 0,
+  `${demoMapPirates.length}척 로드`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +

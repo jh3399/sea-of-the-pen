@@ -25,6 +25,25 @@ export const DEMO_MAP = {
     { entityId: 'route-target-2', x: 82, y: 27, angle: -0.18, width: 5, height: 3.2, material: 'wood' },
     { entityId: 'route-target-3', x: 138, y: -2, angle: 0.22, width: 4, height: 3.5, material: 'wood' },
   ],
+  // 해적선 — 항로 위 x=92 암초 앞의 빈 구간을 가로로 왕복 순찰한다. game/pirates.js 의
+  // createPirates 로 연결한다. 조준·추적은 0줄 — 난도는 이 배치와 발사 리듬(phase 를 어긋낸
+  // 좌우현 대포)에서만 나온다.
+  // ⚠ x=105 암초는 반경 5 라 y=0 에서도 x∈[100,110] 을 덮는다 — 순찰 구간은 그보다 왼쪽
+  //   (선체 반폭 1.3 m 여유까지 포함해 x ≤ 98.9)이어야 겹치지 않는다.
+  pirates: [
+    {
+      entityId: 'pirate-corridor-1',
+      width: 4.4,
+      height: 2.6,
+      material: 'wood',
+      path: [{ x: 92.5, y: 0 }, { x: 98.5, y: 0 }],
+      speed: 2.5,
+      cannons: [
+        { x: 0, y: 0.9, angle: Math.PI / 2, period: 2.2, phase: 0 },
+        { x: 0, y: -0.9, angle: -Math.PI / 2, period: 2.2, phase: 1.1 },
+      ],
+    },
+  ],
   obstacles: [
     // 항로 위 (원래 11개) — 골까지의 직선을 막아 지그재그를 강요하는 핵심 배치.
     { shape: 'circle', x: 25, y: 10, radius: 4 },

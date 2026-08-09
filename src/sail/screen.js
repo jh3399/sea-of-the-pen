@@ -25,6 +25,7 @@ import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
 import { createPassiveTargets } from '../game/targets.js';
+import { createPirates, stepPirateMotion, stepPirateCannons, rebindPirate } from '../game/pirates.js';
 import { applyImpact } from '../damage/apply.js';
 import { installImpactListener } from '../damage/contact.js';
 import { spawnProjectile, cullProjectiles, installProjectileContacts } from '../damage/projectile.js';
@@ -105,6 +106,8 @@ class SailScreen {
     /** 플레이어 조각·수동 표적·포탄은 수명이 달라 각각의 Set 으로 추적한다. */
     this.bodies = new Set();
     this.targets = new Set();
+    /** 해적선 컨트롤러 — body → { table, loop, speed, cannons } (game/pirates.js). */
+    this.pirates = new Map();
     this.projectiles = new Set();
     this.obstacles = new Set();
     this.sparks = [];
@@ -127,6 +130,9 @@ class SailScreen {
         this.checkGoal();
         this.stepIndex += 1;
         this.simTime = this.stepIndex * FIXED_DT;
+        // 해적선은 조준·추적이 없다 — 항로 위 자리가 `now` 의 순수 함수로 정해진다. 대포가
+        // 이번 스텝의 최신 포구 위치를 쓰도록 발사(applyControls)보다 먼저 옮겨 둔다.
+        stepPirateMotion(this.pirates.values(), this.simTime);
         if (!this.cleared) this.applyControls(dt);
         else this.pressed = {};
         applyHydroToWorld(this.world, dt);
@@ -168,6 +174,7 @@ class SailScreen {
 
     this.launch(loadHandoff() ?? fallbackDesign());
     for (const body of createPassiveTargets(this.world, DEMO_MAP.targets ?? [])) this.targets.add(body);
+    for (const p of createPirates(this.world, DEMO_MAP.pirates ?? [])) this.pirates.set(p.body, p);
     for (const spec of DEMO_MAP.obstacles) this.placeObstacle(spec);
     // 해역 경계 — 벽도 그냥 암초다 (같은 `placeObstacle`, 같은 재질). 경계 전용 물리·판정
     // 코드가 0줄인 이유이고, 그래서 "여기서부터 못 간다"를 규칙이 아니라 지형이 말한다.
@@ -276,6 +283,22 @@ class SailScreen {
     }
     // 물리 스텝 사이의 짧은 탭도 위에서 한 번 전달됐고, 홀드는 held 로 따로 남는다.
     this.pressed = {};
+
+    // 해적 대포 — 입력원이 키보드가 아니라 시간표(game/pirates.js)일 뿐, 발사 자체는 플레이어와
+    // 완전히 같은 applyDevices/spawnProjectile 경로를 탄다. 재장전 시계는 쏘지 않는 스텝에도
+    // 전진해야 하므로 모든 해적을 매 스텝 돌린다.
+    const pirateShots = stepPirateCannons(this.pirates.values(), this.simTime);
+    for (const body of this.pirates.keys()) {
+      const pirateInput = {
+        strokes: [], held: {}, pressed: pirateShots.get(body) ?? {}, anchor: false, now: this.simTime,
+      };
+      const events = applyDevices(body, pirateInput, dt);
+      for (const event of events) {
+        if (event.type !== 'cannonFire' || !event.request) continue;
+        const shot = spawnProjectile(this.world, event.request);
+        if (shot) this.projectiles.add(shot);
+      }
+    }
   }
 
   // ------------------------------------------------------------ 판정 · 카메라
@@ -342,19 +365,32 @@ class SailScreen {
     return true;
   }
 
+  /**
+   * 해적선용 `carveMember` — `this.pirates` 는 Set 이 아니라 Map(body → 이동·발사 컨트롤러)
+   * 이므로, 쪼개져 나온 조각마다 `rebindPirate` 로 컨트롤러를 옮겨 붙인다. 항로·발사 리듬은
+   * `physics/body.js#respawnPieces` 가 모르는 화면 전용 상태라 여기서 직접 승계한다.
+   */
+  carvePirate(body, at, radius) {
+    const ctrl = this.pirates.get(body);
+    if (!ctrl) return false;
+    const outcome = applyImpact(this.world, body, at, radius);
+    if (!outcome) return false;
+    this.pirates.delete(body);
+    for (const next of outcome.bodies) this.pirates.set(next, rebindPirate(ctrl, next));
+    return true;
+  }
+
   consumeImpacts() {
     for (const glance of this.impacts.drainGlances()) {
       this.addSpark(glance.at, 'glance', Math.max(glance.radius, CANNON_TUNING.radius));
     }
 
     for (const impact of this.impacts.drain()) {
-      const set = this.bodies.has(impact.body)
-        ? this.bodies
-        : (this.targets.has(impact.body) ? this.targets : null);
-      if (!set) continue;
       if (impact.projectile) impact.projectile.getUserData().projectile.spent = true;
       this.addSpark(impact.at, 'hit', impact.projectile?.getUserData()?.projectile?.radius);
-      this.carveMember(set, impact.body, impact.at, impact.radius);
+      if (this.bodies.has(impact.body)) this.carveMember(this.bodies, impact.body, impact.at, impact.radius);
+      else if (this.targets.has(impact.body)) this.carveMember(this.targets, impact.body, impact.at, impact.radius);
+      else if (this.pirates.has(impact.body)) this.carvePirate(impact.body, impact.at, impact.radius);
     }
   }
 
@@ -406,7 +442,7 @@ class SailScreen {
     // 60개가 넘고, 그중 화면에 걸치는 것은 늘 몇 개뿐이다.
     for (const body of this.obstacles) drawObstacle(ctx, view, body.getUserData()?.obstacle?.spec);
     drawWake(ctx, this.wake);
-    for (const [set, target] of [[this.targets, true], [this.bodies, false]]) {
+    for (const [set, target] of [[this.targets, true], [this.pirates.keys(), true], [this.bodies, false]]) {
       for (const body of set) {
         const p = body.getPosition();
         const angle = body.getAngle();
