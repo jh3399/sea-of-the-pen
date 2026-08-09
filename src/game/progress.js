@@ -52,20 +52,31 @@ export const STAGES = [
   {
     id: 'storm',
     label: '역풍 협곡',
-    interlude: null,
+    interlude: 'STORM_ISLE',
     hints: false,
     gear: true,
     items: [],
     materials: [],
   },
   {
+    /**
+     * ★ 이 둘은 **연출용 보상이 아니라 통행증**이다. 불의 바다는 해역 전체가 330° 라
+     *   (목재 발화점 250° 위) 나무 선체가 출발선에서 4.2초 만에 무너진다 — 철이 없으면
+     *   3장은 클리어 자체가 불가능하다.
+     * ★ `booster` 가 함께 있어야 하는 이유: 기본 노는 `items/defaults.js` 에서
+     *   `material: 'wood'` 로 박혀 있어 **철 선체가 버텨도 노는 탄다.** 남는 장치가 닻뿐이라
+     *   배가 표류한다. 벤치가 그 답까지 적어 두었다 —
+     *   "철 부스터는 살아남아 노를 잃은 뒤의 추진이 된다".
+     * ⚠ 둘 중 하나만 열면 3장이 조용히 클리어 불가가 된다. 같이 움직일 것.
+     *   [S-08] 블루베리의 대사도 이 둘과 1:1 이다 (철 · 노는 탄다 · 그래서 부스터).
+     */
     id: 'volcano',
     label: '불의 바다',
     interlude: null,
     hints: false,
     gear: true,
-    items: [],
-    materials: [],
+    items: ['booster'],
+    materials: ['iron'],
   },
 ];
 
