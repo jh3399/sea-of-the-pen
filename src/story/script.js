@@ -263,6 +263,46 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '…네.' },
     { speaker: '', text: '모루의 펜을 다시 쥐었다.' },
   ],
+
+  // ── [S-07] 바위섬 ────────────────────────────────────────────
+  //
+  // ★ 이 막간이 하는 일은 **2장의 반전을 미리 말해 주는 것** 하나다. 설계 문서 §8 의 뼈대가
+  //   "1장의 정답(큰 돛)이 2장에서 오답이 된다"인데, 그 반전을 바다에서 처음 겪으면 배신감이
+  //   된다 (D4 통과 질문이 정확히 그것을 묻는다 — "즐거워하는가, 배신감을 느끼는가"). 미리
+  //   듣고 들어가면 같은 사건이 배신이 아니라 **준비할 기회**가 된다.
+  //
+  // ⚠ 네일은 **가르치지 않는다.** 세렌은 "Q 랑 E" 까지 말해 주지만(첫 바다라 그래야 했다)
+  //   여기서는 조건만 말하고 판단을 넘긴다 — "그건 네가 정해". 1장부터 화면이 설명하지 않기로
+  //   한 것(STAGES[].hints)의 인물판이다.
+  //
+  // ⚠ **해적·포격은 말하지 않는다.** 지도의 한 줄(ROUTE)에는 남아 있지만 STORM_MAP 에는 아직
+  //   포탑이 없다. 없는 것을 인물이 예고하면 그 자리가 비어 있는 것이 곧 버그로 읽힌다.
+  //   포탑이 들어오면 그때 네일에게 두어 줄 준다.
+  ROCK_ISLE: [
+    { speaker: '', bg: 'rock_strait', text: '바위 사이를 빠져나오자 좁은 섬 하나가 걸려 있었다.' },
+    { speaker: '', text: '누가 바위 끝에 앉아 있다. 검은 외투. 왼눈만 금빛으로 타고 있다.' },
+    { speaker: '???', sprite: 'nail', text: '거기서 나온 배는 오랜만이군.' },
+    { speaker: '루', sprite: 'ru', text: '누구십니까.' },
+    { speaker: '네일', sprite: 'nail', text: '네일. 함장이었다. 지금은 여기 앉아 있고.' },
+    { speaker: '네일', sprite: 'nail', text: '다음은 역풍 협곡이겠지. 다른 길이 없으니까.' },
+
+    // ★ 화면이 그 바다가 된다. 말로 "어둡다"고 하기 전에 어두운 것을 보여 준다.
+    { speaker: '네일', sprite: 'nail', bg: 'night_storm', text: '거긴 바람이 등이 아니라 얼굴로 온다.' },
+    { speaker: '네일', sprite: 'nail', text: '여기까지 돛으로 왔으면, 그 돛이 이제 너를 뒤로 민다.' },
+    { speaker: '루', sprite: 'ru', text: '떼라는 말씀입니까.' },
+    { speaker: '네일', sprite: 'nail', text: '그건 네가 정해. 나는 바람이 어느 쪽인지만 말해 줄 수 있어.' },
+    // ⚠ 이 두 줄은 STORM_MAP 의 `directionCycle` 과 1:1 이다 (interval 5, 여덟 방향).
+    //   맵 데이터를 고치면 여기도 고쳐야 한다 — 안 그러면 인물이 거짓말을 한다.
+    { speaker: '네일', sprite: 'nail', text: '하나 더. 그 바람은 한자리에 머물지 않아.' },
+    { speaker: '네일', sprite: 'nail', text: '다섯을 세면 방향이 돌아. 등이었다가, 옆이었다가, 다시 얼굴이고.' },
+    { speaker: '네일', sprite: 'nail', text: '그리고 어둡다. 앞이 안 보이는 게 바위보다 무섭지.' },
+
+    // ★ 여기도 끝은 그리기 화면이다 (`playInterlude`). 그 이동에 이유를 붙이는 것이 이 세 줄.
+    { speaker: '네일', sprite: 'nail', bg: 'rock_strait', text: '가기 전에 네 배를 다시 봐.' },
+    { speaker: '네일', sprite: 'nail', text: '여기까지 온 배가 거기서도 맞는 배라는 법은 없다.' },
+    { speaker: '루', sprite: 'ru', text: '…고맙습니다.' },
+    { speaker: '', text: '모루의 펜을 다시 쥐었다.' },
+  ],
 };
 
 /**
@@ -293,4 +333,8 @@ export const INTRO_BEATS = [
  */
 export const INTERLUDES = {
   FIRST_ISLAND: { id: 'S-06', key: 'FIRST_ISLAND', bgm: 'village', grant: 'rudder' },
+  // 바위섬은 `village`(따뜻한 왈츠)를 쓸 수 없다 — 이 막간이 하는 말이 경고다.
+  // `tension` 은 S-02 에서 포포가 바다 셋을 늘어놓을 때 쓴 곡이라, 같은 곡이 같은 종류의
+  // 자리에 돌아오는 셈이기도 하다.
+  ROCK_ISLE: { id: 'S-07', key: 'ROCK_ISLE', bgm: 'tension' },
 };

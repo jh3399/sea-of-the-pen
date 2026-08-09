@@ -10,13 +10,13 @@ import { fieldForcesLocal, toLocalVector } from '../field/forces.js';
  * @param {Body} body
  * @param {object} fields createFields() 결과
  */
-export function applyFields(body, fields, dt) {
+export function applyFields(body, fields, dt, time = 0) {
   const hull = body.getUserData()?.hull;
   if (!hull || !fields || fields.isEmpty || dt <= 0) return;
 
   const c = body.getWorldCenter();
   const angle = body.getAngle();
-  const windLocal = toLocalVector(fields.sampleVector('wind', c.x, c.y), angle);
+  const windLocal = toLocalVector(fields.sampleVector('wind', c.x, c.y, time), angle);
   const vLocal = body.getLocalVector(body.getLinearVelocity());
 
   const f = fieldForcesLocal(hull.items, windLocal, {
@@ -29,9 +29,9 @@ export function applyFields(body, fields, dt) {
 }
 
 /** 월드의 모든 선체에 적용. FixedStepper 의 onPreStep 에 물린다. */
-export function applyFieldsToWorld(world, fields, dt) {
+export function applyFieldsToWorld(world, fields, dt, time = 0) {
   if (!fields || fields.isEmpty) return;
   for (let body = world.getBodyList(); body; body = body.getNext()) {
-    if (body.isDynamic()) applyFields(body, fields, dt);
+    if (body.isDynamic()) applyFields(body, fields, dt, time);
   }
 }

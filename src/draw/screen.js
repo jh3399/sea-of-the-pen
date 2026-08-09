@@ -15,7 +15,7 @@ import { unlockedItems, unlockedMaterials } from '../game/progress.js';
 import { TEMPLATES, TEMPLATE_LABELS, TEMPLATE_ORDER } from './templates.js';
 import { DrawTutorial } from './tutorial.js';
 import {
-  itemIconSVG, templateThumbSVG, drawItemMarker, drawCrewSprite,
+  itemIconSVG, templateThumbSVG, drawItemMarker, drawRudderMarker, drawCrewSprite,
   markerAngleToward, itemMarkerSize, OAR_PUSH,
 } from './icons.js';
 
@@ -32,6 +32,8 @@ const PALETTE_MATERIALS = ['wood', 'iron'];
 //   통째로 의미를 잃고 "노만 달고 왔어?" 라는 세렌의 첫 대사가 거짓말이 된다.
 
 const ITEM_MARKER_HIT_PX = 16;
+const ITEM_MARKER_PIXEL = 3;
+const RUDDER_MARKER_PIXEL = ITEM_MARKER_PIXEL * 2;
 
 /** 노 배치 모드의 의사 타입 — 노는 카탈로그 아이템이 아니라 기본 장치라 `placing` 에만 산다. */
 const PLACING_OAR = 'oar';
@@ -69,7 +71,8 @@ class DrawScreen {
     this.center = { x: 0, y: 0 };
     // 플레이어가 찍은 노의 세로 위치(선체 로컬 x). 양현으로 벌리는 일은 defaults.js 가 한다.
     this.oarX = null;
-    this.oarHoverX = null; // 배치 모드에서 커서를 따라다니는 미리보기
+    this.oarHoverX = null; // 노 배치 모드에서 커서를 따라다니는 미리보기
+    this.itemHoverLocal = null; // 아이템 배치 모드의 선체 로컬 미리보기 위치
 
     this.capture = new StrokeCapture(this.canvas, {
       onStart: () => this.onStrokeStart(),
@@ -137,6 +140,7 @@ class DrawScreen {
       this.hull = { items: [] }; // 새 선체는 로컬 좌표계가 달라지므로 부착물을 비운다
       this.oarX = null; //  ↳ 노 위치도 같은 이유로 무효 (로컬 x 의 뜻이 달라진다)
       this.oarHoverX = null;
+      this.itemHoverLocal = null;
       // 노는 필수라 바로 배치 모드로 들어간다 — 완성하기가 잠긴 이유를 손이 먼저 알게 한다.
       this.placing = PLACING_OAR;
       this.capture.enabled = false;
@@ -265,6 +269,7 @@ class DrawScreen {
     if (!this.design?.ok || this.finished) return;
     this.placing = this.placing === type ? null : type;
     this.oarHoverX = null;
+    this.itemHoverLocal = null;
     this.capture.enabled = !this.placing;
     this.buildDeviceList();
     this.buildItemList();
@@ -285,8 +290,10 @@ class DrawScreen {
   }
 
   handleCanvasMove(e) {
-    if (this.placing !== PLACING_OAR || !this.design?.ok) return;
-    this.oarHoverX = toHullLocal(this.design, pxToMetric(this.canvasPoint(e))).x;
+    if (!this.placing || !this.design?.ok) return;
+    const local = toHullLocal(this.design, pxToMetric(this.canvasPoint(e)));
+    if (this.placing === PLACING_OAR) this.oarHoverX = local.x;
+    else this.itemHoverLocal = local;
     this.render();
   }
 
@@ -347,8 +354,9 @@ class DrawScreen {
     this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
     this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMove(e));
     this.canvas.addEventListener('mouseleave', () => {
-      if (this.oarHoverX === null) return;
+      if (this.oarHoverX === null && this.itemHoverLocal === null) return;
       this.oarHoverX = null;
+      this.itemHoverLocal = null;
       this.render();
     });
   }
@@ -367,6 +375,7 @@ class DrawScreen {
     this.crewLocal = null;
     this.oarX = null;
     this.oarHoverX = null;
+    this.itemHoverLocal = null;
     this.setStatus('선체를 그려 주인공을 감싸세요.');
     this.buildDeviceList();
     this.buildItemList();
@@ -382,6 +391,7 @@ class DrawScreen {
     this.capture.enabled = false;
     this.placing = null;
     this.oarHoverX = null;
+    this.itemHoverLocal = null;
     this.finishedDesign = {
       outline: this.design.outline,
       origin: this.design.origin,
@@ -397,7 +407,7 @@ class DrawScreen {
     this.setStatus('설계 완성! 항해로 이동합니다…', 'ok');
     this.syncFinishButton();
     this.tutorial.complete();
-    // 항해 화면(sail.html)이 이어받는다 — 같은 폴더의 상대 경로라 dev/build 양쪽에서 그대로 동작.
+    // 항해 화면(sail.html)이 이어받는다 — 진행도는 game/progress.js 한 곳에서만 관리한다.
     sessionStorage.setItem('shipwright:handoff', JSON.stringify(this.finishedDesign));
     location.href = 'sail.html';
   }
@@ -456,16 +466,36 @@ class DrawScreen {
     ctx.stroke();
     ctx.restore();
 
-    // 확정된 노가 먼저, 그 위에 커서를 따라다니는 미리보기.
+    // 확정된 장치가 먼저, 그 위에 커서를 따라다니는 반투명 미리보기.
     if (this.oarX !== null) this.renderOarPair(ctx, this.oarPlacementAt(this.oarX), 1);
+    for (const item of this.hull.items) {
+      this.renderItemMarker(ctx, item.type, { x: item.x, y: item.y });
+    }
     if (this.placing === PLACING_OAR && this.oarHoverX !== null) {
       this.renderOarPair(ctx, this.oarPlacementAt(this.oarHoverX), 0.55);
+    } else if (this.placing && this.itemHoverLocal) {
+      const ok = canAttachAt(this.design.outline, [], this.itemHoverLocal);
+      this.renderItemMarker(ctx, this.placing, this.itemHoverLocal, 0.55, ok);
     }
+  }
 
-    for (const item of this.hull.items) {
-      const p = this.localToPx({ x: item.x, y: item.y });
-      drawItemMarker(ctx, item.type, p.x, p.y);
+  /** 부착 아이템 — 미리보기일 때는 정확한 부착점을 점선 고리로 함께 표시한다. */
+  renderItemMarker(ctx, type, local, alpha = 1, ok = null) {
+    const p = this.localToPx(local);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (ok !== null) {
+      ctx.strokeStyle = ok ? '#2f7a4a' : '#a33a2b';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
+    if (type === 'rudder') drawRudderMarker(ctx, p.x, p.y, RUDDER_MARKER_PIXEL);
+    else drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);
+    ctx.restore();
   }
 
   /** 노 한 쌍 — 두 부착점을 잇는 선이 곧 "그 자리의 선폭"이라 팔길이가 눈에 보인다.

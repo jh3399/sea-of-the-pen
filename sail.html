@@ -25,6 +25,11 @@
         </div>
         <span class="hud-distance-value" id="hud-distance">-- m</span>
       </div>
+
+      <!-- 설정은 Esc 로도 열리지만, 키를 모르는 사람에게 Esc 는 없는 기능이다.
+           안내판(sail-hints)이 Esc 를 알려 주는 바다는 연습 해역 하나뿐이라 더욱 그렇다. -->
+      <button class="hud-icon-btn" id="btn-open-settings" type="button"
+              aria-label="설정 (Esc)" title="설정 (Esc)"><span aria-hidden="true">⚙</span></button>
     </div>
 
     <!-- 조작 안내 — 연습 해역에서만 뜬다 (game/progress.js 의 STAGES[].hints).
@@ -56,9 +61,10 @@
         <div class="sail-panel-actions sail-panel-actions-stack">
           <button class="clear-btn" id="btn-sound" type="button" aria-pressed="false">♪ 소리 켜짐</button>
           <button class="clear-btn clear-btn-primary" id="btn-settings-close" type="button">돌아가기 (Esc)</button>
+          <button class="clear-btn" id="btn-redraw" type="button">배 다시 그리기</button>
           <button class="clear-btn clear-btn-ghost" id="btn-quit" type="button">메인 메뉴로 나가기</button>
         </div>
-        <p class="sail-panel-note">나가면 지금 항해는 사라집니다.</p>
+        <p class="sail-panel-note">다시 그리면 이 바다를 새 배로 다시 시작합니다.<br />나가도 진행은 남습니다.</p>
       </div>
     </div>
 

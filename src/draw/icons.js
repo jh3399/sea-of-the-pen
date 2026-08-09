@@ -90,20 +90,23 @@ const CANNON_GRID = [
   '............',
 ];
 
+// 키 — 오른쪽의 철제 축을 부착점에 두고, 나무 막대가 선미(-X) 쪽으로 뻗는 틸러 형태다.
+// 항해 화면에서는 이 축을 중심으로 `control.rudder` 만큼 회전한다.
 const RUDDER_GRID = [
-  '....WWWW....',
-  '..WW....WW..',
-  '.W..W..W..W.',
-  'W...W..W...W',
-  'W...WwwW...W',
-  'WWWWWwwWWWWW',
-  'WWWWWwwWWWWW',
-  'W...WwwW...W',
-  'W...W..W...W',
-  '.W..W..W..W.',
-  '..WW....WW..',
-  '....WWWW....',
+  '............',
+  '............',
+  '............',
+  '............',
+  'WW..........',
+  'WWWWWWWWWI..',
+  'wwwwwwwwwI..',
+  '.........ii.',
+  '............',
+  '............',
+  '............',
+  '............',
 ];
+const RUDDER_PIVOT = { x: 9.5, y: 6.5 };
 
 const SAIL_GRID = [
   '......C.....',
@@ -222,6 +225,16 @@ export function drawItemMarker(ctx, type, cx, cy, pixel = 3, angle = 0) {
   ctx.translate(cx, cy);
   ctx.rotate(angle);
   drawPixelGrid(ctx, grid, ICON_PALETTE, -w / 2, -h / 2, pixel);
+  ctx.restore();
+}
+
+/** 키의 철제 축을 (cx, cy)에 고정하고 막대만 `angle` 만큼 회전시킨다. */
+export function drawRudderMarker(ctx, cx, cy, pixel = 3, angle = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  drawPixelGrid(ctx, RUDDER_GRID, ICON_PALETTE,
+    -RUDDER_PIVOT.x * pixel, -RUDDER_PIVOT.y * pixel, pixel);
   ctx.restore();
 }
 

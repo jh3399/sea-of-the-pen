@@ -153,7 +153,7 @@ export function createRuleEngine(rules, fields) {
      * @param {World} world
      * @param {number} dt 물리 타임스텝 (누적해 RULE_TICK 마다만 실제로 돈다)
      */
-    tick(world, dt) {
+    tick(world, dt, time = 0) {
       accumulator += dt;
       if (accumulator < RULE_TICK) return;
       const step = accumulator;
@@ -166,10 +166,10 @@ export function createRuleEngine(rules, fields) {
         if (!hull) continue;
 
         const c = body.getWorldCenter();
-        const wind = fields.sampleVector('wind', c.x, c.y);
+        const wind = fields.sampleVector('wind', c.x, c.y, time);
         const sample = {
-          temperature: fields.sampleScalar('temperature', c.x, c.y),
-          moisture: fields.sampleScalar('moisture', c.x, c.y),
+          temperature: fields.sampleScalar('temperature', c.x, c.y, time),
+          moisture: fields.sampleScalar('moisture', c.x, c.y, time),
           wind: Math.hypot(wind.x, wind.y),
         };
 

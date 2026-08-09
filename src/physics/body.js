@@ -6,6 +6,7 @@ import { Polygon, Vec2 } from 'planck';
 import { decomposeHull } from '../hull/decompose.js';
 import { computeHullParams } from '../hull/params.js';
 import { polygonMoments, translate } from '../geom/poly.js';
+import { translateHullSurface } from '../hull/raster.js';
 
 /**
  * 선체 조각 하나를 강체로 만든다.
@@ -87,6 +88,8 @@ export function createHullBody(world, piece, placement) {
       launchArea: piece.launchArea ?? params.area,
       /** 직전 화점 (선체 로컬). 불이 여기서 번진다 — damage/hotspot.js */
       burnAt: piece.burnAt ?? null,
+      /** 출항 때 고정한 픽셀 표면. 물리에는 영향이 없고 파손 이벤트에서 기존 셀만 줄어든다. */
+      surface: piece.surface ?? null,
       /** 비교 주행용 표식 {label, color}. 물리에는 영향이 없다. */
       tag: piece.tag ?? null,
       parts,
@@ -137,6 +140,8 @@ export function respawnPieces(world, oldBody, pieces, options = {}) {
       burnAt: oldHull?.burnAt
         ? { x: oldHull.burnAt.x - m.cx, y: oldHull.burnAt.y - m.cy }
         : null,
+      // 표면 격자도 같은 로컬 원점 이동을 받는다. 셀 ID는 유지되어 파손 뒤 재배치되지 않는다.
+      surface: translateHullSurface(piece.surface, -m.cx, -m.cy),
     };
 
     // 로컬 무게중심의 월드 위치를 새 강체의 원점으로 삼는다.
