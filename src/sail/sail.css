@@ -72,6 +72,43 @@ html, body {
 
 .hud-clock-icon { font-size: 20px; }
 
+/* HUD 오른쪽 끝의 설정 손잡이.
+   ⚠ `.hud` 가 `pointer-events: none` 이라 (바다를 클릭으로 못 만지게 되는 것을 막는 설정)
+     이 버튼만 되살려야 한다. 안 되살리면 눌리지 않는 아이콘이 된다.
+   `margin-left: auto` 인 이유: `.hud-distance` 는 flex:1 이지만 max-width 640 에서 멈추므로
+   남는 공간이 그대로 뜬다. auto 마진이 그 공간을 먹어야 오른쪽 끝에 붙는다. */
+.hud-icon-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: 24px;
+  line-height: 1;
+  background: var(--panel);
+  border: 3px solid var(--panel-edge);
+  border-radius: 10px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.hud-icon-btn:hover { filter: brightness(1.12); }
+
+.hud-icon-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.hud-icon-btn:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
 .hud-label {
   font-size: 13px;
   opacity: 0.75;
@@ -260,6 +297,9 @@ html, body {
 @media (max-width: 640px) {
   .hud { flex-direction: column; }
   .hud-distance { max-width: none; width: 100%; }
+  /* 세로로 쌓이면 설정 버튼이 세 번째 줄을 혼자 차지해 바다를 190 px 나 덮는다.
+     흐름에서 빼 시계 옆(비어 있는 자리)에 올린다. */
+  .hud-icon-btn { position: absolute; top: 0; right: 0; margin-left: 0; }
   .clear-overlay { padding: 14px; }
   .clear-panel { padding: 22px 18px 18px; }
   .clear-actions { grid-template-columns: 1fr; }

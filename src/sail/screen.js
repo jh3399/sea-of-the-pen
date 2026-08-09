@@ -336,7 +336,17 @@ class SailScreen {
 
     document.getElementById('btn-gear-close')?.addEventListener('click', () => this.togglePanel('gear', false));
     document.getElementById('btn-settings-close')?.addEventListener('click', () => this.togglePanel('settings', false));
+    // Esc 와 **같은 토글**을 부른다 — 아이콘을 두 번 눌러도 닫히고, 겹침 규칙(장비창이
+    // 열려 있으면 닫는다)·입력 해제도 그대로 따라온다. 여는 전용 경로를 새로 만들면 안 된다.
+    document.getElementById('btn-open-settings')?.addEventListener('click', () => this.togglePanel('settings'));
     this.panels.sound?.addEventListener('click', () => this.toggleMute());
+    document.getElementById('btn-redraw')?.addEventListener('click', () => {
+      // 설계만 버리고 진행(`shipwright:stage`)은 남긴다 — 「다시 그리기」는 "이 바다를 다른
+      // 배로"이지 "처음부터"가 아니다. 스테이지까지 지우면 여기까지 오며 열어 둔 아이템·재질이
+      // 함께 잠겨(progress.js 의 `unlockedItems`) 연습 해역의 노 한 벌로 되돌아간다.
+      sessionStorage.removeItem(HANDOFF_KEY);
+      location.href = 'draw.html';
+    });
     document.getElementById('btn-quit')?.addEventListener('click', () => {
       // 나가면 이 항해는 끝이다 — 설계와 진행을 같이 지운다. 하나만 지우면 다음에
       // "3장 진행도인데 배가 없는" 상태가 된다 (progress.js 머리말의 그 이유).
