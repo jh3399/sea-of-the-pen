@@ -123,6 +123,34 @@ html, body {
   text-align: right;
 }
 
+.hud-equipment {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: max-content;
+}
+
+.hud-equipment-chip {
+  padding: 8px 11px;
+  color: var(--ink);
+  font-size: 14px;
+  background: var(--panel);
+  border: 3px solid var(--panel-edge);
+  border-radius: 7px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+
+.hud-equipment-chip.ready {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
+.hud-equipment-chip.reloading {
+  color: rgba(234, 246, 255, 0.7);
+  border-color: #496079;
+}
+
 .clear-overlay {
   position: absolute;
   inset: 0;
@@ -260,6 +288,7 @@ html, body {
 @media (max-width: 640px) {
   .hud { flex-direction: column; }
   .hud-distance { max-width: none; width: 100%; }
+  .hud-equipment { align-items: flex-start; }
   .clear-overlay { padding: 14px; }
   .clear-panel { padding: 22px 18px 18px; }
   .clear-actions { grid-template-columns: 1fr; }
