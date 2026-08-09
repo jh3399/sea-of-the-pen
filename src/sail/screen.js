@@ -23,8 +23,8 @@ import { CORPUS } from '../hull/corpus.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { View } from '../render/view.js';
-import { drawWater, drawRock, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
-import { DEMO_MAP } from './map.js';
+import { drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
+import { DEMO_MAP, boundaryWalls } from './map.js';
 
 const PPM = HULL_DEFAULTS.pixelsPerMeter;
 const HANDOFF_KEY = 'shipwright:handoff';
@@ -111,6 +111,9 @@ class SailScreen {
 
     this.launch(loadHandoff() ?? fallbackDesign());
     for (const spec of DEMO_MAP.obstacles) this.placeObstacle(spec);
+    // 해역 경계 — 벽도 그냥 암초다 (같은 `placeObstacle`, 같은 재질). 경계 전용 물리·판정
+    // 코드가 0줄인 이유이고, 그래서 "여기서부터 못 간다"를 규칙이 아니라 지형이 말한다.
+    for (const spec of boundaryWalls(DEMO_MAP.bounds)) this.placeObstacle(spec);
     this.goal = createGoal(DEMO_MAP.goal);
     this.initialDistance = this.currentDistance();
 
@@ -234,10 +237,9 @@ class SailScreen {
     // 도착 지점은 수면 위 표식이라 배·암초보다 **아래**에 깐다 — 도착하는 순간 배가 고리를
     // 가리는 것이 맞다 (고리 위에 배가 올라앉아야 "들어갔다"로 읽힌다).
     drawGoal(ctx, view, this.goal, { cleared: this.cleared, sec: this.simTime });
-    for (const body of this.obstacles) {
-      const spec = body.getUserData()?.obstacle?.spec;
-      if (spec?.shape === 'circle') drawRock(ctx, spec);
-    }
+    // 화면 밖 장애물을 거르는 것은 `drawObstacle` 안에서 한다 — 암초밭이 해역 전체를 덮어
+    // 60개가 넘고, 그중 화면에 걸치는 것은 늘 몇 개뿐이다.
+    for (const body of this.obstacles) drawObstacle(ctx, view, body.getUserData()?.obstacle?.spec);
     drawWake(ctx, this.wake);
     for (const body of this.bodies) {
       const p = body.getPosition();

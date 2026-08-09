@@ -31,6 +31,7 @@ import {
 import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
+import { DEMO_MAP, boundaryWalls } from '../src/sail/map.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
@@ -2506,6 +2507,81 @@ check('주인공 없는 선체도 파손 경로를 그대로 탄다 (crew 는 �
   splitResult.result.crewLost === false && splitResult.bodies.every(
     (bd) => bd.getUserData().hull.crew === null),
   `조각 ${splitResult.bodies.length}개 · crew null · crewLost false`);
+
+// ─────────────────────────────────────────────── D3 ⑤ 해역
+// D3 통과 질문 (b) "3맵 전부 클리어 가능한가" 의 반대편 — 클리어는 되어야 하지만 **옆으로
+// 돌아가서** 되면 안 된다. 항해 화면의 줌은 20 px/m 이라 한 화면이 대략 70 m × 40 m 다.
+// 암초를 항로 주변에만 깔면 y 로 한 화면만 벗어나도 텅 빈 바다가 나오고, 그러면 암초는
+// 장애물이 아니라 무시해도 되는 장식이 된다. 여기서는 암초밭이 해역 전체를 덮는지와,
+// 해역 밖으로는 정말 못 나가는지를 잰다.
+console.log('\n\x1b[36m▌D3 ⑤ — 해역 (암초밭의 폭 · 경계 벽)\x1b[0m\n');
+
+const sea = DEMO_MAP.bounds;
+/** 화면 한 폭에 못 미치는 띠로 해역을 가로로 썰어, 빈 띠가 있는지 본다. */
+const BAND = 25;
+const bands = [];
+for (let y0 = sea.minY; y0 < sea.maxY; y0 += BAND) {
+  const n = DEMO_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length;
+  bands.push({ y0, n });
+}
+const rockSpanY = Math.max(...DEMO_MAP.obstacles.map((o) => Math.abs(o.y) + o.radius));
+console.log(`  암초 ${DEMO_MAP.obstacles.length}개 · y 도달폭 ±${rockSpanY.toFixed(0)} m · ` +
+  `${BAND} m 띠별 개수 ${bands.map((b) => b.n).join('·')}`);
+check('★ 암초밭이 해역 전체를 덮는다 (빈 띠가 없다 — y 로 벗어나도 계속 암초를 만난다)',
+  bands.every((b) => b.n > 0),
+  `${bands.length}개 띠 중 빈 띠 ${bands.filter((b) => b.n === 0).length}개`);
+check('암초가 화면 한 폭(±20 m)보다 훨씬 넓게 퍼져 있다', rockSpanY > 60,
+  `y ±${rockSpanY.toFixed(0)} m`);
+
+// 출항 지점과 도착 지점은 암초에 묻혀 있으면 안 된다 (맵이 애초에 성립 불가가 된다).
+const clearance = (p) => Math.min(...DEMO_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const startClear = clearance({ x: 0, y: 0 });
+const goalClear = clearance(DEMO_MAP.goal) - DEMO_MAP.goal.radius;
+console.log(`  출항 지점 여유 ${startClear.toFixed(1)} m · 도착 원 밖 여유 ${goalClear.toFixed(1)} m`);
+check('출항 지점과 도착 원이 암초에 묻히지 않았다', startClear > 5 && goalClear > 0,
+  `출항 ${startClear.toFixed(1)} m · 도착 ${goalClear.toFixed(1)} m`);
+check('도착 지점이 해역 안에 있다 (경계 벽이 골을 삼키지 않는다)',
+  DEMO_MAP.goal.x + DEMO_MAP.goal.radius < sea.maxX
+  && Math.abs(DEMO_MAP.goal.y) + DEMO_MAP.goal.radius < sea.maxY,
+  `골 x=${DEMO_MAP.goal.x} · 해역 x≤${sea.maxX}`);
+
+// 경계 벽 — 배를 계속 밀어붙여도 넘어가지 못한다. 벽을 빼면 그대로 나가 버리는 것이 대조군이다.
+const seaWalls = boundaryWalls(sea);
+/**
+ * 경계를 향해 12초간 배를 밀어붙이고, 그 방향으로 가장 멀리 간 지점을 돌려준다.
+ * 항력은 켜지 않는다 — 여기서 재는 것은 "벽이 막는가" 하나이고, 항력이 있으면 벽에
+ * 닿기도 전에 멎어 무엇이 막았는지 알 수 없게 된다.
+ */
+function pushOut(dir, { walls = true, seconds = 12 } = {}) {
+  const world = createWorld();
+  if (walls) for (const spec of seaWalls) createObstacle(world, spec);
+  const body = createHullBody(world,
+    { outline: hulls.sloop.outline, holes: [], items: [], crew: { x: 0, y: 0 } },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const st = new FixedStepper(world, {});
+  let far = -Infinity;
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) {
+    body.setLinearVelocity(new Vec2(dir.x * 20, dir.y * 20));
+    st.advance(FIXED_DT);
+    const p = body.getPosition();
+    far = Math.max(far, p.x * dir.x + p.y * dir.y);
+  }
+  return far;
+}
+
+const ramNorth = pushOut({ x: 0, y: 1 });
+const ramEast = pushOut({ x: 1, y: 0 });
+const ramSouth = pushOut({ x: 0, y: -1 });
+const ramWest = pushOut({ x: -1, y: 0 });
+const ramFree = pushOut({ x: 0, y: 1 }, { walls: false });
+console.log(`  20 m/s 로 12초간 밀어붙임 — 북 ${ramNorth.toFixed(1)} / 남 ${ramSouth.toFixed(1)} / ` +
+  `동 ${ramEast.toFixed(1)} / 서 ${ramWest.toFixed(1)} m (벽 없으면 ${ramFree.toFixed(0)} m)`);
+check('★ 해역 밖으로는 나갈 수 없다 (사방이 암초 벽 — 경계 전용 물리 코드 0줄)',
+  ramNorth < sea.maxY && ramSouth < -sea.minY && ramEast < sea.maxX && ramWest < -sea.minX,
+  `북 ${ramNorth.toFixed(1)} ≤ ${sea.maxY} · 동 ${ramEast.toFixed(1)} ≤ ${sea.maxX}`);
+check('막는 것이 정말 벽이다 (빼면 그대로 나간다 — 대조군)', ramFree > 200,
+  `벽 없이 ${ramFree.toFixed(0)} m`);
 
 // ─────────────────────────────────────────────── 종합
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +

@@ -10,6 +10,13 @@ import { drawItemMarker, drawCrewSprite, drawPixelGrid } from '../draw/icons.js'
 const HULL_PIXEL_COLS = 28;
 /** 바위 하나를 몇 칸 그리드로 그릴 것인가 (지름 기준). */
 const ROCK_PIXEL_COLS = 18;
+/** 경계 암초 벽의 픽셀 한 칸 (m). 벽 하나가 200 m 를 넘으므로 낱개 바위보다 굵게 찍는다. */
+const WALL_CELL = 0.7;
+/** 벽의 바다 쪽 면이 들쭉날쭉해지는 폭 (m). 이 폭은 **바깥으로만** 파고든다 —
+ *  안쪽으로 흔들면 배가 지나갈 수 있는 자리에 바위가 그려져 판정과 어긋난다. */
+const WALL_JAG = 2.4;
+/** 벽·바위의 바다 쪽에 여울 점묘가 뻗는 거리 (m). 충돌 전에 눈으로 먼저 경고한다. */
+const SHOAL_BAND = 3.2;
 /** 물 표면의 반짝임 타일 크기 (m). */
 const WATER_CELL = 1.6;
 /** 반짝임 한 칸의 깜빡임 각속도 기준 (rad/s) — 칸마다 해시로 흔든다. */
@@ -195,6 +202,93 @@ export function drawRock(ctx, spec) {
       }
     }
   }
+}
+
+/** poly 장애물 스펙의 월드 AABB (points 는 몸체 로컬 좌표다). */
+function polyBox(spec) {
+  let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+  for (const [px, py] of spec.points ?? []) {
+    minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+  }
+  const ox = spec.x ?? 0;
+  const oy = spec.y ?? 0;
+  return { minX: minX + ox, maxX: maxX + ox, minY: minY + oy, maxY: maxY + oy };
+}
+
+/**
+ * 해역 경계를 막는 암초 벽 — 긴 띠 하나.
+ *
+ * 바다 쪽 면만 해시로 흔들어 톱니를 낸다. 흔들림은 **바깥 방향으로만** 파고들므로 그려진
+ * 바위는 언제나 정적 강체 안에 있다 — 눈에 보이는 가장자리가 곧 배가 멈추는 자리다
+ * (`drawGoal` 이 고리를 판정 반경 그대로 그리는 것과 같은 이유).
+ *
+ * 벽 하나가 200 m 를 넘으므로 화면과 겹치는 칸만 훑는다. 통째로 찍으면 한 프레임에
+ * 수천 칸을 채우게 되고, 그것도 대부분 화면 밖이다.
+ */
+function drawReefWall(ctx, view, spec, box) {
+  const [ix, iy] = spec.reef?.inward ?? [0, 1];
+  const horizontal = Math.abs(iy) >= Math.abs(ix);
+  const vis = visibleWorldRect(view);
+  const lx = Math.max(box.minX - SHOAL_BAND, vis.x0);
+  const hx = Math.min(box.maxX + SHOAL_BAND, vis.x1);
+  const ly = Math.max(box.minY - SHOAL_BAND, vis.y0);
+  const hy = Math.min(box.maxY + SHOAL_BAND, vis.y1);
+  if (hx <= lx || hy <= ly) return;
+
+  // 바다 쪽 면의 좌표와, 거기서 벽 속으로 파고드는 방향의 부호.
+  const sign = horizontal ? Math.sign(iy) : Math.sign(ix);
+  const face = horizontal
+    ? (sign > 0 ? box.maxY : box.minY)
+    : (sign > 0 ? box.maxX : box.minX);
+  const thick = horizontal ? box.maxY - box.minY : box.maxX - box.minX;
+
+  const mid = MATERIALS.rock.color;
+  const dark = shade(mid, -0.35);
+  const light = shade(mid, 0.14);
+
+  // 격자는 월드 원점에 못 박는다 — 화면 기준으로 잡으면 카메라가 움직일 때 벽이 아른거린다.
+  const gx0 = Math.floor(lx / WALL_CELL) * WALL_CELL;
+  const gy0 = Math.floor(ly / WALL_CELL) * WALL_CELL;
+  for (let y = gy0; y <= hy; y += WALL_CELL) {
+    for (let x = gx0; x <= hx; x += WALL_CELL) {
+      const cx = x + WALL_CELL / 2;
+      const cy = y + WALL_CELL / 2;
+      const along = horizontal ? cx : cy;
+      const across = horizontal ? cy : cx;
+      // 바다 쪽 면에서 벽 속으로 얼마나 들어왔는가. 음수면 아직 바다다.
+      const depth = (face - across) * sign;
+      if (depth > thick) continue;
+      const jag = hash2(along * 2.3, sign * 7.7 + (horizontal ? 0 : 31.4)) * WALL_JAG;
+      if (depth >= jag) {
+        const t = hash2(cx * 3.3, cy * 3.3);
+        ctx.fillStyle = depth < jag + 1.4 ? dark : (t > 0.78 ? light : mid);
+        ctx.fillRect(x, y, WALL_CELL, WALL_CELL);
+      } else if (depth > -SHOAL_BAND && hash2(cx * 5.7, cy * 5.7) > 0.62) {
+        ctx.fillStyle = SHOAL_RING;
+        ctx.fillRect(x, y, WALL_CELL, WALL_CELL);
+      }
+    }
+  }
+}
+
+/**
+ * 장애물 하나 — 모양에 따라 낱개 암초/경계 벽으로 갈라 그리고, 화면 밖이면 아무것도 안 한다.
+ *
+ * 컬링이 렌더 쪽에 있는 이유: 맵이 넓어질수록 장애물 수가 늘어나는데 그중 화면에 걸치는
+ * 것은 늘 몇 개뿐이다. 호출자(`sail/screen.js`)는 전부 넘기고 여기서 거른다.
+ */
+export function drawObstacle(ctx, view, spec) {
+  if (!spec) return;
+  const vis = visibleWorldRect(view);
+  if (spec.shape === 'circle') {
+    const r = spec.radius * 1.4 + SHOAL_BAND;
+    if (spec.x + r < vis.x0 || spec.x - r > vis.x1) return;
+    if (spec.y + r < vis.y0 || spec.y - r > vis.y1) return;
+    drawRock(ctx, spec);
+    return;
+  }
+  if (spec.shape === 'poly') drawReefWall(ctx, view, spec, polyBox(spec));
 }
 
 /**
