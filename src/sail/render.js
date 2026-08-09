@@ -12,6 +12,9 @@ const HULL_PIXEL_COLS = 28;
 const ROCK_PIXEL_COLS = 18;
 /** 물 표면의 반짝임 타일 크기 (m). */
 const WATER_CELL = 1.6;
+/** 반짝임 한 칸의 깜빡임 각속도 기준 (rad/s) — 칸마다 해시로 흔든다. */
+const GLINT_SPEED = 1.9;
+const TAU = Math.PI * 2;
 /** 아이템·주인공 아이콘의 한 칸 크기 (m) — `draw/icons.js` 는 화면 고정 픽셀(CSS px)로 쓰지만
  *  여기는 월드 좌표라 선체 스케일에 맞는 작은 값을 쓴다. */
 const ITEM_PIXEL = 0.06;
@@ -19,7 +22,6 @@ const CREW_PIXEL = 0.05;
 
 const WATER_BASE = '#1c4fae';
 const WATER_DEEP = 'rgba(6, 22, 64, 0.28)';
-const WATER_FOAM = 'rgba(255, 255, 255, 0.15)';
 const SHOAL_RING = 'rgba(214, 244, 240, 0.5)';
 
 /** 결정론적 의사난수 (0..1) — 좌표를 시드로 쓰므로 프레임마다 깜빡이지 않는다. */
@@ -62,8 +64,19 @@ function visibleWorldRect(view) {
   };
 }
 
-/** 바다 — 단색 베이스 + 월드에 고정된 반짝임/그림자 타일(카메라를 따라 "흐르지" 않는다). */
-export function drawWater(ctx, view) {
+/**
+ * 바다 — 단색 베이스 + 월드에 고정된 반짝임/그림자 타일(카메라를 따라 "흐르지" 않는다).
+ *
+ * 반짝임은 타이틀 화면(`menu/screen.js` 의 `stars`·`glitter`)과 같은 방식이다: 자리는 시드
+ * 해시로 **고정**하고 알파와 미세한 위아래 흔들림만 시간의 함수로 둔다. 자리까지 난수로
+ * 흔들면 프레임마다 다른 곳이 튀어 물결이 아니라 노이즈가 된다.
+ *
+ * ★ 위상·주기를 칸마다 해시로 흩뿌리는 것이 핵심이다 — 같으면 화면 전체가 한 몸으로
+ *   깜빡여 "바다"가 아니라 "화면이 점멸한다"로 보인다 (타이틀 등불 둘과 같은 이유).
+ *
+ * @param {number} sec 경과 시간(초). 물리 시각(`simTime`)을 넣으면 일시정지도 따라 멈춘다.
+ */
+export function drawWater(ctx, view, sec = 0) {
   const pad = WATER_CELL * 2;
   const { x0, x1, y0, y1 } = visibleWorldRect(view);
 
@@ -75,13 +88,37 @@ export function drawWater(ctx, view) {
   for (let y = gy0; y <= y1 + pad; y += WATER_CELL) {
     for (let x = gx0; x <= x1 + pad; x += WATER_CELL) {
       const h = hash2(x, y);
-      if (h > 0.86) {
-        ctx.fillStyle = WATER_FOAM;
-        ctx.fillRect(x, y, WATER_CELL * 0.55, WATER_CELL * 0.22);
-      } else if (h < 0.1) {
+      if (h < 0.1) {
         ctx.fillStyle = WATER_DEEP;
         ctx.fillRect(x, y, WATER_CELL * 0.6, WATER_CELL * 0.6);
+        continue;
       }
+      if (h < 0.6) continue; // 아무것도 서지 않는 칸
+
+      const phase = hash2(x * 1.7, y * 1.7) * TAU;
+      const speed = GLINT_SPEED * (0.6 + hash2(x * 2.9, y * 2.9) * 0.9);
+      const blink = Math.sin(sec * speed + phase);
+      if (blink < -0.1) continue; // 가라앉은 물결 — 대부분의 칸이 여기서 빠진다
+
+      // 찰랑임: 깜빡임의 절반 주기로 위아래로 조금 뜬다. 칸 크기의 12% 를 넘기면
+      // 도트가 격자를 벗어나 "떠다니는 점"으로 읽힌다.
+      const bob = Math.sin(sec * speed * 0.5 + phase) * WATER_CELL * 0.12;
+      const yy = y + bob;
+
+      if (h < 0.72) {
+        // ★ 점과 잔물결은 **해시 대역이 갈라져 있어** 한 칸에 같이 설 수 없다. 겹치면
+        //   가로 막대 위에 점이 얹혀 T 자로 읽힌다 (실제로 그렇게 보였다). 그릴 때
+        //   위치를 비켜 놓는 것보다 애초에 표현 불가능하게 두는 편이 낫다.
+        //   점 자리는 칸 안에서 다시 해시로 흩는다 — 칸 원점에 두면 격자가 드러난다.
+        if (blink < 0.55) continue; // 마루에서만 잠깐 튄다
+        const px = x + hash2(x * 4.1, y * 4.1) * WATER_CELL * 0.7;
+        ctx.fillStyle = `rgba(255,255,255,${(0.25 + 0.5 * blink).toFixed(3)})`;
+        ctx.fillRect(px, yy, WATER_CELL * 0.18, WATER_CELL * 0.18);
+        continue;
+      }
+
+      ctx.fillStyle = `rgba(255,255,255,${(0.08 + 0.26 * blink).toFixed(3)})`;
+      ctx.fillRect(x, yy, WATER_CELL * 0.55, WATER_CELL * 0.22);
     }
   }
 }

@@ -223,7 +223,8 @@ class SailScreen {
     view.begin();
     ctx.imageSmoothingEnabled = false;
 
-    drawWater(ctx, view);
+    // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 물결만 따로 흐른다.
+    drawWater(ctx, view, this.simTime);
     for (const body of this.obstacles) {
       const spec = body.getUserData()?.obstacle?.spec;
       if (spec?.shape === 'circle') drawRock(ctx, spec);
