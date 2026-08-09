@@ -13,7 +13,6 @@ import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/au
 import { runDialogue, setDialogueBlip, skipDialogue } from '../story/dialogue.js';
 import { SCRIPT, INTRO_BEATS, INTERLUDES } from '../story/script.js';
 import { advanceStage, resetStage } from '../game/progress.js';
-import { loadDesign, saveDesign, grantItem } from '../game/handoff.js';
 
 const INTRO_SEEN_KEY = 'shipwright:introSeen'; // session — 처음 온 사람은 항상 인트로를 본다
 const MUTED_KEY = 'shipwright:muted';          // local — 취향은 남는다
@@ -133,13 +132,14 @@ async function playInterlude(beat) {
   await runDialogue(SCRIPT[beat.key]);
   showCutscene(false);
 
-  if (beat.grant) {
-    const design = loadDesign();
-    // 설계가 없으면(직접 URL 을 연 경우) 그냥 넘어간다 — sail 화면이 폴백 배를 띄운다.
-    if (design && grantItem(design, beat.grant)) saveDesign(design);
-  }
   advanceStage();
-  location.href = 'sail.html';
+  // ★ 다음 바다로 곧장 가지 않고 **그리기 화면으로** 간다. 세렌이 "그 배로 바로 출발
+  //   하려고? 배를 다시 그려 봐" 라고 하는 것이 곧 이 이동이다 — 새로 열린 아이템(키·돛)을
+  //   플레이어가 직접 달아 보는 자리이고, 배를 두 번 그리는 것이 이 게임의 본론이기도 하다.
+  // ⚠ `toDraw()` 를 쓰면 안 된다. 그쪽은 새 항해라 **진행도까지 지운다** — 방금 올린
+  //   것이 지워져 연습 해역으로 되돌아간다. 설계만 비우고 진행은 그대로 둔다.
+  sessionStorage.removeItem(HANDOFF_KEY);
+  location.href = 'draw.html';
 }
 
 /** 주소에 `?beat=KEY` 가 있으면 그 막간을 재생한다. 없거나 모르는 키면 null. */

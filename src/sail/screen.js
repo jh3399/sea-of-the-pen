@@ -25,7 +25,7 @@ import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
 import { currentStage, hasNextStage, ROUTE, routeIndex } from '../game/progress.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
-import { drawVoyageMap } from './voyagemap.js';
+import { drawVoyageMap } from '../scene/voyagemap.js';
 import { View } from '../render/view.js';
 import { drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass } from './render.js';
 import { MAPS, boundaryWalls } from './map.js';
@@ -69,7 +69,9 @@ const SAIL_HINTS = [
   { id: 'pivot', keys: '← →', label: '제자리 선회', did: (s) => (s.has('ArrowLeft') !== s.has('ArrowRight')) && !s.has('ArrowUp') },
   { id: 'wide', keys: '↑ + ← →', label: '넓게 선회', did: (s) => s.has('ArrowUp') && (s.has('ArrowLeft') !== s.has('ArrowRight')) },
   { id: 'back', keys: '↓', label: '뒤로 젓기', did: (s) => s.has('ArrowDown') },
-  { id: 'gear', keys: 'Tab', label: '지도·장비', info: true },
+  // `needs: 'gear'` 는 아이템이 아니라 **스테이지 권한**을 본다 — 해도를 받기 전에는
+  // Tab 줄이 아예 없어야 한다 (없는 것을 누르라고 하면 안 된다).
+  { id: 'gear', keys: 'Tab', label: '지도·장비', info: true, needsGear: true },
   { id: 'settings', keys: 'Esc', label: '설정', info: true },
 ];
 
@@ -255,7 +257,8 @@ class SailScreen {
       for (const it of body.getUserData()?.hull?.items ?? []) have.add(it.type);
     }
 
-    const rows = SAIL_HINTS.filter((h) => !h.needs || have.has(h.needs));
+    const rows = SAIL_HINTS.filter((h) => (!h.needs || have.has(h.needs))
+      && (!h.needsGear || this.stage.gear));
     list.innerHTML = '';
     const els = new Map();
     for (const h of rows) {
@@ -430,6 +433,9 @@ class SailScreen {
     // 창 여닫기는 눌릴 때 한 번만. Tab 은 기본 동작(포커스 이동)을 반드시 막아야 한다.
     if (down && (e.code === 'Tab' || e.code === 'Escape')) {
       e.preventDefault();
+      // ⚠ 해도(Tab)는 시작의 섬에서 받는다. 설정(Esc)은 **항상** 열린다 — 게임을 끝낼
+      //   방법이 없는 화면을 만들면 안 된다.
+      if (e.code === 'Tab' && !this.stage.gear) return;
       this.togglePanel(e.code === 'Tab' ? 'gear' : 'settings');
       return;
     }

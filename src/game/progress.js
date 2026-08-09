@@ -20,15 +20,68 @@ const STAGE_KEY = 'shipwright:stage';
  *
  * `hints` 는 항해 화면에 조작 안내판을 띄울지다. **연습 해역에만 켠다** — D4 통과 질문이
  * "튜토리얼 텍스트 없이 1장을 클리어하는가"라, 1장부터는 화면이 설명하지 않아야 한다.
+ *
+ * `gear` 는 지도·장비창(Tab)을 열 수 있는지다. **첫 항해에는 없다** — 해도는 시작의 섬에서
+ * 세렌이 준다 ([S-06]). 받기도 전에 열리면 그 장면이 소품을 잃는다.
+ * ⚠ 설정창(Esc)은 이것과 무관하게 **항상** 열린다. 게임을 끝낼 방법은 언제나 있어야 한다.
+ *
+ * `items` · `materials` 는 그 바다에 **이르렀을 때 열리는** 것들이다 (`unlockedItems`).
+ * 누적이라 앞 바다의 것도 계속 쓸 수 있다.
+ * ⚠ 첫 배는 **노만** 달고 그린다. 아이템이 하나도 없는 것이 의도다 — 연습 해역은 노 젓기를
+ *   익히는 바다이고, 키도 돛도 세렌을 만난 뒤에 열린다.
  */
 export const STAGES = [
-  { id: 'practice', label: '연습 해역', interlude: 'FIRST_ISLAND', hints: true },
-  { id: 'reef', label: '바위 협곡', interlude: null, hints: false },
+  {
+    id: 'practice',
+    label: '연습 해역',
+    interlude: 'FIRST_ISLAND',
+    hints: true,
+    gear: false,
+    items: [],
+    materials: ['wood'],
+  },
+  {
+    id: 'reef',
+    label: '바위 협곡',
+    interlude: null,
+    hints: false,
+    gear: true,
+    items: ['rudder', 'sail'],
+    materials: [],
+  },
 ];
+
+/** 지금까지 열린 것들을 모은다 (앞 바다 것 포함). */
+function accumulate(field) {
+  const out = new Set();
+  for (let i = 0; i <= stageIndex(); i++) {
+    for (const v of STAGES[i][field] ?? []) out.add(v);
+  }
+  return out;
+}
+
+/** 지금 그리기 화면에서 붙일 수 있는 아이템 타입들. */
+export function unlockedItems() {
+  return accumulate('items');
+}
+
+/** 지금 고를 수 있는 재질들. */
+export function unlockedMaterials() {
+  return accumulate('materials');
+}
+
+/**
+ * 세션 저장소 — **없을 수도 있다.** 이 모듈은 벤치(`scripts/bench.mjs`)와 튜토리얼 검사
+ * (`scripts/tutorial-check.mjs`)가 node 에서 import 하는데, 거기엔 sessionStorage 가 없다.
+ * 없으면 "처음부터"로 읽는 것이 맞다 — 헤드리스 검사는 항상 첫 항해를 본다.
+ */
+function store() {
+  return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+}
 
 /** 지금 스테이지의 인덱스. 저장값이 깨졌거나 범위를 벗어나면 처음으로 되돌린다. */
 export function stageIndex() {
-  const raw = Number.parseInt(sessionStorage.getItem(STAGE_KEY) ?? '0', 10);
+  const raw = Number.parseInt(store()?.getItem(STAGE_KEY) ?? '0', 10);
   if (!Number.isFinite(raw) || raw < 0 || raw >= STAGES.length) return 0;
   return raw;
 }
@@ -52,13 +105,13 @@ export function hasNextStage() {
 export function advanceStage() {
   const i = stageIndex();
   if (i + 1 >= STAGES.length) return null;
-  sessionStorage.setItem(STAGE_KEY, String(i + 1));
+  store()?.setItem(STAGE_KEY, String(i + 1));
   return STAGES[i + 1];
 }
 
 /** 처음부터 다시 (메인 메뉴에서 새 항해를 시작할 때). */
 export function resetStage() {
-  sessionStorage.removeItem(STAGE_KEY);
+  store()?.removeItem(STAGE_KEY);
 }
 
 /**
@@ -72,11 +125,11 @@ export function resetStage() {
  *   지도와 이야기가 어긋난다.
  */
 export const ROUTE = [
-  { id: 'practice', name: '시작의 섬', note: '노를 익힌 곳' },
-  { id: 'reef', name: '바위 협곡', note: '바람은 등을 밀어주지만, 주변이 온통 바위' },
-  { id: 'storm', name: '역풍 협곡', note: '바람이 정면으로 막아서고, 해적이 들끓는다', locked: true },
-  { id: 'volcano', name: '불의 바다', note: '물 대신 용암이 흐르는 곳', locked: true },
-  { id: 'bulgasari', name: '불가사리의 바다', note: '전설로만 전해지던 그것', locked: true },
+  { id: 'practice', kind: 'isle', name: '시작의 섬', note: '노를 익힌 곳' },
+  { id: 'reef', kind: 'reef', name: '바위 협곡', note: '바람은 등을 밀어주지만, 주변이 온통 바위' },
+  { id: 'storm', kind: 'storm', name: '역풍 협곡', note: '바람이 막아서고, 해적이 들끓는다', locked: true },
+  { id: 'volcano', kind: 'volcano', name: '불의 바다', note: '물 대신 용암이 흐르는 곳', locked: true },
+  { id: 'bulgasari', kind: 'abyss', name: '불가사리의 바다', note: '전설로만 전해지던 그것', locked: true },
 ];
 
 /** 지도에서 "여기까지 왔다" 를 표시할 지점. ROUTE 인덱스. */

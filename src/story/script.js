@@ -224,17 +224,19 @@ export const SCRIPT = {
     { speaker: '루', sprite: 'ru', text: '…네.' },
     { speaker: '세렌', sprite: 'seren', text: '용감하거나 급했거나 둘 중 하난데.' },
     { speaker: '루', sprite: 'ru', text: '급했습니다.' },
-    { speaker: '세렌', sprite: 'seren', text: '그럴 줄 알았어. 나는 세렌. 지나가는 배를 센다.' },
-    { speaker: '루', sprite: 'ru', text: '바위 협곡으로 갑니다.' },
+    { speaker: '세렌', sprite: 'seren', text: '그럴 줄 알았어. 나는 세렌. 시작의 섬의 주인이지.' },
+    { speaker: '세렌', sprite: 'seren', text: '너는 어디 가는 중이니?' },
+    { speaker: '루', sprite: 'ru', text: '바위 협곡으로 가는 중입니다.' },
     { speaker: '세렌', sprite: 'seren', text: '그 노로? 노는 느려. 느린 배는 바위 사이에서 못 피해.' },
 
-    // 세렌이 직접 달아 준다. 여기서 `handoff.grantItem('rudder')` 이 실제로 붙는다.
-    { speaker: '', text: '세렌이 배 뒤로 돌아가 무언가를 붙였다.' },
-    { speaker: '세렌', sprite: 'seren', text: '키야. 선미에 달아 뒀어.' },
+    // ⚠ 세렌은 키를 **주기만 한다.** 달아 주면 뒤의 "배를 다시 그려 봐. 이번엔 키도 달아
+    //   보고" 와 모순이다 — 실제로 다는 것은 플레이어이고, 그 자리가 그리기 화면이다.
+    { speaker: '', text: '세렌이 창고에서 무언가를 꺼내 왔다.' },
+    { speaker: '세렌', sprite: 'seren', text: '키야. 받아 둬.' },
     // ⚠ 실제 조작을 그대로 적는다 — 누르고 있는 동안 키가 그쪽으로 꺾인다 (devices.js 가
     //   held.KeyQ / held.KeyE 를 직접 읽는다). "Q 랑 E, 왼쪽 오른쪽" 만으로는 무엇을
     //   어떻게 하라는 건지 안 읽혔다.
-    { speaker: '세렌', sprite: 'seren', text: 'Q 를 누르고 있으면 왼쪽으로, E 를 누르고 있으면 오른쪽으로 꺾인다.' },
+    { speaker: '세렌', sprite: 'seren', text: 'Q 를 누르고 있으면 왼쪽으로, E 를 누르고 있으면 오른쪽으로 꺾일 거야.' },
     { speaker: '세렌', sprite: 'seren', text: '노랑 같이 써. 노로 밀고 키로 방향을 잡는 거야.' },
     { speaker: '세렌', sprite: 'seren', text: '단, 느릴 땐 아무 일도 안 나. 물이 안 흐르는데 뭘 밀겠어.' },
     { speaker: '세렌', sprite: 'seren', text: '빨라지면 그때 듣는다.' },
@@ -244,10 +246,22 @@ export const SCRIPT = {
 
     // ★ 지도를 여기서 준다. 항해 화면의 안내판은 연습 해역에서만 뜨므로(D4: 1장부터는
     //   화면이 설명하지 않는다), 1장 이후에 Tab 을 알려 줄 사람은 세렌뿐이다.
+    //   ⚠ 받기 전에는 Tab 이 아예 안 열린다 (`STAGES[].gear`) — 소품과 기능이 같이 온다.
     { speaker: '', text: '세렌이 접힌 종이를 배 위로 던졌다.' },
-    { speaker: '세렌', sprite: 'seren', text: '해도야. Tab 누르면 어디까지 왔는지 보인다.' },
-    { speaker: '세렌', sprite: 'seren', text: '실은 것도 거기 다 적혀 있고.' },
+    // ★ 화면이 그 종이가 된다 (`voyage_map` — 그림이 아니라 코드로 찍는다).
+    //   여정 전체를 한 번은 보여 줘야 "바다 셋"이 지명 나열에서 지도로 바뀐다.
+    { speaker: '세렌', sprite: 'seren', bg: 'voyage_map', text: '해도야. 여기가 시작의 섬, 다음이 바위 협곡.' },
+    { speaker: '세렌', sprite: 'seren', text: 'Tab 누르면 언제든 볼 수 있어. 실은 것도 거기 다 적혀 있고.' },
     { speaker: '', text: '뱃머리를 돌렸다. 바위 협곡 쪽이다.' },
+
+    // ★ 여기서 배를 **한 번 더 그린다.** 세렌이 불러 세우는 것이 곧 그리기 화면으로 가는
+    //   이동이다 (`menu/screen.js` 의 playInterlude 끝). 첫 배는 노만 달고 그렸으므로,
+    //   방금 열린 키·돛을 직접 달아 보는 자리가 여기다 — 배를 두 번 그리는 것이 이 게임의
+    //   본론이기도 하다 ("그린 대로 뜨고, 그린 대로 가라앉는다").
+    { speaker: '세렌', sprite: 'seren', bg: 'jungle_green', text: '이봐! 그 배로 바로 출발하려고?' },
+    { speaker: '세렌', sprite: 'seren', text: '배를 다시 그려 봐. 이번엔 키도 달아 보고.' },
+    { speaker: '루', sprite: 'ru', text: '…네.' },
+    { speaker: '', text: '모루의 펜을 다시 쥐었다.' },
   ],
 };
 
