@@ -8,6 +8,7 @@
 
 import './menu.css';
 import { startPixelBg, SCENES } from '../scene/pixelbg.js';
+import { stars, glitter } from '../scene/bgkit.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { runDialogue, setDialogueBlip, skipDialogue } from '../story/dialogue.js';
 import { SCRIPT, INTRO_BEATS } from '../story/script.js';
@@ -99,8 +100,58 @@ function onSkip() {
   skipDialogue();
 }
 
+/* 타이틀 배경 그림(assets/menu/title-bg.png)에서 **직접 잰** 좌표. 418×235 격자 기준이다.
+   bg-snap 의 --grid 를 바꾸면 그림이 다시 그려지므로 여기도 다시 재야 한다.
+   재는 법은 assets/menu/README.md 에 적어 뒀다. */
+const FX = {
+  w: 418,
+  h: 235,
+  horizon: 137,                      // 행 평균 밝기가 가장 크게 꺾이는 줄
+  moonX: 319,                        // 수평선 아래에서 가장 밝은 열 = 달빛 기둥
+  lanterns: [[75, 133], [89, 134]],  // 배의 등불 둘 (따뜻한 색 픽셀 군집)
+};
+
+/**
+ * 타이틀 그림 위에 얹는 유일한 움직임. 배경이 정지 PNG 라 이 캔버스가 없으면 타이틀이
+ * 통째로 멈춰 보인다.
+ *
+ * 그리는 것은 셋뿐이고, 셋 다 **그림에 이미 있는 것 위에만** 얹는다 — 좌표를 PNG 에서
+ * 재서 쓰는 이유가 이것이다. 새로 그리면 그림과 두 겹으로 보인다.
+ */
+function startTitleFx(host) {
+  const cv = document.createElement('canvas');
+  cv.id = 'title-fx';
+  cv.width = FX.w;
+  cv.height = FX.h;
+  cv.setAttribute('aria-hidden', 'true');
+  host.prepend(cv);
+  const ctx = cv.getContext('2d');
+
+  function frame(t) {
+    // 컷신 중에는 섹션이 닫혀 있다. 그릴 필요가 없으므로 건너뛴다 (rAF 는 유지 — 되돌아온다)
+    if (host.classList.contains('active')) {
+      const sec = t / 1000;
+      ctx.clearRect(0, 0, FX.w, FX.h);
+      stars(ctx, FX.w, FX.horizon * 0.72, sec, { count: 46, seed: 31, bright: 0.85 });
+      glitter(ctx, FX.moonX, FX.horizon, FX.h, sec, '#f5e6c8', { alpha: 0.42, count: 70, spread: 0.34, seed: 33 });
+      ctx.fillStyle = '#ffb937';
+      for (let i = 0; i < FX.lanterns.length; i++) {
+        const [x, y] = FX.lanterns[i];
+        // 등불 둘의 주기를 다르게 둔다 — 같으면 두 불이 한 몸처럼 뛴다
+        const f = 0.55 + 0.45 * Math.sin(sec * (5.5 + i * 2.3) + i * 2);
+        ctx.globalAlpha = 0.3 * f;
+        ctx.fillRect(x - 1, y - 1, 3, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
 function init() {
   startPixelBg(els.bg);
+  startTitleFx(els.title);
   assertSceneKeys();
   setDialogueBlip(() => sfx('talk'));
   renderSoundBtn();

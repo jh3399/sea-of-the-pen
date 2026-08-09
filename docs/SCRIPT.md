@@ -1,7 +1,7 @@
-# 대사 전문 — 『조선소 / Shipwright』
+# 대사 전문 — 『그리는 자의 바다 / Sea of the Pen』
 
-> **v6** — [STORY.md](STORY.md) v6 구조에 맞춘 전면 개정. 구 기획(《그리는 자의 바다》)의
-> 27씬은 전량 폐기했다. 형식만 물려받았다.
+> **v6** — [STORY.md](STORY.md) v6 구조에 맞춘 전면 개정. 구 기획(v5)의
+> 27씬은 전량 폐기했다. 형식만 물려받았다. (제목은 v5 와 같다 — [STORY.md](STORY.md) 머리말 참고)
 >
 > `[S-##]` 씬 ID 와 뒤의 `` `CODE_CONST` `` 는 **`src/story/script.js` 의 `SCRIPT` 키와 1:1** 이다.
 > 한쪽만 고치지 않는다. 비트 순서와 BGM 은 같은 파일의 `INTRO_BEATS` 에 있다.
