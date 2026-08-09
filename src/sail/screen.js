@@ -27,7 +27,7 @@ import { fieldBehind } from '../rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../game/goal.js';
 import { rateTravelTime } from '../game/scoring.js';
-import { currentStage, hasNextStage, ROUTE, routeIndex } from '../game/progress.js';
+import { currentStage, hasNextStage, advanceStage, ROUTE, routeIndex } from '../game/progress.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { drawVoyageMap } from '../scene/voyagemap.js';
 import { View } from '../render/view.js';
@@ -599,17 +599,21 @@ class SailScreen {
   }
 
   /**
-   * 다음 바다로. **여기서 진행을 올리지 않는다** — 사이 대사(`interlude`)가 있으면
-   * 그 대사를 재생하는 쪽(`menu/screen.js`)이 대사를 다 보여 준 뒤에 올린다.
+   * 다음 바다로. 사이 대사(`interlude`)가 있으면 메뉴가 대사를 다 보여 준 뒤 진행을 올리고,
+   * 대사가 없으면 여기서 곧바로 올린다. 어느 쪽이든 한 사건에서 정확히 한 번만 전진한다.
    *
-   * ⚠ 순서를 뒤집으면 안 된다. 여기서 먼저 올려 두면 플레이어가 섬 대사 도중에 새로고침
-   *   했을 때 이야기를 못 본 채 다음 바다에 서 있게 된다. "대사를 봤다"와 "진행이 올랐다"가
-   *   같은 사건이어야 한다.
+   * ⚠ 대사가 있는데 먼저 올리면 새로고침으로 이야기를 건너뛸 수 있다. "대사를 봤다"와
+   * "진행이 올랐다"가 같은 사건이어야 한다.
    */
   toNextStage() {
     const beat = this.stage.interlude;
     // base 가 '/sea-of-the-pen/' 이라 절대경로는 배포에서 404 다 — 상대경로로만 옮긴다.
-    location.href = beat ? `index.html?beat=${encodeURIComponent(beat)}` : 'sail.html';
+    if (beat) {
+      location.href = `index.html?beat=${encodeURIComponent(beat)}`;
+      return;
+    }
+    advanceStage();
+    location.href = 'sail.html';
   }
 
   updateCamera() {
@@ -649,15 +653,21 @@ class SailScreen {
     view.begin();
     ctx.imageSmoothingEnabled = false;
 
-    // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 물결만 따로 흐른다.
-    drawWater(ctx, view, this.simTime, this.map.weather);
+    // 반짝임의 시계는 물리 시각이다 — 벽시계로 두면 일시정지·프레임 드랍에서 표면만 따로 흐른다.
+    const surface = this.map.surface ?? null;
+    const flow = surface?.flowField
+      ? this.fields.sampleVector(surface.flowField, view.center.x, view.center.y, this.simTime)
+      : { x: 0, y: 0 };
+    drawWater(ctx, view, this.simTime, { ...this.map.weather, surface, flow });
     // 도착 지점은 수면 위 표식이라 배·암초보다 **아래**에 깐다 — 도착하는 순간 배가 고리를
     // 가리는 것이 맞다 (고리 위에 배가 올라앉아야 "들어갔다"로 읽힌다).
     drawGoal(ctx, view, this.goal, { cleared: this.cleared, sec: this.simTime });
     // 화면 밖 장애물을 거르는 것은 `drawObstacle` 안에서 한다 — 암초밭이 해역 전체를 덮어
     // 60개가 넘고, 그중 화면에 걸치는 것은 늘 몇 개뿐이다.
-    for (const body of this.obstacles) drawObstacle(ctx, view, body.getUserData()?.obstacle?.spec);
-    drawWake(ctx, this.wake);
+    for (const body of this.obstacles) {
+      drawObstacle(ctx, view, body.getUserData()?.obstacle?.spec, { shoal: surface?.shoal });
+    }
+    drawWake(ctx, this.wake, { color: surface?.wake });
     for (const body of this.bodies) {
       const p = body.getPosition();
       const angle = body.getAngle();

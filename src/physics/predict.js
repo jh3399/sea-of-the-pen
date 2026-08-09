@@ -11,7 +11,8 @@ import {
   deviceForcesLocal, stepRudder, advanceStrokes, cloneStrokeState, steerFromHeld,
 } from './devices.js';
 import { FIXED_DT } from './world.js';
-import { fieldForcesLocal, toLocalVector } from '../field/forces.js';
+import { toLocalVector } from '../field/forces.js';
+import { environmentForcesLocal } from './fields.js';
 
 const ZERO = { fx: 0, fy: 0, torque: 0 };
 
@@ -93,8 +94,12 @@ export function predictPath(body, input, options = {}) {
     // `현재 시각 + dt` 여야 5초 방향 전환 경계에서 한 스텝 어긋나지 않는다.
     const sampleTime = startTime + (i + 1) * dt;
     const f = fields && !fields.isEmpty
-      ? fieldForcesLocal(hull.items,
-        toLocalVector(fields.sampleVector('wind', x, y, sampleTime), angle), vel)
+      ? environmentForcesLocal(
+        hull,
+        toLocalVector(fields.sampleVector('wind', x, y, sampleTime), angle),
+        toLocalVector(fields.sampleVector('current', x, y, sampleTime), angle),
+        vel, mass, inertia, dt,
+      )
       : ZERO;
     const fx = d.fx + h.fx + f.fx;
     const fy = d.fy + h.fy + f.fy;
