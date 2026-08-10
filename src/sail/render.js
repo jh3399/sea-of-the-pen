@@ -5,6 +5,7 @@
 import { MATERIALS } from '../hull/params.js';
 import { surfaceCellKey, surfaceCellPoint } from '../hull/raster.js';
 import { cannonMuzzleLocal, CANNON_TUNING } from '../items/cannon.js';
+import { strokeSwing } from '../physics/devices.js';
 import {
   drawItemMarker, drawRudderMarker, drawCrewSprite, drawPixelGrid,
   markerAngleToward, itemMarkerSize, OAR_PUSH,
@@ -31,6 +32,9 @@ const RUDDER_PIXEL = ITEM_PIXEL * 2;
 const CREW_PIXEL = 0.05;
 /** 노는 선체 밖으로 뻗는 장치라 다른 마커보다 크다 (22칸 × 0.09 = 약 2 m 짜리 노). */
 const OAR_PIXEL = 0.09;
+/** 노깃이 자루 끝을 축으로 휘두르는 최대 각 (rad, 약 34°). 노 길이가 2 m 라 노깃이 앞뒤로
+ *  1.1 m 를 지난다 — 화면 20 px/m 에서 22 px, 젓는 것이 눈에 보이는 최소치다. */
+const OAR_SWEEP = 0.6;
 const CANNON_BARREL_WIDTH = 0.18;
 
 const WATER_BASE = '#1c4fae';
@@ -605,12 +609,31 @@ function drawUprightIcon(ctx, x, y, draw) {
  * 노깃이 현측 밖 물에 놓여야 "양쪽에서 젓는다"가 그림에서 읽힌다. 좌현은 로컬 +Y 가
  * 바깥이고 우현은 −Y 라, 좌우 스프라이트를 따로 두지 않고 부호 하나로 가른다.
  * drawUprightIcon 안은 Y 가 한 번 뒤집힌 프레임이므로 각도의 부호도 그에 맞춰 넘긴다.
+ *
+ * ★ 젓는 동안에는 **자루 끝을 축으로** 노깃만 휘두른다 (`strokeSwing`). 축을 스프라이트
+ *   중심에 두면 노 전체가 앞뒤로 미끄러져 "쥐고 있는 노"로 안 읽힌다 — 노잡이의 손은
+ *   그 자리에 있어야 한다. 회전 방향은 스트로크의 `dir` 이 그대로 정하므로 ↓·← 처럼 한쪽
+ *   노를 뒤로 젓는 입력에서는 그 노만 반대로 돈다. 렌더 전용 상태는 0개다.
  */
-function drawOar(ctx, item) {
+function drawOar(ctx, item, control) {
   const outward = item.side === 'port' ? 1 : -1;
-  const push = itemMarkerSize('oar', OAR_PIXEL).h * OAR_PUSH;
-  drawUprightIcon(ctx, item.x, item.y + outward * push,
-    () => drawItemMarker(ctx, 'oar', 0, 0, OAR_PIXEL, markerAngleToward(0, -outward)));
+  const h = itemMarkerSize('oar', OAR_PIXEL).h;
+  const push = h * OAR_PUSH;
+  // 노잡이가 쥔 자루 끝 = 스프라이트 중심에서 노깃 반대쪽으로 h/2. 그 점이 부착점보다
+  // (h/2 − push) 만큼 안쪽에 있고, 여기가 회전축이다.
+  const pivot = h / 2 - push;
+  // 부호 규약: swing > 0 = 노깃이 뱃머리 쪽. 앞으로 젓기(dir +1)는 노깃이 고물 쪽으로
+  // 밀려야 하므로 한 번 뒤집는다. 좌우 노는 기준 회전이 서로 반대(π vs 0)라 같은 각을 주면
+  // 서로 반대로 젓는 것처럼 보이므로, 넘길 때 outward 로 한 번 더 뒤집는다.
+  const swing = -OAR_SWEEP * strokeSwing(control, item.side);
+  drawUprightIcon(ctx, item.x, item.y - outward * pivot, () => {
+    ctx.save();
+    ctx.rotate(markerAngleToward(0, -outward) + outward * swing);
+    // 축을 원점에 두고 스프라이트를 노깃 쪽으로 h/2 밀어 그린다 (프레임을 이미 돌려 뒀으므로
+    // 마커 자체의 각은 0). swing = 0 이면 회전 전과 **같은 자리**다.
+    drawItemMarker(ctx, 'oar', 0, h / 2, OAR_PIXEL, 0);
+    ctx.restore();
+  });
 }
 
 /** 키 — 하니스와 같이 부착 축은 고정하고 막대만 실제 타각만큼 좌우로 움직인다. */
@@ -642,7 +665,7 @@ export function drawHullBody(ctx, hull, { target = false } = {}) {
   drawHullPixels(ctx, hull, target);
   const rudderAngle = hull.control?.rudder ?? 0;
   for (const item of hull.items) {
-    if (item.type === 'oar' && item.side) { drawOar(ctx, item); continue; }
+    if (item.type === 'oar' && item.side) { drawOar(ctx, item, hull.control); continue; }
     if (item.type === 'rudder') { drawRudder(ctx, item, rudderAngle); continue; }
     if (item.type === 'cannon') { drawCannon(ctx, hull, item); continue; }
     drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, item.type, 0, 0, ITEM_PIXEL));

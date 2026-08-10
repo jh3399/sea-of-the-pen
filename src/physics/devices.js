@@ -319,6 +319,27 @@ export function strokeProgress(control, side) {
 }
 
 /**
+ * ★ 그 노가 이번 사이클에 그리는 **스윙 위상** −1..+1 (렌더 전용, 힘에는 쓰지 않는다).
+ *
+ * 힘 봉투가 sin² 이므로 스윙은 **제곱하기 전의 그 sin** 을 그대로 쓴다. 그래서 노깃이 가장
+ * 멀리 밀려난 순간이 곧 추력이 가장 큰 순간이고, 노브(`oarStrokeDuration`)를 돌리면 그림과
+ * 힘이 같이 따라온다 — 렌더가 자기 시계를 따로 갖지 않는다.
+ *
+ * 부호는 젓는 방향(`dir`)이라 역젓기는 반대로 돈다. 값이 **0 에서 시작해 0 으로 끝나므로**
+ * 사이클이 이어 붙어도, 젓기를 그만둬도, 방향을 바꿔도 각도가 튀는 자리가 없다 —
+ * 최대 케이던스에서는 듀티비가 1.0 이라 회수 구간 자체가 없어서(D2), 쉬는 자세로 돌아갈
+ * 시간을 따로 낼 수 없기 때문이다.
+ */
+export function strokeSwing(control, side) {
+  const s = control?.stroke;
+  const dir = s?.[side] ?? 0;
+  if (!dir) return 0;
+  const D = DEVICE_TUNING.oarStrokeDuration;
+  if (!(s.t >= 0) || s.t >= D) return 0;
+  return dir * Math.sin((Math.PI * s.t) / D);
+}
+
+/**
  * 진단용 — 최대 케이던스로 계속 저을 때의 종단 속도 추정치 (m/s).
  *
  * 균형식: `peak × area × mean(env) × duty × 2자루 × falloff(v) = drag.x × v²`.
