@@ -92,9 +92,9 @@ export function createTutorialState() {
   return { status: 'active', index: 0 };
 }
 
-export function currentTutorialStep(state) {
+export function currentTutorialStep(state, steps = TUTORIAL_STEPS) {
   if (state.status !== 'active') return null;
-  return TUTORIAL_STEPS[state.index] ?? null;
+  return steps[state.index] ?? null;
 }
 
 export function isStepSatisfied(step, snapshot) {
@@ -105,27 +105,33 @@ export function isStepSatisfied(step, snapshot) {
   return false;
 }
 
-function advance(state) {
+function advance(state, steps) {
   const nextIndex = state.index + 1;
-  if (nextIndex >= TUTORIAL_STEPS.length) return { status: 'completed', index: state.index };
+  if (nextIndex >= steps.length) return { status: 'completed', index: state.index };
   return { status: 'active', index: nextIndex };
 }
 
-export function reduceTutorial(state, event, snapshot = {}) {
+/**
+ * @param {object[]} [steps] 이번 상태 전이가 도는 단계 목록. 기본값은 그리기 화면의 첫 안내
+ *   (`TUTORIAL_STEPS`)이고, 스테이지 전환마다 새로 열린 아이템·재질을 짚어주는
+ *   `draw/unlock-tutorial.js` 도 같은 리듀서를 자기 목록으로 재사용한다 — 상태 기계가
+ *   두 벌로 갈라지지 않는다.
+ */
+export function reduceTutorial(state, event, snapshot = {}, steps = TUTORIAL_STEPS) {
   if (event === 'REPLAY') return createTutorialState();
   if (state.status !== 'active') return state;
   if (event === 'SKIP') return { ...state, status: 'dismissed' };
   if (event === 'FINISHED') return { ...state, status: 'completed' };
   if (event === 'DESIGN_RESET') return createTutorialState();
 
-  const step = currentTutorialStep(state);
+  const step = currentTutorialStep(state, steps);
   if (!step) return state;
 
   if (event === 'NEXT') {
-    if (step.mode === 'info' || isStepSatisfied(step, snapshot)) return advance(state);
+    if (step.mode === 'info' || isStepSatisfied(step, snapshot)) return advance(state, steps);
     return state;
   }
 
-  if (step.completionEvent === event) return advance(state);
+  if (step.completionEvent === event) return advance(state, steps);
   return state;
 }

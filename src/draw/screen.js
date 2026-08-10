@@ -14,6 +14,7 @@ import { MATERIALS } from '../hull/params.js';
 import { unlockedItems, unlockedMaterials } from '../game/progress.js';
 import { TEMPLATES, TEMPLATE_LABELS, TEMPLATE_ORDER } from './templates.js';
 import { DrawTutorial } from './tutorial.js';
+import { unlockSteps, unlockStorageKey, replaySteps } from './unlock-tutorial.js';
 import {
   itemIconSVG, templateThumbSVG, drawItemMarker, drawRudderMarker, drawCrewSprite,
   markerAngleToward, itemMarkerSize, OAR_PUSH,
@@ -143,12 +144,18 @@ class DrawScreen {
     this.tutorial = new DrawTutorial({
       getSnapshot: () => this.tutorialSnapshot(),
       replayButton: this.tutorialBtn,
+      getReplaySteps: () => replaySteps(),
     });
 
     this.resize = this.resize.bind(this);
     window.addEventListener('resize', this.resize);
     this.resize();
-    requestAnimationFrame(() => this.tutorial.startIfNeeded());
+    requestAnimationFrame(() => {
+      this.tutorial.startIfNeeded();
+      // 스테이지가 바뀌며 새로 열린 아이템·재질이 있으면 짧게 짚어준다. 첫 방문(연습 해역)
+      // 튜토리얼이 이미 열려 있으면 startUnlockIfNeeded 가 스스로 자리를 내주지 않는다.
+      this.tutorial.startUnlockIfNeeded(unlockSteps(), unlockStorageKey());
+    });
   }
 
   tutorialSnapshot() {
@@ -246,6 +253,7 @@ class DrawScreen {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = `material-row${key === this.material ? ' selected' : ''}`;
+      row.dataset.material = key;
       row.innerHTML = `<span class="swatch" style="background:${mat.color}"></span><span>${mat.name}</span>`;
       row.addEventListener('click', () => {
         this.material = key;
@@ -321,6 +329,7 @@ class DrawScreen {
       row.type = 'button';
       row.className = `item-row${this.placing === type ? ' selected' : ''}`;
       row.disabled = !this.design?.ok || this.finished;
+      row.dataset.item = type;
       row.innerHTML = `<span class="icon">${itemIconSVG(type, { pixel: 3 })}</span>`
         + `<span>${spec.name}</span>`;
       row.addEventListener('click', () => this.togglePlacing(type));

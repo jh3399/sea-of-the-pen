@@ -62,7 +62,9 @@ const DEG = Math.PI / 180;
 
 const MUTED_KEY = 'shipwright:muted';   // local — 메뉴와 같은 키를 쓴다 (취향은 화면을 넘어 남는다)
 const BGM_VOL = 0.7;
-const SFX_VOL = 0.9;
+// 1을 넘겨도 되는 버스다 (audio.js#setSfxVolume) — 효과음 하나하나를 다시 그리지 않고
+// 이 숫자 하나로 전체 볼륨을 올린다.
+const SFX_VOL = 3;
 
 /**
  * 연습 해역의 조작 안내 — **읽는 목록이 아니라 해 보면 켜지는 판**이다.
@@ -368,7 +370,7 @@ class SailScreen {
       onSuck: () => this.cue('suck'),
       // ⚠ 상태가 **바뀌는 순간에만** 온다 (boss.js#setBeam). 매 프레임 부르면 스윕이
       //   겹쳐 쌓여 화이트노이즈가 된다.
-      onBeam: (state) => this.cue(state.phase === 'telegraph' ? 'charge' : 'hit'),
+      onBeam: (state) => this.cue(state.phase === 'telegraph' ? 'charge' : 'laser'),
     });
   }
 
@@ -428,6 +430,7 @@ class SailScreen {
     body.setLinearVelocity(new Vec2(Math.cos(req.angle) * req.speed, Math.sin(req.angle) * req.speed));
     body.setAngularVelocity((this.wreckSeq % 2 ? 1 : -1) * 0.6);
     this.wrecks.add(body);
+    this.cue('wreck');
     return body;
   }
 
@@ -792,11 +795,15 @@ class SailScreen {
     for (const body of this.bodies) {
       const events = applyDevices(body, body === player ? input : IDLE_INPUT, dt);
       for (const event of events) {
-        if (event.type !== 'cannonFire' || !event.request) continue;
-        const shot = spawnProjectile(this.world, event.request);
-        if (shot) {
-          this.projectiles.add(shot);
-          this.addSpark(event.request, 'muzzle', event.request.radius, event.request.angle);
+        if (event.type === 'oarStroke') this.cue('row');
+        else if (event.type === 'boosterOn') this.cue('booster');
+        else if (event.type === 'cannonFire' && event.request) {
+          const shot = spawnProjectile(this.world, event.request);
+          if (shot) {
+            this.projectiles.add(shot);
+            this.addSpark(event.request, 'muzzle', event.request.radius, event.request.angle);
+          }
+          this.cue('cannon');
         }
       }
     }
@@ -819,6 +826,7 @@ class SailScreen {
           this.projectiles.add(shot);
           this.addSpark(event.request, 'muzzle', event.request.radius, event.request.angle);
         }
+        this.cue('cannon');
       }
     }
   }
