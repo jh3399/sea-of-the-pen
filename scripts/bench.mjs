@@ -3172,16 +3172,17 @@ check('★ 흐름이 사방에서 골을 향한다 (방향이 위치의 함수�
   inward.every((dot) => dot > 0.95),
   `사방 내적 ${inward.map((d) => d.toFixed(3)).join(' · ')}`);
 
-// ★ "좀 항해하다가" 빨려 든다. 반경 300 m 원 **밖**에서는 흡입이 0 이고, 출항점에서
-//   골까지가 380 m 이므로 걸리기 시작하는 자리의 남은 거리가 정확히 300 m 다.
+// ★ "좀 항해하다가" 빨려 든다. 반경 150 m 원 **밖**에서는 흡입이 0 이고, 출항점에서
+//   골까지가 190 m 이므로 걸리기 시작하는 자리의 남은 거리가 정확히 150 m 다.
+//   (2026-08-10 맵 길이를 절반으로 줄이며 380/300 → 190/150 — 아래 오프셋도 같이 ×0.5.)
 const atStart = sampleSuck(0, 0);
-const atCatch = sampleSuck(bGoal.x - 290, 0);
-const atClose = sampleSuck(bGoal.x - 40, 0);
+const atCatch = sampleSuck(bGoal.x - 145, 0);
+const atClose = sampleSuck(bGoal.x - 20, 0);
 const startPull = Math.hypot(atStart.x, atStart.y);
 const catchPull = Math.hypot(atCatch.x, atCatch.y);
 const closePull = Math.hypot(atClose.x, atClose.y);
 check('★ 출항 직후에는 안 빨린다 (좀 항해하다가 걸린다)',
-  startPull < 1 && Math.hypot(bGoal.x, bGoal.y) > 300,
+  startPull < 1 && Math.hypot(bGoal.x, bGoal.y) > 150,
   `출항점 ${startPull.toFixed(2)} m/s · 골까지 ${Math.hypot(bGoal.x, bGoal.y).toFixed(0)} m`);
 check('★ 안으로 갈수록 세진다 (걸리는 자리 < 가까운 자리)', catchPull < closePull,
   `−290 m ${catchPull.toFixed(2)} → −40 m ${closePull.toFixed(2)} m/s`);
@@ -3199,15 +3200,15 @@ check('★ 흡입이 노 종단보다 세다 (발버둥은 쳐지되 못 이긴�
  * 흡입 구간 **한가운데**에서 뒤로 저으면 15초에 32 m 를 되돌아가 그냥 도망칠 수 있었다.
  * 골 바로 앞만 세고 나머지가 약했기 때문이다. 위 검사들은 그 두 지점을 안 봤다.
  *
- * 그래서 여기서는 구간 한가운데(골까지 180 m)에 배를 놓고 **최대 케이던스로 뒤로 저어** 본다.
+ * 그래서 여기서는 구간 한가운데(골까지 90 m)에 배를 놓고 **최대 케이던스로 뒤로 저어** 본다.
  * 늦춰지기는 해야 하고(발버둥이 화면에 보여야 한다), 그래도 끌려가야 한다(못 이긴다).
  */
 const suckStruggle = (() => {
   const drill = (keys) => {
     const { world, body } = spawn('sloop', { devices: true });
     const fields = createFields(MAW_MAP.fields);
-    // 흡입 구간 한가운데 — 골까지 180 m.
-    body.setTransform(new Vec2(bGoal.x - 180, 0), 0);
+    // 흡입 구간 한가운데 — 골까지 90 m (2026-08-10 맵 절반 축소: 원래 180 m 의 ×0.5).
+    body.setTransform(new Vec2(bGoal.x - 90, 0), 0);
     const stroke = [];
     for (const key of keys) stroke.push(...STROKE_KEYMAP[key]);
     const x0 = body.getPosition().x;
@@ -3231,7 +3232,7 @@ check('그래도 발버둥이 눈에 보인다 (뒤로 저으면 확실히 늦�
 
 // 끌려가는 길에 박을 수 없어야 한다 — 피할 방법이 없는 사고로 벌하지 않는다.
 const mawLaneClear = Math.min(...MAW_MAP.obstacles
-  .filter((o) => o.x > 80)
+  .filter((o) => o.x > 40)
   .map((o) => Math.abs(o.y) - o.radius));
 check('★ 흡입 구간의 암초는 항로에서 비켜나 있다 (끌려가며 박을 수 없다)', mawLaneClear > 25,
   `항로에서 최소 ${mawLaneClear.toFixed(1)} m`);

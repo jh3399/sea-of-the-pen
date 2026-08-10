@@ -556,26 +556,33 @@ export function boundaryWalls(b) {
  *   (`stars: true` → `sail/render.js` 가 점을 얹는다) — 별의섬에서 여기까지 이어진 것이다.
  *
  * ★ **빨려 든다.** `mode:'radial'` 이 방향을, `disc` 가 세기를 정한다 (`field/field.js`):
- *   반경 300 m 밖에서는 0 이라 처음 80 m 는 평소처럼 항해하고, 그 원에 들어서는 순간부터
- *   끌리기 시작해 가까울수록 세진다. 출항 지점에서 골까지 380 m 이므로 **끌리기 시작하는
- *   자리에서 남은 거리가 정확히 300 m** 다.
+ *   반경 150 m 밖에서는 0 이라 처음 40 m 는 평소처럼 항해하고, 그 원에 들어서는 순간부터
+ *   끌리기 시작해 가까울수록 세진다. 출항 지점에서 골까지 190 m 이므로 **끌리기 시작하는
+ *   자리에서 남은 거리가 정확히 150 m** 다.
  *   흡입 9 m/s 는 노 종단(4.24)보다 확실히 크다 — **저항은 되지만 못 이긴다.** 뒤로 저으면
  *   느려지긴 하는데 결국 끌려가고, 그 발버둥이 무력감을 만든다.
  *
- * ⚠ 흡입 구간(x > 80)의 암초는 항로에서 멀리 둔다. 9 m/s 로 끌려가다 바위에 박는 것은
+ * ⚠ 흡입 구간(x > 40)의 암초는 항로에서 멀리 둔다. 9 m/s 로 끌려가다 바위에 박는 것은
  *   플레이어가 피할 방법이 없는 사고이고, 피할 수 없는 것으로 벌하면 안 된다.
+ *
+ * ★ **2026-08-10, 사람 판정으로 전체 길이를 절반으로 줄였다** (380 m → 190 m, 반경도
+ *   300 → 150 m). 원래 값이 "끌려간다"는 취지에 비해 지루하게 길다는 판정이었다 — 배·
+ *   암초·필드 세기는 그대로 두고 좌표만 균일하게 ×0.5 했다 (전 구간 상대 위치가 그대로
+ *   보존된다). 흡입 세기(9 m/s)와 노 종단은 안 건드렸으므로 "발버둥은 쳐지되 못 이긴다"는
+ *   그대로고, 걸리는 시간만 짧아졌다.
  */
-export const MAW_BOUNDS = { minX: -40, maxX: 420, minY: -75, maxY: 75, thickness: 12 };
+export const MAW_BOUNDS = { minX: -40, maxX: 230, minY: -75, maxY: 75, thickness: 12 };
 
 export const MAW_MAP = {
   id: 'maw',
   number: 4,
   label: '삼키는 바다',
   bgm: 'tension',
-  goal: { x: 380, y: 0, radius: 8, label: '불가사리' },
+  goal: { x: 190, y: 0, radius: 8, label: '불가사리' },
   // 흡입이 시간을 거의 정하므로 별점은 사실상 고정된다. 헤매도 3별이 되게 넉넉히 둔다 —
-  // 마지막 항해에서 별 하나를 덜 주는 것은 아무것도 가르치지 않는다.
-  scoring: { threeStarMaxSeconds: 110, twoStarMaxSeconds: 160 },
+  // 마지막 항해에서 별 하나를 덜 주는 것은 아무것도 가르치지 않는다. 길이를 절반으로
+  // 줄이면서 시간 상한도 절반으로 맞췄다.
+  scoring: { threeStarMaxSeconds: 55, twoStarMaxSeconds: 80 },
   bounds: MAW_BOUNDS,
   fields: {
     current: [
@@ -596,11 +603,11 @@ export const MAW_MAP = {
        *   양수면 밖으로 뻗는다). 보스전의 흡입과 같은 프리미티브를 쓴다.
        */
       {
-        shape: 'disc', x: 380, y: 0, radius: 300, falloff: 0.25,
-        mode: 'radial', at: { x: 380, y: 0 }, strength: -9,
+        shape: 'disc', x: 190, y: 0, radius: 150, falloff: 0.25,
+        mode: 'radial', at: { x: 190, y: 0 }, strength: -9,
       },
     ],
-    darkness: [{ shape: 'disc', x: 380, y: 0, radius: 300, falloff: 0.85, value: 0.5 }],
+    darkness: [{ shape: 'disc', x: 190, y: 0, radius: 150, falloff: 0.85, value: 0.5 }],
   },
   weather: { rain: 0, gloom: 0.3 },
   surface: {
@@ -613,21 +620,21 @@ export const MAW_MAP = {
   },
   damage: false,
   obstacles: [
-    // 앞 구간(x < 80) — 첫 바다와 같은 성긴 배치. 지나며 보이지만 막지는 않는다.
-    { shape: 'circle', x: 22, y: 30, radius: 5 },
-    { shape: 'circle', x: 34, y: -26, radius: 4.5 },
-    { shape: 'circle', x: 64, y: 22, radius: 4 },
-    { shape: 'circle', x: 70, y: -34, radius: 5 },
-    { shape: 'circle', x: -16, y: 18, radius: 4 },
-    { shape: 'circle', x: 6, y: -46, radius: 4.5 },
+    // 앞 구간(x < 40) — 첫 바다와 같은 성긴 배치. 지나며 보이지만 막지는 않는다.
+    { shape: 'circle', x: 11, y: 30, radius: 5 },
+    { shape: 'circle', x: 17, y: -26, radius: 4.5 },
+    { shape: 'circle', x: 32, y: 22, radius: 4 },
+    { shape: 'circle', x: 35, y: -34, radius: 5 },
+    { shape: 'circle', x: -8, y: 18, radius: 4 },
+    { shape: 'circle', x: 3, y: -46, radius: 4.5 },
     // 흡입 구간 — 항로(y≈0)에서 30 m 이상 떨어뜨린다. 끌려가며 박을 수 없는 거리다.
-    { shape: 'circle', x: 120, y: 44, radius: 5 },
-    { shape: 'circle', x: 150, y: -48, radius: 4.5 },
-    { shape: 'circle', x: 196, y: 52, radius: 4 },
-    { shape: 'circle', x: 232, y: -44, radius: 5 },
-    { shape: 'circle', x: 274, y: 46, radius: 4.5 },
-    { shape: 'circle', x: 310, y: -50, radius: 4 },
-    { shape: 'circle', x: 344, y: 48, radius: 4.5 },
+    { shape: 'circle', x: 60, y: 44, radius: 5 },
+    { shape: 'circle', x: 75, y: -48, radius: 4.5 },
+    { shape: 'circle', x: 98, y: 52, radius: 4 },
+    { shape: 'circle', x: 116, y: -44, radius: 5 },
+    { shape: 'circle', x: 137, y: 46, radius: 4.5 },
+    { shape: 'circle', x: 155, y: -50, radius: 4 },
+    { shape: 'circle', x: 172, y: 48, radius: 4.5 },
   ].map((o) => ({ ...o, material: 'rock', stars: true })),
 };
 
