@@ -454,7 +454,10 @@ class SailScreen {
    * 벌어진 입이 그대로 도착 지점이 된다.
    */
   onBossFall() {
-    this.goal = createGoal({ x: this.boss.coreAt.x, y: this.boss.coreAt.y, radius: 5, label: '정수' });
+    // 핵 자리 그대로 두면 목표 원이 여전히 살아 있는 보스 폴리곤과 겹쳐 도착 판정에
+    // 못 닿는다(보스는 쓰러져도 형태가 그대로다 — §"보스 형태 전체가 무형태").
+    // 배가 다가오는 남쪽(핵보다 −y, 대포 사거리 밖)에 띄운다.
+    this.goal = createGoal({ x: this.boss.coreAt.x, y: this.boss.coreAt.y - 11, radius: 5, label: '정수' });
     // ★ 반드시 다시 잰다. 골이 없던 동안 `initialDistance` 가 Infinity 라, 안 고치면
     //   진행 바가 `clamp01(NaN)` 으로 굳어 골이 생겨도 복구되지 않는다.
     this.initialDistance = this.currentDistance();
