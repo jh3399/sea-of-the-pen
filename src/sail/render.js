@@ -695,7 +695,9 @@ function drawCannon(ctx, hull, item) {
   ctx.fillStyle = '#65758a';
   ctx.fillRect(length - 0.12, -CANNON_BARREL_WIDTH * 0.72, 0.12, CANNON_BARREL_WIDTH * 1.44);
   ctx.restore();
-  drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, 'cannon', 0, 0, ITEM_PIXEL));
+  // drawUprightIcon 안은 Y 가 뒤집힌 프레임이라 부호를 반전한다 (부스터·키와 같은 이유).
+  // 안 뒤집으면 포신(위 사각형)은 옆을 보는데 아이콘은 늘 이물 방향(+X)만 본다.
+  drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, 'cannon', 0, 0, ITEM_PIXEL, -angle));
 }
 
 /**
@@ -766,9 +768,12 @@ export function drawHullBody(ctx, hull, { target = false, windLocal = null, vel 
       // 설계 화면과 같은 경로(markerAngleToward) — 그리드의 +Y(불꽃 반대쪽 = 몸체)를
       // 부착 각도(추진 방향)로 돌린다. 안 돌리면 어느 방향으로 달았든 항상 같은 자리를
       // 향해 그려져, 회전 각도가 있는 부스터는 그림과 실제 추진 방향이 어긋난다.
+      // drawUprightIcon 안은 Y 가 한 번 뒤집힌 프레임이므로(노·키와 같은 이유) y 성분의
+      // 부호도 그에 맞춰 넘긴다 — 안 뒤집으면 전후 장착(sin=0)은 우연히 맞아 보이다가
+      // 측면 장착에서 추진 방향과 아이콘이 정반대로 그려진다.
       const a = item.angle ?? 0;
       drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(
-        ctx, 'booster', 0, 0, BOOSTER_PIXEL, markerAngleToward(Math.cos(a), Math.sin(a)),
+        ctx, 'booster', 0, 0, BOOSTER_PIXEL, markerAngleToward(Math.cos(a), -Math.sin(a)),
       ));
       continue;
     }
