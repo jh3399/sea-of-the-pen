@@ -24,11 +24,14 @@ export const TURRET_TUNING = {
   radius: 1.2,
   /**
    * 포탄 초속 (m/s)과 질량 (kg).
-   * 12 kg · 55 m/s → E = J²/2μ ≈ 18.1 kJ → 나무 반경 0.50 m · 철 0.13 m(함몰).
+   * 18 kg · 55 m/s → E = J²/2μ ≈ 27.2 kJ → 나무 반경 0.69 m · 철 0.25 m(함몰).
    * `carveRadiusFromImpact` 와 `MATERIALS` 의 내구 값에서 나온 수치다 (§7.4).
+   * ⚠ 12 → 18 kg 로 올린 값(2026-08-10, 대포 위력 강화). 철의 45° 빗맞음 무해 판정
+   *   (`E_총 × cos²45° < iron.impactThreshold`)이 이 값의 상한이다 — 19.8 kg 을 넘기면
+   *   경사 장갑이 뚫려 벤치가 깨진다. 18 은 그 아래 여유(약 9%)를 둔 값이다.
    */
   speed: 55,
-  mass: 12,
+  mass: 18,
   /** 포탄 반경 (m). */
   projectileRadius: 0.15,
   /**

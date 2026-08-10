@@ -1768,8 +1768,11 @@ console.log(`\n  12회 연속 연소, 차감 지점이 건드린 8분면 (적을
 console.log(`  ${pad('', 14)}${pad('가장 먼 점', 12)}번짐`);
 console.log(`  ${pad('둥근 배', 14)}${pad(walkFar.octants + '/8', 12)}${walkSpread.octants}/8`);
 console.log(`  ${pad('슬루프', 14)}${pad(walkFarSloop.octants + '/8', 12)}${walkSpreadSloop.octants}/8`);
+// ⚠ 2026-08-10 burnRadiusOfHull 0.30→0.45(용암 전손 가속) 뒤로 절대 상한이 4→6 으로
+//   올랐다 — 한 입이 커진 만큼 12회 안에 남은 선체의 더 많은 호를 삼킨다. 핵심 불변식은
+//   그대로다: "번짐"은 항상 "가장 먼 점"보다 좁게 남는다(6/8 < 8/8, 슬루프 3/8 < 4/8).
 check('★ 균일한 화염에서도 배가 원이 되지 않는다 (직전 화점에서 번진다)',
-  walkSpread.octants < walkFar.octants && walkSpread.octants <= 4,
+  walkSpread.octants < walkFar.octants && walkSpread.octants <= 6,
   `둥근 배 — 가장 먼 점 ${walkFar.octants}/8 vs 번짐 ${walkSpread.octants}/8`);
 
 const progressiveCells = walkSpread.cellCounts.every((n, i, a) => i === 0 || n <= a[i - 1]);
@@ -2295,13 +2298,18 @@ check('★ 포탑 탄이 배를 깎는다 (피탄 → 파손은 암초 충돌과
 //
 //    판정을 **에너지**로 하는 이유: 명중 횟수만 보면 갈라진 임펄스가 우연히 둘 다 임계를
 //    넘는 배치에서 통과해 버린다. 포구 에너지의 70% 를 밑돌면 갈라진 것이다.
+//
+//    ⚠ 2026-08-10 나무 강화 뒤로는 `hits.length === fired` 를 못 박을 수 없다 — 첫 두 발이
+//    같은 자리를 뚫어 버려서 세 번째 발은 그 구멍을 그냥 지나간다(명중도 이음매 분리도
+//    아니다, 맞을 표적이 없을 뿐이다). 그래서 "명중은 몇 발이든 전부 안 갈라졌는가"만 본다
+//    — 표적이 사라져 못 맞히는 것과 맞았는데 무해했던 것은 다른 사건이다.
 const muzzleEnergy = 0.5 * TURRET_TUNING.mass * TURRET_TUNING.speed ** 2;
 console.log(`  명중 에너지 [${shelled.hits.map((h) => (h.energy / 1000).toFixed(1)).join(', ')}] kJ ` +
   `(포구 ${(muzzleEnergy / 1000).toFixed(1)} kJ)`);
 check('★ 한 발의 충격이 볼록 분해 이음매에서 갈라지지 않는다 (갈라지면 임계를 못 넘어 무해해진다)',
-  shelled.hits.length === shelled.fired
+  shelled.hits.length > 0
     && shelled.hits.every((h) => h.energy > muzzleEnergy * 0.7),
-  `${shelled.fired}발 전부 명중 · 최소 ${(Math.min(...shelled.hits.map((h) => h.energy)) / 1000).toFixed(1)} kJ`);
+  `${shelled.hits.length}/${shelled.fired}발 명중 · 최소 ${(Math.min(...shelled.hits.map((h) => h.energy)) / 1000).toFixed(1)} kJ`);
 
 const passing = bombard({ ahead: 25, shipV: { x: 4, y: 0 }, seconds: 12 });
 check('★ 지나가는 배는 포탑이 있는 쪽 옆구리를 깎인다 (부호를 반대로 쓰면 반대편이 깎인다)',
@@ -2505,10 +2513,13 @@ check('감쇠 노브의 방향이 뒤집히지 않는다 (나무 < 철)',
 
 // ★ 감쇠 노브가 **정타를 건드리면 안 된다.** 건드리면 D3 ② 의 암초 밸런스와 위 명중 수치가
 //   통째로 흔들린다. 정타에서는 법선분이 곧 총 에너지라 되돌려 줄 접선분이 0 이다.
+//   임펄스는 포구 운동량(μ·v)에서 실측된 솔버 오버슈트(~5%, 위 "20.0 vs 18.1 kJ" 참고)를
+//   더한 값으로 잡는다 — 상수로 박으면 TURRET_TUNING 을 튜닝할 때마다 조용히 깨진다.
+const headOnImpulse = TURRET_TUNING.mass * TURRET_TUNING.speed * 1.05;
 const headOnUnaffected = carveRadiusFromImpact({
-  impulse: 690, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
+  impulse: headOnImpulse, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
 }) === carveRadiusFromImpact({
-  impulse: 690, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
+  impulse: headOnImpulse, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
   strikeEnergy: 0.5 * TURRET_TUNING.mass * TURRET_TUNING.speed ** 2,
 });
 check('입사각 감쇠는 정타를 건드리지 않는다 (기존 암초·정타 밸런스가 그대로여야 한다)',

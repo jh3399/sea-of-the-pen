@@ -40,9 +40,9 @@
     {
       "id": "wood-burns-down",
       "material": "wood",
-      "when": { "state": "burning", "elapsed": 4 },
+      "when": { "state": "burning", "elapsed": 2 },
       "effect": { "destroy": true },
-      "note": "나무 + 불 = 연소 후 파괴. D3 의 carve 입력이 되는 이벤트를 발행한다."
+      "note": "나무 + 불 = 연소 후 파괴. D3 의 carve 입력이 되는 이벤트를 발행한다. 2026-08-10: 용암에서 더 빨리 무너지도록 4초→2초로 줄였다(damage/impact.js 의 burnRadiusOfHull 인상과 짝)."
     },
     {
       "id": "cloth-burns-down",

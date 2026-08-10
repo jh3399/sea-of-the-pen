@@ -96,9 +96,13 @@ export const HYDRO_TUNING = {
 export const MATERIALS = {
   wood: {
     key: 'wood', name: '나무', areaDensity: 300, color: '#a8763e',
-    impactThreshold: 8000, toughness: 40000, maxCarveRadius: null,
+    // 2026-08-10: 대포에 더 잘 부서지도록 낮췄다(8000→5000·40000→25000). 새 대포 질량
+    // (18kg·27.2kJ) 정타 기준 반경 0.69→0.94 m.
+    impactThreshold: 5000, toughness: 25000, maxCarveRadius: null,
     // 거의 안 흘린다. 빗맞아도 뚫린다 — 각도로 도망칠 수 없는 것이 나무의 약점이다.
-    deflection: 0.35,
+    // 0.35→0.1(2026-08-10): 가장 비스듬한 그레이징도 정타의 ~94% 를 낸다 — 나무는
+    // 사실상 각도 자체가 방어 수단이 못 되게 만들었다.
+    deflection: 0.1,
   },
   iron: {
     key: 'iron', name: '철', areaDensity: 900, color: '#8892a0',
