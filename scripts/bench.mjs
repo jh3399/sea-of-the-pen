@@ -3943,7 +3943,9 @@ function bossFight({ shells = 40, forceOpen = null } = {}) {
   return { boss, fired, landed, startArea, coreBody, seconds: simTime };
 }
 
-const openFight = bossFight({ shells: 60 });
+// ★ healthMultiplier 5 배 (2026-08-10) 뒤로는 60발로는 못 쓰러뜨린다 — 문턱까지 실측 ~99발
+//   필요해 여유를 두고 150으로 올렸다 (예전 60 은 그때 필요치 ~20발의 3배 여유였던 것과 같은 비율).
+const openFight = bossFight({ shells: 150 });
 check('★ 핵에 맞으면 체력이 줄고, 문턱 아래로 내려가면 쓰러진다 (핵 폴리곤은 안 건드린다)',
   openFight.landed > 0 && openFight.boss.health < 1
     && openFight.boss.health <= BOSS_TUNING.fallAt && openFight.boss.fallen,
@@ -3951,7 +3953,7 @@ check('★ 핵에 맞으면 체력이 줄고, 문턱 아래로 내려가면 쓰�
 
 // ★ 취약 창 게이트를 없앤 핵심 요구 — 입을 강제로 계속 닫아 둬도 **완전히 같은** 결과가
 //   나와야 게이트가 진짜 사라진 것이다(같은 조준·같은 탄으로 대조해야 몰래 남은 분기가 샌다).
-const shutMouthFight = bossFight({ shells: 60, forceOpen: false });
+const shutMouthFight = bossFight({ shells: 150, forceOpen: false });
 check('★ 입을 계속 닫아 둬도 핵은 똑같이 맞는다 (취약 창 게이트가 완전히 사라졌다)',
   shutMouthFight.fired === openFight.fired && shutMouthFight.landed === openFight.landed
     && shutMouthFight.boss.fallen
@@ -4001,11 +4003,13 @@ check('★ 핵 폴리곤은 몇 발을 맞아도 절대 안 바뀐다 (몸통 �
 }
 
 // 페이즈가 체력 문턱에서 갈리는가 — 문턱을 리터럴이 아니라 표에서 읽는다.
-check('페이즈는 체력 문턱에서 순서대로 넘어가고 패턴이 누적된다',
+// ★ 난파선이 빔과 같은 페이즈(1페이즈)에서 함께 시작하도록 앞당겼다(2026-08-10) — 예전엔
+//   2페이즈에서만 등장해 !BOSS_PHASES[1].wreck 이었다.
+check('페이즈는 체력 문턱에서 순서대로 넘어가고 패턴이 누적된다 (빔·난파선은 1페이즈부터 함께)',
   BOSS_PHASES.length === 3
     && BOSS_PHASES[0].until > BOSS_PHASES[1].until && BOSS_PHASES[1].until > BOSS_TUNING.fallAt
-    && BOSS_PHASES.every((p) => p.suck) && !BOSS_PHASES[0].beam && BOSS_PHASES[1].beam
-    && !BOSS_PHASES[1].wreck && BOSS_PHASES[2].beam && BOSS_PHASES[2].wreck,
+    && BOSS_PHASES.every((p) => p.suck) && !BOSS_PHASES[0].beam && !BOSS_PHASES[0].wreck
+    && BOSS_PHASES[1].beam && BOSS_PHASES[1].wreck && BOSS_PHASES[2].beam && BOSS_PHASES[2].wreck,
   `문턱 ${BOSS_PHASES.map((p) => p.until).join(' → ')} · 쓰러짐 ${BOSS_TUNING.fallAt}`);
 
 // ★ 쓰러지면 도착 지점이 생기고 주인공이 들어가 클리어한다. `game/goal.js` 는 한 줄도 안 고쳤다.
@@ -4113,7 +4117,8 @@ check('★ 팔은 몇 발을 맞아도 폴리곤이 절대 안 바뀐다 (핵과
 check('★ 팔만 맞혀도 같은 체력 풀이 준다 (핵은 안 건드렸는데도, 핵과 같은 π·radius² 공식과 정확히 일치)',
   armShot.boss.health < 1 && !armShot.boss.fallen
     && Math.abs((1 - armShot.boss.health) - armShot.landed
-      * (Math.PI * MATERIALS.sinew.maxCarveRadius ** 2) / armShot.boss.launchArea) < 1e-6,
+      * (Math.PI * MATERIALS.sinew.maxCarveRadius ** 2) / armShot.boss.launchArea
+      / BOSS_TUNING.healthMultiplier) < 1e-6,
   `${armShot.landed}발 → HP ${(armShot.boss.health * 100).toFixed(2)}% (공식과 정확히 일치)`);
 
 // ③ ★ **보스는 자기 팔을 쏴도 스스로 체력이 안 준다.** 부채꼴 총구가 팔 안에서 열리므로
