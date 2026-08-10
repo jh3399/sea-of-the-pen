@@ -75,7 +75,11 @@ export const DEMO_MAP = {
   goal: { x: 150, y: 0, radius: 6, label: '도착' },
   scoring: { threeStarMaxSeconds: 60, twoStarMaxSeconds: 90 },
   bounds: SEA_BOUNDS,
-  fields: {},
+  // +X 로 부는 11 m/s 순풍 — 골(150, 0)과 같은 방향이다. `zones.json` 의 `following` 존과
+  // 같은 값: 돛을 앞으로 향하게 달면 노(4.66)보다 빠르다(5.04, §5.2 원칙 1).
+  fields: {
+    wind: [{ shape: 'uniform', x: 11, y: 0 }],
+  },
   weather: { rain: 0, gloom: 0 },
   damage: true,
   // 선택 배선용 수동 표적. screen 이 아직 만들지 않아도 되는 순수 맵 스펙이며, 연결할 때는

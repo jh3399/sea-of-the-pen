@@ -6,6 +6,7 @@ import { MATERIALS } from '../hull/params.js';
 import { surfaceCellKey, surfaceCellPoint } from '../hull/raster.js';
 import { cannonMuzzleLocal, CANNON_TUNING } from '../items/cannon.js';
 import { strokeSwing } from '../physics/devices.js';
+import { sailAlignment, SAIL_TUNING } from '../field/forces.js';
 import {
   drawItemMarker, drawRudderMarker, drawCrewSprite, drawPixelGrid,
   markerAngleToward, itemMarkerSize, OAR_PUSH,
@@ -36,6 +37,9 @@ const OAR_PIXEL = 0.09;
 /** 노깃이 자루 끝을 축으로 휘두르는 최대 각 (rad, 약 34°). 노 길이가 2 m 라 노깃이 앞뒤로
  *  1.1 m 를 지난다 — 화면 20 px/m 에서 22 px, 젓는 것이 눈에 보이는 최소치다. */
 const OAR_SWEEP = 0.6;
+/** 바람 정보가 없을 때(표적·해적·잔해는 돛이 없다) `drawSail` 에 넘기는 기본 속도 — 매 호출
+ *  새 객체를 만들지 않도록 상수 하나를 공유한다. */
+const ZERO_VEL = { u: 0, v: 0 };
 const CANNON_BARREL_WIDTH = 0.18;
 
 /** 포탄 몸통 도트 스프라이트(6×6, 철 음영). 지름을 `shot.radius*2` 에 그대로 맞춰 그리므로
@@ -694,14 +698,70 @@ function drawCannon(ctx, hull, item) {
   drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, 'cannon', 0, 0, ITEM_PIXEL));
 }
 
+/**
+ * 돛 배 부름(billow) 튜닝 — 순수 시각 효과다. 물리(§3 의 그 힘식)에는 관여하지 않는다.
+ */
+const SAIL_RENDER = {
+  baseLen: 0.85 * 3, // 기준 돛 하나의 세로 길이(m, ×3)
+  // ⚠ belly 는 2차 베지어의 **제어점** 거리다 — 실제 배가 부푸는 눈에 보이는 폭은 그 절반
+  //   (t=0.5 에서의 값)뿐이다. `minBelly`·`maxBelly` 를 실제 원하는 폭의 두 배로 잡아야 한다
+  //   (SAIL_GRID 생성 스크립트가 쓴 것과 같은 보정 — 안 하면 "빵빵하다"고 튜닝해도 절반만 나간다).
+  minBelly: 0.10, // 무풍·역풍(러핑) — 납작하지만 완전히 사라지진 않는 초승달
+  maxBelly: 0.42, // 순풍 만재 — 정지 아이콘(SAIL_GRID)만큼 빵빵한 활 모양
+  windRef: 5, // 이 정렬도(m/s)에서 배 부름이 상한에 닿는다 — 존 풍속(9~11)에 맞춰 낮췄다
+};
+
+/**
+ * 배 부름 정도(0~1) — `sailAlignment` 로 §3 의 힘식과 **같은 정렬도**를 읽는다. 그림이 따로
+ * 계산하면 "세게 미는데 안 부푼 돛" 같은 불일치가 생긴다. 역풍·무풍(dot ≤ 0)이면 러핑
+ * 상태로 보고 0 — 뒤로 부풀지 않는다.
+ */
+function sailBillow(item, windLocal, vel) {
+  const dot = sailAlignment(item, windLocal, vel);
+  if (!(dot > 0)) return 0;
+  const scale = item.status?.wet > 0 ? SAIL_TUNING.wetScale : 1;
+  return Math.min(1, (dot * scale) / SAIL_RENDER.windRef);
+}
+
+/**
+ * 돛 — 위에서 본 흰 초승달. 활대를 잇는 두 끝(현측 방향, 로컬 ±Y)에서 얇게 모이고, 바람을
+ * 미는 법선(`item.angle`, 로컬 +X) 쪽으로 배가 부푼다. 대포와 같은 방식으로 직접
+ * `item.angle` 만큼 돌린다(§4.2 부착각과 같은 좌표계 — `markerAngleToward` 를 거치지
+ * 않는다).
+ */
+function drawSail(ctx, item, windLocal, vel) {
+  const billow = sailBillow(item, windLocal, vel);
+  const areaScale = Math.sqrt(Math.max(item.area ?? 8, 1) / 8);
+  const len = SAIL_RENDER.baseLen * areaScale;
+  const half = len / 2;
+  const belly = SAIL_RENDER.minBelly + (SAIL_RENDER.maxBelly - SAIL_RENDER.minBelly) * billow;
+  const bow = belly * len;
+  const lee = bow * 0.42;
+  ctx.save();
+  ctx.translate(item.x, item.y);
+  ctx.rotate(item.angle ?? 0);
+  ctx.beginPath();
+  ctx.moveTo(0, -half);
+  ctx.quadraticCurveTo(bow, 0, 0, half);
+  ctx.quadraticCurveTo(lee, 0, 0, -half);
+  ctx.closePath();
+  ctx.fillStyle = '#f4eed8';
+  ctx.fill();
+  ctx.strokeStyle = '#c6b78c';
+  ctx.lineWidth = 0.04;
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** 강체 하나(선체 로컬 좌표계 안에서) — 선체 + 부착 아이템 + 주인공. */
-export function drawHullBody(ctx, hull, { target = false } = {}) {
+export function drawHullBody(ctx, hull, { target = false, windLocal = null, vel = ZERO_VEL } = {}) {
   drawHullPixels(ctx, hull, target);
   const rudderAngle = hull.control?.rudder ?? 0;
   for (const item of hull.items) {
     if (item.type === 'oar' && item.side) { drawOar(ctx, item, hull.control); continue; }
     if (item.type === 'rudder') { drawRudder(ctx, item, rudderAngle); continue; }
     if (item.type === 'cannon') { drawCannon(ctx, hull, item); continue; }
+    if (item.type === 'sail') { drawSail(ctx, item, windLocal, vel); continue; }
     if (item.type === 'booster') {
       // 설계 화면과 같은 경로(markerAngleToward) — 그리드의 +Y(불꽃 반대쪽 = 몸체)를
       // 부착 각도(추진 방향)로 돌린다. 안 돌리면 어느 방향으로 달았든 항상 같은 자리를

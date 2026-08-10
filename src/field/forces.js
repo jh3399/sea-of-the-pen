@@ -21,6 +21,26 @@ export const SAIL_TUNING = {
 };
 
 /**
+ * ★ 순수 함수 — 상대풍과 돛 법선의 내적(w·n). 부호가 있다: 순풍이면 +, 역풍이면 −.
+ *
+ * `sailForceLocal` 의 힘 크기뿐 아니라 `sail/render.js` 의 돛 배 부름(billow) 연출도 같은
+ * 정렬도를 쓴다 — 힘과 그림이 서로 다른 식으로 갈라지면 "세게 미는데 안 부푼 돛"이 생긴다.
+ *
+ * @param {object} item 돛 아이템 (angle = 법선)
+ * @param {{x:number,y:number}} windLocal 선체 로컬 좌표계의 바람 벡터
+ * @param {{u:number,v:number}} vel 선체 로컬 속도 — 상대풍을 만들려면 빼야 한다
+ * @returns {number}
+ */
+export function sailAlignment(item, windLocal, vel) {
+  if (!windLocal) return 0;
+  const wx = windLocal.x - vel.u;
+  const wy = windLocal.y - vel.v;
+  const nx = Math.cos(item.angle ?? 0);
+  const ny = Math.sin(item.angle ?? 0);
+  return wx * nx + wy * ny;
+}
+
+/**
  * ★ 순수 함수 — 돛 하나가 내는 로컬 힘.
  *
  * 힘 = C × A × (w·n)|w·n| × n   (w = 상대풍, n = 돛 법선)
@@ -39,14 +59,9 @@ export function sailForceLocal(item, windLocal, vel) {
   const area = item.area ?? 0;
   if (!(area > 0) || !windLocal) return { fx: 0, fy: 0 };
 
-  // 상대풍 — 배가 바람을 따라 달리면 돛이 받는 바람은 그만큼 약해진다.
-  // 이것 하나로 "순풍 항주는 풍속을 못 넘는다"가 저절로 성립한다.
-  const wx = windLocal.x - vel.u;
-  const wy = windLocal.y - vel.v;
-
+  const dot = sailAlignment(item, windLocal, vel);
   const nx = Math.cos(item.angle ?? 0);
   const ny = Math.sin(item.angle ?? 0);
-  const dot = wx * nx + wy * ny;
 
   const scale = item.status?.wet > 0 ? SAIL_TUNING.wetScale : 1;
   const f = SAIL_TUNING.pressureCoeff * area * dot * Math.abs(dot) * scale;

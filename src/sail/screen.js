@@ -10,6 +10,7 @@ import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../physics/world.js';
 import { applyHydroToWorld } from '../physics/hydro.js';
 import { applyFieldsToWorld } from '../physics/fields.js';
 import { createFields } from '../field/field.js';
+import { toLocalVector } from '../field/forces.js';
 import { createRuleEngine, loadRules } from '../rules/engine.js';
 import RULE_TABLE from '../rules/table.json';
 import { applyDevices, STROKE_KEYMAP } from '../physics/devices.js';
@@ -1091,7 +1092,16 @@ class SailScreen {
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(angle);
-        drawHullBody(ctx, body.getUserData().hull, { target });
+        // 돛이 부푸는 정도는 §3 의 그 힘식과 같은 정렬도를 읽는다(`drawSail`) — 표적·해적·
+        // 잔해는 돛을 달지 않으므로(`items:[]`) 이 계산은 플레이어 선체에만 하면 된다.
+        const vLocal = target ? null : body.getLocalVector(body.getLinearVelocity());
+        const sailInputs = target ? {} : {
+          windLocal: toLocalVector(
+            this.fields.sampleVector('wind', p.x, p.y, this.simTime), angle,
+          ),
+          vel: { u: vLocal.x, v: vLocal.y },
+        };
+        drawHullBody(ctx, body.getUserData().hull, { target, ...sailInputs });
         ctx.restore();
       }
     }
