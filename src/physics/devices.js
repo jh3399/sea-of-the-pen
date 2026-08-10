@@ -529,13 +529,15 @@ const NO_HELD = {};
  * @param {{strokes?:Array<{side,dir}>, held?:object, pressed?:object, steer?:number,
  *          anchor?:boolean, now?:number}} input
  * @param {number} dt 고정 타임스텝
- * @returns {Array<{type:'cannonFire', body:Body, item:object, request:object}>} 발사 이벤트
+ * @returns {Array<{type:'cannonFire'|'oarStroke'|'boosterOn', body:Body, item?:object,
+ *           request?:object}>} 발사·연출 이벤트 — 물리와 무관, 화면 쪽 소리·이펙트 트리거용.
  */
 export function applyDevices(body, input = {}, dt) {
   const hull = body.getUserData()?.hull;
   if (!hull || dt <= 0) return [];
 
   const control = (hull.control ??= createControl());
+  const events = [];
 
   // ① 스트로크 요청 소비. 이번 스텝의 요청을 **한 사이클로 합쳐** 넘긴다 — ↑ 와 ← 를 같이
   //    누르고 있어도 사이클은 하나이고, 그래서 두 노가 어긋날 방법이 없다.
@@ -552,17 +554,28 @@ export function applyDevices(body, input = {}, dt) {
       sides[req.side] = cur === undefined || cur === req.dir ? req.dir : 0;
     }
   }
-  if (sides) startStroke(control.stroke, sides);
+  // startStroke 가 true 를 돌려줄 때만 — 버퍼에 들어가 대기 중인 요청은 아직 "저은 것"이 아니다.
+  if (sides && startStroke(control.stroke, sides)) events.push({ type: 'oarStroke', body });
 
   const devices = hull.items.filter((it) => it.type);
   const held = input.held ?? NO_HELD;
+  // 부스터가 이번 스텝에 새로 눌렸는가 — 순수 물리(deviceForcesLocal)는 상시력이라 "켜지는
+  // 순간"을 모른다. 여기서 이전 held 와 비교해 상승 엣지만 이벤트로 낸다.
+  for (const d of devices) {
+    if (d.type !== 'booster' || !d.bind) continue;
+    if (inputActive(held, d.bind) && !inputActive(control.held, d.bind)) {
+      events.push({ type: 'boosterOn', body, item: d });
+    }
+  }
   const fired = fireCannons(devices, control, held, input.pressed ?? NO_HELD);
-  const events = fired.map((item) => ({
-    type: 'cannonFire',
-    body,
-    item,
-    request: cannonShotRequest(body, item, input.now),
-  }));
+  for (const item of fired) {
+    events.push({
+      type: 'cannonFire',
+      body,
+      item,
+      request: cannonShotRequest(body, item, input.now),
+    });
+  }
 
   control.held = held;
   control.steer = clamp(input.steer ?? steerFromHeld(control.held), -1, 1);

@@ -16,14 +16,18 @@
 // | victory | 승리 팡파르   | 원샷 — 루프 없음, 끝나면 자동 정지  |
 //
 // SFX (sfx(name)):
-// | name   | 용도             | name   | 용도             |
-// |--------|------------------|--------|------------------|
-// | click  | UI 버튼          | win    | 전투 승리 징글   |
-// | submit | 그림 제출/확정   | lose   | 패배 징글        |
-// | brush  | 붓질             | talk   | 대화 타자기 블립 |
-// | hit    | 공격 적중        | pickup | 아이템/조각 획득 |
-// | damage | 피격             | dock   | 입항/정박        |
-// | cancel | 취소/뒤로        |        |                  |
+// | name    | 용도             | name    | 용도               |
+// |---------|------------------|---------|--------------------|
+// | click   | UI 버튼          | win     | 전투 승리 징글     |
+// | submit  | 그림 제출/확정   | lose    | 패배 징글          |
+// | brush   | 붓질             | talk    | 대화 타자기 블립   |
+// | hit     | 공격 적중        | pickup  | 아이템/조각 획득   |
+// | damage  | 피격             | dock    | 입항/정박          |
+// | cancel  | 취소/뒤로        | charge  | 빔 충전(경고선)    |
+// | row     | 노 젓기          | suck    | 보스 물 빨아들이기 |
+// | booster | 부스터 점화      | roar    | 보스 페이즈 전환   |
+// | cannon  | 대포 발사        | laser   | 레이저 빔 발사     |
+// | wreck   | 난파선 투척      |         |                    |
 
 import { TRACKS } from './tracks.js';
 import { SFX } from './sfx.js';
@@ -137,18 +141,23 @@ export function sfx(name) {
 
 /** BGM 볼륨 0..1 */
 export function setBgmVolume(v) {
-  bgmVol = clamp01(v);
+  bgmVol = clamp(v, 0, 1);
   if (ctx) bgmGain.gain.setTargetAtTime(bgmVol, ctx.currentTime, 0.03);
 }
 
-/** SFX 볼륨 0..1 */
+/**
+ * 효과음 버스 볼륨. **1을 넘겨도 된다** — 뒤에 달린 컴프레서(`initAudio`)가 마스터에서
+ * 받아 주므로, 개별 파형을 하나하나 다시 그리는 대신 이 버스 게인 하나로 "전체적으로 더
+ * 크게"를 낼 수 있다. 상한 4 는 짧은 원샷 여러 개가 우연히 겹쳐도 컴프레서가 받아 줄
+ * 여유를 남긴 값이다 — 이 위로 더 올리면 겹칠 때 찌그러질 수 있다.
+ */
 export function setSfxVolume(v) {
-  sfxVol = clamp01(v);
+  sfxVol = clamp(v, 0, 4);
   if (ctx) sfxGain.gain.setTargetAtTime(sfxVol, ctx.currentTime, 0.03);
 }
 
-function clamp01(v) {
-  return Math.min(1, Math.max(0, Number(v) || 0));
+function clamp(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, Number(v) || 0));
 }
 
 // ---- 내부: 룩어헤드 스케줄러 -------------------------------------------
