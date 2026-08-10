@@ -310,6 +310,11 @@ class DrawScreen {
     // 열린 아이템이 없으면 칸을 통째로 숨긴다 — 빈 칸은 고장으로 읽힌다.
     const card = document.getElementById('item-card');
     if (card) card.hidden = open.size === 0;
+    // 키 매핑 버튼도 같은 논리다 — 부스터·대포처럼 트리거 키가 있는 아이템이 **그 스테이지에
+    // 풀린 순간부터** 보여야 한다. 아직 하나도 못 붙였어도(그리기 화면에 막 들어온 참이어도)
+    // "이 배엔 키로 조작할 게 생긴다"를 미리 알려주는 것이 이 버튼의 역할이라, 실제로 배에
+    // 달았는지(this.hull.items)가 아니라 진행도(unlockedItems)로 gate 한다.
+    this.keymapBtn.hidden = ![...open].some((t) => isPooledBind(t));
     for (const type of PALETTE_ITEMS.filter((t) => open.has(t))) {
       const spec = ITEM_CATALOG[type];
       const row = document.createElement('button');
