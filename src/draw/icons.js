@@ -75,19 +75,18 @@ export const ICON_PALETTE = {
   e: '#2a1f14', // 눈
 };
 
+// 서양 대포를 위에서 내려다본 실루엣 — 몸체는 검은 무쇠(K) 하나로, 포구(+X, 오른쪽)
+// 끝에만 철 테두리(I/i)를 얹어 포신임을 읽게 한다. 위아래 한 칸 튀어나온 부분은 포이(砲耳,
+// trunnion) — 포가에 걸리는 축이라 위에서 봐도 옆으로 도드라진다.
 const CANNON_GRID = [
-  '............',
-  '.......IIIII',
-  '.....IIIIIII',
-  '...WwIIIIIII',
-  '...WwwwwII..',
-  '...WwwwwK...',
-  '...wKKKKK...',
-  '..wKKKKKKw..',
-  '..wKKKKKKw..',
-  '...wKKKKw...',
-  '....wwww....',
-  '............',
+  '....KK...........',
+  '..KKKKKKKKKKKK...',
+  '.KKKKKKKKKKKKKK..',
+  'KKKKKKKKKKKKKKKKi',
+  'KKKKKKKKKKKKKKKKI',
+  '.KKKKKKKKKKKKKK..',
+  '..KKKKKKKKKKKK...',
+  '....KK...........',
 ];
 
 // 키 — 오른쪽의 철제 축을 부착점에 두고, 나무 막대가 선미(-X) 쪽으로 뻗는 틸러 형태다.
