@@ -830,8 +830,35 @@ export function drawCombatEffects(ctx, view, projectiles, sparks, now, sparkLife
     const age = (now - spark.at) / sparkLife;
     if (age < 0 || age > 1) continue;
     const fade = 1 - age;
-    const glance = spark.kind === 'glance';
     const cell = Math.max(view.px(2.2), 0.06);
+
+    // 발사 섬광 — 포구에서 발사 방향으로 짧게 튀는 도트 다발. 피격 섬광(원형/십자)과
+    // 형태를 갈라 "맞았다"와 "쐈다"가 눈으로 구별된다.
+    if (spark.kind === 'muzzle') {
+      const shrink = 1 - age * 0.5;
+      const a = spark.angle ?? 0;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      const px = -dy;
+      const py = dx;
+      const reach = (0.55 + spark.radius * 1.4) * shrink;
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = '#ffb347';
+      for (const spread of [-1, 0, 1]) {
+        const rx = dx + px * spread * 0.32;
+        const ry = dy + py * spread * 0.32;
+        const len = reach * (spread === 0 ? 1 : 0.65);
+        fillDotDash(ctx, spark.x, spark.y, spark.x + rx * len, spark.y + ry * len, cell, cell * 1.3);
+      }
+      ctx.globalAlpha = fade * fade;
+      ctx.fillStyle = '#fff6d8';
+      const flash = Math.max(spark.radius * 2.2, view.px(2.4)) * shrink;
+      ctx.fillRect(spark.x - flash / 2, spark.y - flash / 2, flash, flash);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+
+    const glance = spark.kind === 'glance';
     ctx.globalAlpha = fade;
     ctx.fillStyle = glance ? '#b9f2ff' : '#ffd35c';
     if (glance) {

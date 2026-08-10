@@ -383,7 +383,10 @@ class SailScreen {
     this.bossClock += dt;
     for (const req of boss.step(this.bossClock)) {
       const shot = spawnProjectile(this.world, { ...req, bornAt: this.simTime });
-      if (shot) this.projectiles.add(shot);
+      if (shot) {
+        this.projectiles.add(shot);
+        this.addSpark(req, 'muzzle', req.radius, req.angle);
+      }
     }
     for (const req of boss.drainWrecks()) this.throwWreck(req);
   }
@@ -788,7 +791,10 @@ class SailScreen {
       for (const event of events) {
         if (event.type !== 'cannonFire' || !event.request) continue;
         const shot = spawnProjectile(this.world, event.request);
-        if (shot) this.projectiles.add(shot);
+        if (shot) {
+          this.projectiles.add(shot);
+          this.addSpark(event.request, 'muzzle', event.request.radius, event.request.angle);
+        }
       }
     }
     // 물리 스텝 사이의 짧은 탭도 위에서 한 번 전달됐고, 홀드는 held 로 따로 남는다.
@@ -806,7 +812,10 @@ class SailScreen {
       for (const event of events) {
         if (event.type !== 'cannonFire' || !event.request) continue;
         const shot = spawnProjectile(this.world, event.request);
-        if (shot) this.projectiles.add(shot);
+        if (shot) {
+          this.projectiles.add(shot);
+          this.addSpark(event.request, 'muzzle', event.request.radius, event.request.angle);
+        }
       }
     }
   }
@@ -940,9 +949,9 @@ class SailScreen {
 
   // ------------------------------------------------------------ 충격 · 발사체
 
-  addSpark(at, kind, radius = CANNON_TUNING.radius) {
+  addSpark(at, kind, radius = CANNON_TUNING.radius, angle = null) {
     if (!at) return;
-    this.sparks.push({ x: at.x, y: at.y, at: this.simTime, radius, kind });
+    this.sparks.push({ x: at.x, y: at.y, at: this.simTime, radius, kind, angle });
     if (this.sparks.length > SPARK_MAX) this.sparks.splice(0, this.sparks.length - SPARK_MAX);
   }
 
