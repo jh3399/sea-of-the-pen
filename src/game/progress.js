@@ -188,6 +188,17 @@ export function resetStage() {
 }
 
 /**
+ * 개발자 전용 — 스테이지를 임의 인덱스로 곧장 지정한다 (`menu/screen.js` 의 숫자 키 단축키).
+ *
+ * `advanceStage()` 와 달리 한 칸씩만 가지 않고, 범위 안이면 뒤로도 간다 — 테스트 중인
+ * 스테이지를 몇 번이고 다시 열어야 하는 용도라 순방향 전용일 이유가 없다.
+ */
+export function jumpToStage(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= STAGES.length) return;
+  store()?.setItem(STAGE_KEY, String(index));
+}
+
+/**
  * 항해 전체 노선 — **지도가 읽는 데이터**다. 아직 못 가는 바다까지 들어 있다.
  *
  * ★ `STAGES` 와 나눠 둔 이유: STAGES 는 "지금 플레이할 수 있는 것"이고 ROUTE 는

@@ -52,8 +52,15 @@ export const DEVICE_TUNING = {
    *
    * 이 값을 건드리면 종단 속도가 움직이고, 종단 속도는 §6 화산대 통과 타이밍(가설 C)의
    * 전제다. 바꾼 뒤에는 반드시 `npm run bench` 로 젖은 나무배 케이스를 다시 봐야 한다.
+   *
+   * 800 → 550: 사람이 몰아 보고 "노가 배를 너무 세게 민다"는 판정이 나왔다. **여기가 한 번
+   * 젓기의 체감을 정하는 노브다** — 정지에서 한 번 저었을 때 붙는 속도가 1.17 → 0.81 m/s 로
+   * 31% 줄었다. 반면 종단은 거의 안 따라 내려온다 (같은 항력에서 4.66 → 4.44). falloff 곡선이
+   * 종단을 `oarMaxSpeed` 에 묶어 두기 때문이다 — 즉 이 값은 **가속의 크기**를 정하고 최고
+   * 속도는 `oarMaxSpeed` 가 정한다. "느려졌다"가 아니라 "한 번에 덜 튀어나간다"가 된다.
+   * (같은 커밋에서 들어간 `HYDRO_TUNING.dragLowSpeed` 까지 합치면 종단 4.24 m/s.)
    */
-  oarStrokePeak: 800,
+  oarStrokePeak: 550,
   /**
    * 노깃의 스트로크 속도 (m/s). 배가 이만큼 빨라지면 노깃이 더 이상 물을 뒤로 밀지 못해
    * 추력이 0 이 된다 — 프로펠러의 전진비 한계와 같은 이야기다.
@@ -352,7 +359,8 @@ export function strokeSwing(control, side) {
 export function estimateOarTerminal(params) {
   if (!params?.area || !(params.drag?.x > 0)) return 0;
   const supply = (v) => DEVICE_TUNING.oarStrokePeak * params.area * oarFalloff(v);
-  const demand = (v) => params.drag.x * v * v;
+  // 저속 항(HYDRO_TUNING.dragLowSpeed)까지 넣어야 실측과 맞는다 — hydroForcesLocal 과 같은 식.
+  const demand = (v) => params.drag.x * (v + HYDRO_TUNING.dragLowSpeed) * v;
   let lo = 0;
   let hi = DEVICE_TUNING.oarMaxSpeed;
   for (let i = 0; i < 40; i++) {

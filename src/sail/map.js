@@ -38,7 +38,7 @@ export const SEA_BOUNDS = { minX: -45, maxX: 178, minY: -75, maxY: 75, thickness
  *
  * ⚠ **처음엔 골이 53 m 였는데 너무 가까웠다** — 출발하자마자 도착 표시가 화면에 들어와서
  *   "익히는 구간"이 아니라 "짧은 심부름"이 됐다. 95 m 로 늘렸다. 노만 단 배의 종단이
- *   4.66 m/s 라 직선으로도 20초가 걸리고, 돌면서 가느라 실제로는 그 두 배쯤 든다.
+ *   4.24 m/s 라 직선으로도 22초가 걸리고, 돌면서 가느라 실제로는 그 두 배쯤 든다.
  *   더 늘리는 것은 권하지 않는다 — 여기서부터는 배우는 시간이 아니라 그냥 젓는 시간이다.
  */
 export const PRACTICE_BOUNDS = { minX: -35, maxX: 118, minY: -45, maxY: 85, thickness: 12 };
@@ -375,10 +375,12 @@ export const VOLCANO_MAP = {
  *   옆으로 서 있다 — 이방성 항력이 횡:종 약 3.9배라 **좌우 회피는 싸고**(저항 작은 축),
  *   보스에게 다가가려면 느린 90° 선회를 해야 한다. 새 물리 코드 0줄로 나오는 트레이드오프다.
  *
- * ★ 몸통(핵)은 **깎이는 선체**이고 팔은 **안 깎이는 암초**다. 그래서 대포는 핵에만 통하고,
- *   팔은 넘을 수 없는 벽으로 남아 270° 노치가 유일한 접근로가 된다. 팔은 전부 사다리꼴
- *   (볼록 확정)이다 — planck 이 오목 폴리곤의 볼록껍질을 조용히 취하는 탓에, 곡선으로 그리면
- *   보이는 가장자리와 멈추는 자리가 어긋난다 (`physics/obstacle.js:36`).
+ * ★ **핵도 팔도 폴리곤이 절대 안 깎인다** (사람 판정, "보스 형태 전체가 안 부서지게" —
+ *   `game/boss.js#applyDamage`). 대포는 형태가 아니라 숫자(체력)만 깎으므로, 팔은
+ *   `createHullBody` 이면서도 영원히 처음 그 모양 그대로다. 그래서 270° 노치가 **유일한
+ *   접근로**다 — 끊어서 길을 내는 것은 답이 아니다. 팔은 자기 탄막의 17.5%(2페이즈)·
+ *   48.4%(3페이즈)를 막아 주는 엄폐물로 끝까지 남고, 대신 어디를 맞히든(핵이든 팔이든)
+ *   같은 체력 풀이 줄어든다 — 취약 창 게이트 없이 항상 유효타다.
  */
 export const BULGASARI_BOUNDS = { minX: -28, maxX: 28, minY: -14, maxY: 26, thickness: 9 };
 
@@ -408,8 +410,16 @@ const CORE_POINTS = (() => {
 })();
 
 /**
- * 팔 하나 → 사다리꼴 두 마디. 안쪽 마디는 핵에 겹치게 시작해 이음매가 안 보이게 한다.
- * 각 마디는 정점 4개짜리 **볼록** 폴리곤이라 planck 의 볼록껍질이 형상을 바꾸지 않는다.
+ * 팔 하나 → 육각형 하나. 뿌리(5.2)에서 시작해 중간에서 가장 굵고(2.4) 끝으로 갈수록 여윈다.
+ *
+ * ★ 원래는 사다리꼴 두 마디의 암초였다가, 팔이 대포로 끊어지던 시절(2026-08-10 세 번째
+ *   라운드)에 마디를 나누면 이음매가 공짜 절단선이 되는 문제 때문에 한 몸(육각형)으로
+ *   합쳤다. 이후 팔이 다시 절대 안 깎이게 됐지만(형태 전체가 무형태), 굳이 두 마디로
+ *   되돌릴 이유는 없다 — 두 마디의 합집합과 **꼭짓점까지 같은** 형상이라 콜라이더는 어느
+ *   쪽이든 동일하다.
+ *
+ * 볼록으로 두는 것은 이제 판정이 아니라 습관이다 — `createHullBody` 는 `decomposeHull` 을
+ * 거치므로 오목이어도 볼록껍질로 부풀지 않는다 (`createObstacle` 과 다른 점이다).
  */
 function bossArm(deg, reach = 19.5) {
   const t = (deg * Math.PI) / 180;
@@ -421,16 +431,14 @@ function bossArm(deg, reach = 19.5) {
     CORE_AT.x + c * r + px * w,
     CORE_AT.y + (s * r + py * w) * SQUASH,
   ];
-  const seg = (r0, w0, r1, w1) => ({
-    shape: 'poly',
-    x: 0,
-    y: 0,
-    points: [pt(r0, w0), pt(r1, w1), pt(r1, -w1), pt(r0, -w0)],
-    material: 'rock',
-    boss: 'arm',
-  });
   const mid = 5.2 + (reach - 5.2) * 0.45;
-  return [seg(5.2, 2.2, mid, 2.4), seg(mid, 2.4, reach, 0.8)];
+  return {
+    // 월드 좌표다 (핵의 `points` 는 선체 로컬). `createBoss` 가 무게중심으로 옮겨 준다.
+    points: [pt(5.2, 2.2), pt(mid, 2.4), pt(reach, 0.8), pt(reach, -0.8), pt(mid, -2.4), pt(5.2, -2.2)],
+    // 팔은 살이 아니라 힘줄이다 (hull/params.js#sinew) — maxCarveRadius 만 0.6→0.5 로 더
+    // 질기다. 핵은 그대로 살을 쓴다.
+    material: 'sinew',
+  };
 }
 
 export const BULGASARI_MAP = {
@@ -481,7 +489,7 @@ export const BULGASARI_MAP = {
      * 향해 열려 있다는 것이 이 형상의 뜻이다.
      */
     arms: [[18, 19.5], [90, 19.5], [162, 19.5], [218, 12.5], [322, 12.5]]
-      .flatMap(([deg, reach]) => bossArm(deg, reach)),
+      .map(([deg, reach]) => bossArm(deg, reach)),
     /** 장식(콜라이더 없음)이 물에 잠겨 보이기 시작하는 반경 (m). */
     submergeFrom: 15,
   },
@@ -552,26 +560,33 @@ export function boundaryWalls(b) {
  *   (`stars: true` → `sail/render.js` 가 점을 얹는다) — 별의섬에서 여기까지 이어진 것이다.
  *
  * ★ **빨려 든다.** `mode:'radial'` 이 방향을, `disc` 가 세기를 정한다 (`field/field.js`):
- *   반경 300 m 밖에서는 0 이라 처음 80 m 는 평소처럼 항해하고, 그 원에 들어서는 순간부터
- *   끌리기 시작해 가까울수록 세진다. 출항 지점에서 골까지 380 m 이므로 **끌리기 시작하는
- *   자리에서 남은 거리가 정확히 300 m** 다.
- *   흡입 9 m/s 는 노 종단(4.66)보다 확실히 크다 — **저항은 되지만 못 이긴다.** 뒤로 저으면
+ *   반경 150 m 밖에서는 0 이라 처음 40 m 는 평소처럼 항해하고, 그 원에 들어서는 순간부터
+ *   끌리기 시작해 가까울수록 세진다. 출항 지점에서 골까지 190 m 이므로 **끌리기 시작하는
+ *   자리에서 남은 거리가 정확히 150 m** 다.
+ *   흡입 9 m/s 는 노 종단(4.24)보다 확실히 크다 — **저항은 되지만 못 이긴다.** 뒤로 저으면
  *   느려지긴 하는데 결국 끌려가고, 그 발버둥이 무력감을 만든다.
  *
- * ⚠ 흡입 구간(x > 80)의 암초는 항로에서 멀리 둔다. 9 m/s 로 끌려가다 바위에 박는 것은
+ * ⚠ 흡입 구간(x > 40)의 암초는 항로에서 멀리 둔다. 9 m/s 로 끌려가다 바위에 박는 것은
  *   플레이어가 피할 방법이 없는 사고이고, 피할 수 없는 것으로 벌하면 안 된다.
+ *
+ * ★ **2026-08-10, 사람 판정으로 전체 길이를 절반으로 줄였다** (380 m → 190 m, 반경도
+ *   300 → 150 m). 원래 값이 "끌려간다"는 취지에 비해 지루하게 길다는 판정이었다 — 배·
+ *   암초·필드 세기는 그대로 두고 좌표만 균일하게 ×0.5 했다 (전 구간 상대 위치가 그대로
+ *   보존된다). 흡입 세기(9 m/s)와 노 종단은 안 건드렸으므로 "발버둥은 쳐지되 못 이긴다"는
+ *   그대로고, 걸리는 시간만 짧아졌다.
  */
-export const MAW_BOUNDS = { minX: -40, maxX: 420, minY: -75, maxY: 75, thickness: 12 };
+export const MAW_BOUNDS = { minX: -40, maxX: 230, minY: -75, maxY: 75, thickness: 12 };
 
 export const MAW_MAP = {
   id: 'maw',
   number: 4,
   label: '삼키는 바다',
   bgm: 'tension',
-  goal: { x: 380, y: 0, radius: 8, label: '불가사리' },
+  goal: { x: 190, y: 0, radius: 8, label: '불가사리' },
   // 흡입이 시간을 거의 정하므로 별점은 사실상 고정된다. 헤매도 3별이 되게 넉넉히 둔다 —
-  // 마지막 항해에서 별 하나를 덜 주는 것은 아무것도 가르치지 않는다.
-  scoring: { threeStarMaxSeconds: 110, twoStarMaxSeconds: 160 },
+  // 마지막 항해에서 별 하나를 덜 주는 것은 아무것도 가르치지 않는다. 길이를 절반으로
+  // 줄이면서 시간 상한도 절반으로 맞췄다.
+  scoring: { threeStarMaxSeconds: 55, twoStarMaxSeconds: 80 },
   bounds: MAW_BOUNDS,
   fields: {
     current: [
@@ -592,11 +607,11 @@ export const MAW_MAP = {
        *   양수면 밖으로 뻗는다). 보스전의 흡입과 같은 프리미티브를 쓴다.
        */
       {
-        shape: 'disc', x: 380, y: 0, radius: 300, falloff: 0.25,
-        mode: 'radial', at: { x: 380, y: 0 }, strength: -9,
+        shape: 'disc', x: 190, y: 0, radius: 150, falloff: 0.25,
+        mode: 'radial', at: { x: 190, y: 0 }, strength: -9,
       },
     ],
-    darkness: [{ shape: 'disc', x: 380, y: 0, radius: 300, falloff: 0.85, value: 0.5 }],
+    darkness: [{ shape: 'disc', x: 190, y: 0, radius: 150, falloff: 0.85, value: 0.5 }],
   },
   weather: { rain: 0, gloom: 0.3 },
   surface: {
@@ -609,21 +624,21 @@ export const MAW_MAP = {
   },
   damage: false,
   obstacles: [
-    // 앞 구간(x < 80) — 첫 바다와 같은 성긴 배치. 지나며 보이지만 막지는 않는다.
-    { shape: 'circle', x: 22, y: 30, radius: 5 },
-    { shape: 'circle', x: 34, y: -26, radius: 4.5 },
-    { shape: 'circle', x: 64, y: 22, radius: 4 },
-    { shape: 'circle', x: 70, y: -34, radius: 5 },
-    { shape: 'circle', x: -16, y: 18, radius: 4 },
-    { shape: 'circle', x: 6, y: -46, radius: 4.5 },
+    // 앞 구간(x < 40) — 첫 바다와 같은 성긴 배치. 지나며 보이지만 막지는 않는다.
+    { shape: 'circle', x: 11, y: 30, radius: 5 },
+    { shape: 'circle', x: 17, y: -26, radius: 4.5 },
+    { shape: 'circle', x: 32, y: 22, radius: 4 },
+    { shape: 'circle', x: 35, y: -34, radius: 5 },
+    { shape: 'circle', x: -8, y: 18, radius: 4 },
+    { shape: 'circle', x: 3, y: -46, radius: 4.5 },
     // 흡입 구간 — 항로(y≈0)에서 30 m 이상 떨어뜨린다. 끌려가며 박을 수 없는 거리다.
-    { shape: 'circle', x: 120, y: 44, radius: 5 },
-    { shape: 'circle', x: 150, y: -48, radius: 4.5 },
-    { shape: 'circle', x: 196, y: 52, radius: 4 },
-    { shape: 'circle', x: 232, y: -44, radius: 5 },
-    { shape: 'circle', x: 274, y: 46, radius: 4.5 },
-    { shape: 'circle', x: 310, y: -50, radius: 4 },
-    { shape: 'circle', x: 344, y: 48, radius: 4.5 },
+    { shape: 'circle', x: 60, y: 44, radius: 5 },
+    { shape: 'circle', x: 75, y: -48, radius: 4.5 },
+    { shape: 'circle', x: 98, y: 52, radius: 4 },
+    { shape: 'circle', x: 116, y: -44, radius: 5 },
+    { shape: 'circle', x: 137, y: 46, radius: 4.5 },
+    { shape: 'circle', x: 155, y: -50, radius: 4 },
+    { shape: 'circle', x: 172, y: 48, radius: 4.5 },
   ].map((o) => ({ ...o, material: 'rock', stars: true })),
 };
 

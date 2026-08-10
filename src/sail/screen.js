@@ -357,9 +357,9 @@ class SailScreen {
   // ------------------------------------------------------------ 보스
 
   /**
-   * 보스를 띄운다. 몸통(핵)은 **깎이는 선체**라 플레이어 대포가 이미 있는 경로로 그대로
-   * 파손시키고, 팔은 `createObstacle` 이 만드는 안 깎이는 암초다 — 보스 전용 물리도
-   * 전용 파손도 없다 (`game/targets.js` 의 원칙).
+   * 보스를 띄운다. 몸통(핵)도 팔도 플레이어 대포가 이미 있는 경로(`consumeImpacts` → `carveBoss`)
+   * 로 맞지만, 폴리곤은 절대 안 깎인다 — 보스 전용 물리는 없되 전용 피해 처리는 있다.
+   * 강체는 전부 `createBoss` 가 만든다 (팔이 암초였을 때는 여기서 `placeObstacle` 을 돌렸다).
    */
   spawnBoss(spec) {
     this.boss = createBoss(this.world, spec, this.fields, {
@@ -370,7 +370,6 @@ class SailScreen {
       //   겹쳐 쌓여 화이트노이즈가 된다.
       onBeam: (state) => this.cue(state.phase === 'telegraph' ? 'charge' : 'hit'),
     });
-    for (const arm of spec.arms) this.placeObstacle(arm);
   }
 
   /** 보스 시계를 전진시키고 이번 스텝의 포탄을 낳는다. `onPreStep` 안이라 강체 생성이 안전하다. */
@@ -429,7 +428,12 @@ class SailScreen {
     return body;
   }
 
-  /** 흡입이 켜져 있으면 입 가까이 온 난파선을 삼킨다 — 판이 영영 어지러워지지 않게 하는 청소부. */
+  /**
+   * 흡입이 켜져 있으면 입 가까이 온 난파선을 삼킨다 — 판이 영영 어지러워지지 않게 하는 청소부.
+   *
+   * 팔은 더 이상 끊어지지 않으므로(보스 형태 전체가 무형태) 떠다니는 살점이 생기지 않는다 —
+   * 예전에는 이 청소부가 그 살점도 함께 치웠지만, 이제 치울 대상 자체가 없다.
+   */
   swallowWrecks() {
     const boss = this.boss;
     if (!boss?.sucking) return;
@@ -987,27 +991,35 @@ class SailScreen {
       } else if (this.targets.has(impact.body)) this.carveMember(this.targets, impact.body, impact.at, impact.radius);
       else if (this.pirates.has(impact.body)) this.carvePirate(impact.body, impact.at, impact.radius);
       else if (this.wrecks.has(impact.body)) this.carveMember(this.wrecks, impact.body, impact.at, impact.radius);
-      else if (this.boss?.parts.has(impact.body)) this.carveBoss(impact.body, impact.at, impact.radius);
+      else if (this.boss?.parts.has(impact.body) || this.boss?.armParts.has(impact.body)) {
+        this.carveBoss(impact.body, impact.at, impact.radius);
+      }
     }
   }
 
   /**
-   * 보스 피격 — **깎는 것은 모두와 같은 `carveMember`** 이고, 다른 것은 그 결과를 보스에게
-   * 알려 페이즈를 옮기는 한 줄뿐이다.
+   * 보스 피격 — 핵이든 팔이든 **폴리곤은 절대 깎지 않는다** (사람 판정, "보스 형태 전체가
+   * 안 부서지게"). `carveMember`/`applyImpact` 를 안 부르므로 `boss.parts`·`boss.armParts`
+   * 는 영원히 창끝에 만든 강체 그대로다 — 핵과 팔이 같은 함수를 타는 것 자체가 "형태 전체가
+   * 같은 취급을 받는다"는 규칙을 코드로 말한다.
    *
-   * ★ 입이 닫혀 있으면 **아예 깎지 않는다.** 몸만 깎고 진행을 막으면 "때렸는데 아무 일도
-   *   없다"가 되어 플레이어가 무엇이 유효타인지 배울 수 없다. 흡입 직후의 취약 창이 유일한
-   *   진행 수단이라는 규칙이 화면에서도 그대로 읽혀야 한다.
+   * 대신 이미 재질 캡(`hull/params.js` 의 `maxCarveRadius` — 핵은 `flesh`, 팔은 `sinew`)으로
+   * 크기가 정해져 들어오는 `radius` 를 근사 피해 면적(`π·radius²`)으로 바꿔
+   * `boss.applyDamage()` 에 넘긴다 — 실제 클리퍼 차감을 부르지 않고도, 벤치가 검증하는
+   * "한 발이 뜯는 면적은 재질 캡에서 `π·maxCarveRadius²`"와 같은 공식을 그대로 재사용한다.
+   *
+   * ★ **취약 창 게이트가 없다.** 입 상태와 무관하게 맞으면 항상 유효타다 — `boss.open` 은
+   *   이제 연출(입 벌리는 애니메이션)일 뿐이다.
    */
   carveBoss(body, at, radius) {
     const boss = this.boss;
-    if (!boss.open || boss.fallen) {
-      // 튕겨 냈다는 표시만 남긴다 — 무반응이면 버그처럼 보인다.
+    if (boss.fallen) {
+      // 쓰러진 뒤에도 맞긴 맞았다는 표시는 남긴다 — 무반응이면 버그처럼 보인다.
       this.addSpark(at, 'glance', Math.max(radius, CANNON_TUNING.radius));
       return false;
     }
-    if (!this.carveMember(boss.parts, body, at, radius)) return false;
-    boss.takeHit();
+    if (!boss.applyDamage((Math.PI * radius * radius) / boss.launchArea)) return false;
+    this.addSpark(at, 'hit', radius);
     this.cue('hit');
     return true;
   }
@@ -1074,11 +1086,7 @@ class SailScreen {
     // 화면 밖 장애물을 거르는 것은 `drawObstacle` 안에서 한다 — 암초밭이 해역 전체를 덮어
     // 60개가 넘고, 그중 화면에 걸치는 것은 늘 몇 개뿐이다.
     for (const body of this.obstacles) {
-      const spec = body.getUserData()?.obstacle?.spec;
-      // 보스의 팔은 암초가 아니다 — 회색 바위로 칠하고 톱니를 내면 안 된다. `bossart.js` 가
-      // **createObstacle 에 넘긴 바로 그 점 목록**을 그린다.
-      if (spec?.boss) continue;
-      drawObstacle(ctx, view, spec, { shoal: surface?.shoal });
+      drawObstacle(ctx, view, body.getUserData()?.obstacle?.spec, { shoal: surface?.shoal });
     }
     // 빔 — 수면 위, 배 아래. 경고선과 발사선이 같은 [from,to] 를 쓴다.
     if (this.boss) drawBeam(ctx, view, this.boss, { sec: this.simTime });
@@ -1160,12 +1168,10 @@ class SailScreen {
   }
 
   /**
-   * 보스의 잔여 몸.
+   * 보스의 잔여 체력.
    *
-   * ★ **HP 가 아니라 남은 선체 면적이다.** 대포가 실제로 깎아 낸 폴리곤 면적을 그대로
-   *   읽으므로 새 상태가 하나도 없고, 화면에 보이는 형상 손실과 항상 같은 값을 말한다.
-   *   §7.1 이 "배는 닳는 것이지 체력이 줄지 않는다"고 쓴 것과 어긋나지 않는 이유다 —
-   *   닳는 것을 세는 계기판이지 별도 자원이 아니다.
+   * ★ 핵의 폴리곤은 안 깎이므로 이제 형상에서 읽을 값이 아니다 — `game/boss.js#applyDamage`
+   *   가 직접 차감하는 독립 자원을 그대로 읽는다.
    */
   updateBossHud() {
     const el = this.hud.bossHp;
@@ -1173,7 +1179,6 @@ class SailScreen {
     if (!this.boss) { el.classList.add('hidden'); return; }
     el.classList.remove('hidden');
     const boss = this.boss;
-    boss.measure();
     // 쓰러지는 문턱(`fallAt`)을 0 으로 보이게 다시 스케일한다 — 바가 62% 에서 멈추면
     // 플레이어는 "아직 남았는데 왜 끝났지"로 읽는다. 눈금은 **싸움의 진행도**여야 한다.
     const span = 1 - BOSS_TUNING.fallAt;

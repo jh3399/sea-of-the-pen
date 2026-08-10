@@ -6,7 +6,7 @@
 //   파고들어야 하는 것(`render.js`), 도착 고리를 판정 반경 그대로 그려야 하는 것과 같은
 //   불변식이다. 그래서 "반쯤 잠겼다"는 **수면선이 아니라 콜라이더 유무**로 나눈다:
 //     pass 'deep'  — 콜라이더 없는 장식 덩어리. 그 위에 수몰 베일을 덮는다.
-//     pass 'solid' — `createObstacle`·`createHullBody` 에 넘긴 **바로 그 폴리곤**.
+//     pass 'solid' — `createHullBody` 에 넘긴 **바로 그 폴리곤** (팔도 핵도 선체다).
 //
 // ★ 팔레트는 분홍이되 **지도 노드의 `abyss` 보라 계열**에 못 박혀 있다
 //   (`scene/voyagemap.js`: abyss #241640 · abyssRim #6a3fb0 · eye #f2ccff).
@@ -92,29 +92,28 @@ function fillFlesh(ctx, pts, { tint = 0 } = {}) {
  *
  * @param {{sec:number, pass:'deep'|'solid', surface:object}} options
  *   `pass:'deep'`  — 콜라이더 **없는** 장식 하반신 + 수몰 베일
- *   `pass:'solid'` — 팔(장애물 스펙)과 핵(선체 조각). 판정과 1:1 이다.
+ *   `pass:'solid'` — 팔과 핵의 살아 있는 선체 조각들. 판정과 1:1 이다.
  */
 export function drawBoss(ctx, view, boss, { sec = 0, pass = 'solid', surface = null } = {}) {
   if (!boss) return;
   if (pass === 'deep') return drawSubmerged(ctx, boss, sec, surface);
 
-  // ── 팔 ── `createObstacle` 에 넘긴 바로 그 점 목록. 다른 형상을 그리면 보이는 가장자리와
-  //          멈추는 자리가 갈라진다.
-  for (const arm of boss.arms ?? []) fillFlesh(ctx, arm.points);
-
-  // ── 핵 ── 살아 있는 조각을 각자의 강체 변환으로 그린다. 깎여 나간 살점은 흘러가므로
-  //          "뜯겼다"가 형상으로 보인다 (§7 파손 지오메트리가 그대로 진행도다).
-  for (const body of boss.parts) {
-    const hull = body.getUserData()?.hull;
-    if (!hull) continue;
-    const p = body.getPosition();
-    const a = body.getAngle();
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(a);
-    const pts = hull.outline.map((q) => [q.x, q.y]);
-    fillFlesh(ctx, pts);
-    ctx.restore();
+  // ── 팔과 핵 ── **완전히 같은 그리기다.** 팔이 암초였을 때는 스펙의 점 목록을 상수처럼
+  //   깔았지만, 이제 둘 다 선체 강체라 각자의 변환으로 그린다 — 폴리곤은 스폰된 그대로
+  //   고정이라(§"보스 형태 전체가 안 부서지게") 매 프레임 같은 모양이 나올 뿐이다.
+  //   순서는 팔이 먼저다 — 뿌리가 핵에 겹쳐 있어 핵이 위로 와야 입이 안 가린다.
+  for (const set of [boss.armParts, boss.parts]) {
+    for (const body of set ?? []) {
+      const hull = body.getUserData()?.hull;
+      if (!hull) continue;
+      const p = body.getPosition();
+      const a = body.getAngle();
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(a);
+      fillFlesh(ctx, hull.outline.map((q) => [q.x, q.y]));
+      ctx.restore();
+    }
   }
 
   drawMaw(ctx, view, boss, sec);
