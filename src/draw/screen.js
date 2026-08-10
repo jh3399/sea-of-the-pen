@@ -109,6 +109,7 @@ class DrawScreen {
     this.design = null; // strokeToHull() 결과 — 유효한 폐곡선이 확정되면 채워진다
     this.hull = { items: [] }; // items/attach.js 가 기대하는 최소 형태
     this.placing = null; // 배치 모드 중인 아이템 타입
+    this.suppressNextClick = false; // 스트로크 종료 직후의 합성 click 1회 무시 (아래 참고)
     /** 방향성 아이템의 고정 장착 방향 (선체 로컬 rad, 반시계 +). 휠로 45° 씩 돌린다. */
     this.attachAngle = 0;
     this.finished = false;
@@ -195,6 +196,11 @@ class DrawScreen {
 
   onStrokeComplete(pts) {
     this.liveRawPoints = null;
+    // pointerup 으로 스트로크를 끝맺는 바로 그 좌표에서 브라우저가 합성 click 을 하나 더
+    // 쏜다 (canvas 가 setPointerCapture 중이라 캡처 대상으로 재타깃된다). 그 click 을 그대로
+    // 두면, 시작점 근처에서 폐곡선을 닫아 선체가 확정되는 순간 바로 배치 모드(노)로 전환된
+    // 것까지 같은 이벤트 체인 안에서 겹쳐 노가 그 좌표에 즉시 붙어버린다.
+    this.suppressNextClick = true;
     if (this.finished) return;
     const result = strokeToHull(pts);
     if (result.ok) {
@@ -540,6 +546,10 @@ class DrawScreen {
   }
 
   handleCanvasClick(e) {
+    if (this.suppressNextClick) {
+      this.suppressNextClick = false;
+      return;
+    }
     const px = this.canvasPoint(e);
     // 키 배지는 배치 모드와 무관하게 항상 클릭 가능하다 — "확인"과 "결정"이 배치 흐름에
     // 얹혀 있으면 안 되기 때문이다. document 의 캡처 단계 리스너(bindTopControls)가 이
