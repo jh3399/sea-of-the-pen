@@ -38,6 +38,18 @@ const OAR_PIXEL = 0.09;
 const OAR_SWEEP = 0.6;
 const CANNON_BARREL_WIDTH = 0.18;
 
+/** 포탄 몸통 도트 스프라이트(6×6, 철 음영). 지름을 `shot.radius*2` 에 그대로 맞춰 그리므로
+ *  "콜라이더 크기 = 게임플레이 정보" 불변식이 매끈한 원일 때와 똑같이 유지된다. */
+const CANNONBALL_GRID = [
+  '.iiii.',
+  'iIIIIi',
+  'iIHIIi',
+  'iIIIIi',
+  'iIIIIi',
+  '.iiii.',
+];
+const CANNONBALL_PALETTE = { I: MATERIALS.iron.color, i: '#5f6771', H: '#cfd8df' };
+
 const WATER_BASE = '#1c4fae';
 const WATER_DEEP = 'rgba(6, 22, 64, 0.28)';
 const SHOAL_RING = 'rgba(214, 244, 240, 0.5)';
@@ -707,33 +719,51 @@ export function drawHullBody(ctx, hull, { target = false } = {}) {
   }
 }
 
-/** 포탄과 유계 섬광. 반경·잔상 길이는 월드 단위라 보이는 궤적과 실제 충돌 크기가 일치한다. */
+/** 원 둘레를 매끈한 arc 대신 정사각 도트로 찍는다 — `drawGoal` 의 고리 도트와 같은 기법. */
+function fillDotRing(ctx, x, y, radius, cell) {
+  const seg = Math.max(8, Math.round((TAU * radius) / (cell * 1.6)));
+  for (let i = 0; i < seg; i++) {
+    const a = (i / seg) * TAU;
+    ctx.fillRect(x + Math.cos(a) * radius - cell / 2, y + Math.sin(a) * radius - cell / 2, cell, cell);
+  }
+}
+
+/** 두 점을 매끈한 선 대신 점선 도트로 잇는다. */
+function fillDotDash(ctx, x0, y0, x1, y1, cell, step) {
+  const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / step));
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    ctx.fillRect(x0 + (x1 - x0) * t - cell / 2, y0 + (y1 - y0) * t - cell / 2, cell, cell);
+  }
+}
+
+/** 포탄과 피격 섬광 — 전부 도트 그래픽. 반경·잔상 길이는 월드 단위라 보이는 궤적과 실제
+ *  충돌 크기가 일치한다. */
 export function drawCombatEffects(ctx, view, projectiles, sparks, now, sparkLife = 0.35) {
   for (const body of projectiles) {
     const shot = body.getUserData()?.projectile;
     if (!shot) continue;
     const p = body.getPosition();
     const v = body.getLinearVelocity();
-    ctx.strokeStyle = 'rgba(255, 211, 92, 0.58)';
-    ctx.lineWidth = view.px(2);
-    ctx.beginPath();
-    ctx.moveTo(p.x - v.x * 0.05, p.y - v.y * 0.05);
-    ctx.lineTo(p.x, p.y);
-    ctx.stroke();
-    // ⚠ 포탄만은 **콜라이더 크기가 곧 게임플레이 정보**라 `view.px()` 로 부풀리면 안 된다
-    // (d3_handoff §⑧). 아슬아슬한 회피가 거짓말이 된다. 멀리서도 보이게 하는 일은 채워진
-    // 몸통이 아니라 **바깥쪽 후광**이 맡는다 — 후광은 반투명이라 경계가 콜라이더로 읽히지 않는다.
-    const glow = view.px(2.5);
-    if (glow > shot.radius) {
-      ctx.fillStyle = 'rgba(255, 211, 92, 0.35)';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, glow, 0, TAU);
-      ctx.fill();
-    }
+    const speed = Math.hypot(v.x, v.y) || 1;
+    const back = { x: -v.x / speed, y: -v.y / speed };
+
+    // 궤적 — 매끈한 선 대신 뒤로 갈수록 옅어지는 도트 4개.
+    const reach = speed * 0.05;
     ctx.fillStyle = '#ffd35c';
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, shot.radius, 0, TAU);
-    ctx.fill();
+    for (let i = 4; i >= 1; i--) {
+      const t = i / 4;
+      const cell = view.px(1.8) * (1 - t * 0.4);
+      ctx.globalAlpha = 0.5 * (1 - t);
+      ctx.fillRect(p.x + back.x * reach * t - cell / 2, p.y + back.y * reach * t - cell / 2, cell, cell);
+    }
+    ctx.globalAlpha = 1;
+
+    // ⚠ 포탄만은 **콜라이더 크기가 곧 게임플레이 정보**라 부풀리면 안 된다 (d3_handoff §⑧).
+    // 도트 스프라이트도 지름을 `shot.radius*2` 에 그대로 맞춘다 — 아슬아슬한 회피가
+    // 거짓말이 되지 않는다.
+    const cell = (shot.radius * 2) / CANNONBALL_GRID[0].length;
+    drawPixelGrid(ctx, CANNONBALL_GRID, CANNONBALL_PALETTE, p.x - shot.radius, p.y - shot.radius, cell);
   }
 
   for (const spark of sparks) {
@@ -741,25 +771,20 @@ export function drawCombatEffects(ctx, view, projectiles, sparks, now, sparkLife
     if (age < 0 || age > 1) continue;
     const fade = 1 - age;
     const glance = spark.kind === 'glance';
+    const cell = Math.max(view.px(2.2), 0.06);
     ctx.globalAlpha = fade;
-    ctx.strokeStyle = glance ? '#b9f2ff' : '#ffd35c';
-    ctx.lineWidth = view.px(1 + 3 * fade);
-    ctx.beginPath();
+    ctx.fillStyle = glance ? '#b9f2ff' : '#ffd35c';
     if (glance) {
       const r = 0.35 + age * 1.1;
-      ctx.moveTo(spark.x - r, spark.y - r * 0.35);
-      ctx.lineTo(spark.x + r, spark.y + r * 0.35);
-      ctx.moveTo(spark.x - r * 0.35, spark.y + r);
-      ctx.lineTo(spark.x + r * 0.35, spark.y - r);
+      fillDotDash(ctx, spark.x - r, spark.y - r * 0.35, spark.x + r, spark.y + r * 0.35, cell, cell * 1.4);
+      fillDotDash(ctx, spark.x - r * 0.35, spark.y + r, spark.x + r * 0.35, spark.y - r, cell, cell * 1.4);
     } else {
-      ctx.arc(spark.x, spark.y, 0.45 + age * 1.5, 0, TAU);
+      fillDotRing(ctx, spark.x, spark.y, 0.45 + age * 1.5, cell);
     }
-    ctx.stroke();
     ctx.globalAlpha = fade * fade;
     ctx.fillStyle = glance ? '#effcff' : '#fff6d8';
-    ctx.beginPath();
-    ctx.arc(spark.x, spark.y, Math.max(spark.radius * 1.6, view.px(2)), 0, TAU);
-    ctx.fill();
+    const flash = Math.max(spark.radius * 1.6, view.px(2));
+    ctx.fillRect(spark.x - flash / 2, spark.y - flash / 2, flash, flash);
     ctx.globalAlpha = 1;
   }
 }
