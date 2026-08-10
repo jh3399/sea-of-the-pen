@@ -1,14 +1,21 @@
 // 불가사리 — 4장의 보스. 상태 기계 하나이고, 렌더·DOM·planck 을 모른다.
 //
-// ★ **보스 전용 물리도 전용 파손도 없다.** 몸통은 `game/pirates.js` 의 해적선과 같은
-//   `createHullBody` 선체라, 플레이어의 대포가 이미 있는 `spawnProjectile → contact.js →
-//   applyImpact` 한 경로로 그대로 깎는다 (`game/targets.js` 머리말의 원칙 —
-//   "표적 전용 HP나 피탄 분기는 없고 role/entityId 만 게임 계층의 표식이다").
+// ★ **보스는 핵도 팔도 폴리곤이 절대 안 깎인다 — 형태 전체가 무형태 진행 지표다.**
+//   몸통은 `game/pirates.js` 의 해적선과 같은 `createHullBody` 선체이고 팔도 한때(2026-08-10
+//   세 번째 라운드) 대포로 실제로 끊어 낼 수 있는 선체였지만, 이후 사람 판정("보스 형태
+//   전체가 안 부서지게")으로 팔도 핵과 같은 취급을 받는다. 그래서 HP 는 `측정`(폴리곤
+//   면적)이 아니라 `applyDamage` 한 문으로만 깎이는 **독립 자원**이다 — §7.1 "배는 닳는
+//   것이지 체력이 줄지 않는다"의 예외를 보스 하나에 명시적으로 둔 것이다(형태를 지킬
+//   방법이 그것뿐이라서다).
 //
-// ★ **그래서 HP 가 별도 자원이 아니다.** 남은 선체 면적이 곧 HP 다 —
-//   `Σ(살아남은 조각 area) / launchArea`. 화면의 바는 새 수치가 아니라 **깎인 정도를 읽어
-//   주는 계기판**이고, 페이즈 경계도 같은 값에서 나온다. §7.1 이 "배는 닳는 것이지 체력이
-//   줄지 않는다"고 쓴 것과 어긋나지 않는 이유가 이것이다: 닳는 것을 세는 것뿐이다.
+// ★ **취약 창(open) 게이트는 없다.** 예전에는 흡입 뒤 입이 열린 몇 초에만 핵이 맞았다 —
+//   지금은 입 상태와 무관하게 핵·팔 어디에 맞아도 **항상** `applyDamage` 이 들어간다.
+//   `open`/`sucking` 은 이제 순수 연출(입을 벌리는 애니메이션·흡입 필드)일 뿐 피해 판정에는
+//   안 쓰인다.
+//
+// ★ **팔 피해도 핵과 같은 풀에 합산된다.** 팔도 핵과 똑같이 폴리곤을 안 깎으므로, 재질 캡이
+//   정하는 근사 면적(`π·radius²`)을 그대로 HP 에서 뺀다 — 핵·팔이 완전히 같은 공식과 같은
+//   문(`boss.applyDamage(delta)`)을 두드리므로 피해 로직이 두 벌로 안 갈라진다.
 //
 // ★ **조준 로직이 0줄이다.** 부채 방위·회전·빔 레인·난파선 각도가 전부 데이터이고,
 //   플레이어를 쫓는 판단은 어디에도 없다 (`game/turrets.js` 머리말과 같은 전제).
@@ -19,6 +26,7 @@
 //   들이받혀도 밀려나지 않는다.
 import { Vec2 } from 'planck';
 import { createHullBody } from '../physics/body.js';
+import { polygonMoments, translate } from '../geom/poly.js';
 import { createTurrets } from './turrets.js';
 
 /** 보스 몸통의 게임 계층 표식. `hull.role` 로 들어가 조각에도 그대로 상속된다. */
@@ -26,20 +34,20 @@ export const BOSS_ROLE = 'boss';
 
 export const BOSS_TUNING = {
   /**
-   * 쓰러지는 잔여 면적 비율. **0 이 아닌 것이 이름값이다** — 不可殺伊(죽일 수 없는 것)라
-   * 몸이 사라지지 않는다. 2할 채 안 되게 뜯겨도 싸움을 그만두고 늘어진다.
+   * 쓰러지는 잔여 체력 비율. **0 이 아닌 것이 이름값이다** — 不可殺伊(죽일 수 없는 것)라
+   * "몸"(연출상의 핵)이 사라지지 않는다. 4할 가까이 깎여야 싸움을 그만두고 늘어진다.
    *
-   * ★ 체력을 절반으로 낮춘 값이다 (0.62 → 0.81). 원래는 38%(1 − 0.62)를 깎아야 쓰러졌는데,
-   *   그 절반인 19%(1 − 0.81)만 깎으면 쓰러지도록 문턱을 올렸다 — 필요 피해량이 절반이 된다.
+   * ★ 두 번의 절반(0.62→0.81→0.905) 뒤 **4배로 되돌렸다** (필요 피해량 9.5% × 4 = 38%
+   *   → `fallAt` 0.905 → **0.62**). 공교롭게도 최초 기준값과 정확히 같다 — 절반을 두 번
+   *   낮춘 것을 한 번에 되돌렸을 뿐이다. 더 조절하려면 `BOSS_PHASES[0].until`·`[1].until`
+   *   도 같은 비율로 같이 움직여야 한다 (§`syncPhase` 의 불변식: `until0 > until1 > fallAt`).
    */
-  fallAt: 0.81,
+  fallAt: 0.62,
   /**
-   * 흡입이 끝난 뒤 입이 열려 있는 시간 (s). 이때만 핵에 포탄이 박힌다.
-   *
-   * ★ **이 값이 싸움의 길이를 정한다.** 재장전이 0.8s(`CANNON_TUNING.reload`)이니 창 하나에
-   *   최대 7발이고, 발당 1.33%(살의 파임 캡)라 창 하나가 약 9%다. 쓰러지는 문턱까지 19%면
-   *   **창 둘**, 주기 11s 이니 대략 22~30초로 줄었다 (`fallAt` 을 0.62 → 0.81 로 올려 체력을
-   *   절반으로 깎은 결과 — 원래는 38%·창 넷·45~60초였다). 늘리려면 `fallAt` 을 같이 낮춰야 한다.
+   * 흡입이 끝난 뒤 입이 열려 있는 시간 (s) — **연출 전용.** 취약 창 게이트를 없앤 뒤로는
+   * 피해 판정과 무관하다(핵은 입 상태와 무관하게 항상 맞는다). 입을 벌리는 애니메이션의
+   * 지속 시간일 뿐이라 싸움 길이를 더 이상 결정하지 않는다 — 그 역할은 이제 `fallAt` 과
+   * 플레이어의 명중률이 정한다.
    */
   openFor: 6.0,
   /** 흡입 지속 (s) 과 주기 (s). */
@@ -72,13 +80,13 @@ export const BOSS_TUNING = {
  *     그래서 이 탄막에서 배우는 것은 "맞지 마라"가 아니라 **"뱃전으로 받아라"** 이고,
  *     그게 이 게임의 조선(操船)이 방어라는 §7.4 와 같은 이야기다.
  *   철이 압도적으로 단단한 것은 그대로 둔다(§7.4 "함몰만, 관통 어려움"). 대가는 흘수
- *   3배 — 노 종단이 4.66 → 2.69 m/s 라 **흡입에서 훨씬 불리하다** (원칙 2).
+ *   3배 — 노 종단이 4.24 → 3.33 m/s 라 **흡입에서 불리하다** (원칙 2).
  * ⚠ 여기를 만지면 반드시 두 재질 × 두 자리를 다시 재라. 임계가 둘이라 한쪽만 보면 샌다.
  */
 export const BOSS_PHASES = [
   {
     name: '누워 있다',
-    until: 0.93,
+    until: 0.86,
     emitters: [
       { x: 0, y: 13, angle: -90, count: 5, spread: 72, period: 2.0, radius: 5.6, speed: 26, mass: 70, projectileRadius: 0.34, lifetime: 2.6 },
     ],
@@ -88,7 +96,7 @@ export const BOSS_PHASES = [
   },
   {
     name: '눈을 뜬다',
-    until: 0.86,
+    until: 0.72,
     emitters: [
       { x: 0, y: 13, angle: -90, count: 7, spread: 104, period: 1.7, radius: 5.6, speed: 28, mass: 70, projectileRadius: 0.34, lifetime: 2.6 },
       { x: 0, y: 13, angle: -90, count: 3, spread: 26, period: 2.3, phase: 0.8, spin: 22, radius: 5.6, speed: 34, mass: 70, projectileRadius: 0.28, lifetime: 2.4 },
@@ -118,6 +126,18 @@ export const BEAM_LANES = [-24, -12, 0, 12, 24];
 const WRECK_PLANK = [
   { x: -2.3, y: -0.7 }, { x: 2.3, y: -0.7 }, { x: 2.0, y: 0.7 }, { x: -2.0, y: 0.7 },
 ];
+
+/** 조각 무리에서 이 점에 가장 가까운 강체. 핵도 팔도 "원래 자리에 가장 가까운 것"이 뿌리다. */
+function nearestTo(parts, at) {
+  let best = Infinity;
+  let found = null;
+  for (const b of parts) {
+    const p = b.getPosition();
+    const d = Math.hypot(p.x - at.x, p.y - at.y);
+    if (d < best) { best = d; found = b; }
+  }
+  return found;
+}
 
 /** 다각형 넓이 (양수). `polygonMoments` 를 부르지 않고 면적만 필요할 때. */
 function ringArea(pts) {
@@ -160,19 +180,62 @@ export function createBoss(world, spec, fields, hooks = {}) {
 
   const launchArea = body.getUserData().hull.launchArea;
 
+  /**
+   * 팔 — 핵과 **완전히 같은 취급**을 받는 선체다. 폴리곤은 스폰된 그대로 영원히 고정이고
+   * (`pin()` 이 매 스텝 원래 자세로 되돌린다), 맞은 자국은 `sail/screen.js#carveBoss` 가
+   * `applyDamage()` 로 핵과 같은 체력 풀에만 남긴다 — 핵·팔이 같은 함수를 탄다. 형태가 안
+   * 바뀌므로 조각이 갈라질 일도
+   * 없어 팔마다 강체 하나씩만 있으면 된다 — 예전에는(2026-08-10 세 번째 라운드) 대포로
+   * 실제로 끊어 낼 수 있어 팔마다 조각 Set·"못 박을 뿌리 재선정"이 필요했지만, 형태가 절대
+   * 안 바뀌면 **스폰된 자세 자체가 영구히 고정된 뿌리**라 그 장치가 통째로 필요 없어졌다.
+   * 스펙의 점 목록은 월드 좌표라 여기서 무게중심 원점으로 옮긴다 (`computeHullParams` ·
+   * hydro 회전 클램프가 그걸 전제한다).
+   */
+  const armGroups = (spec.arms ?? []).map((armSpec, i) => {
+    const pts = armSpec.points.map(([x, y]) => ({ x, y }));
+    const m = polygonMoments(pts);
+    const entityId = `bulgasari:arm:${i}`;
+    const armBody = m ? createHullBody(
+      world,
+      {
+        outline: translate(pts, -m.cx, -m.cy),
+        holes: [],
+        items: [],
+        crew: null,
+        role: BOSS_ROLE,
+        entityId,
+      },
+      {
+        position: { x: m.cx, y: m.cy },
+        angle: 0,
+        material: armSpec.material ?? 'flesh',
+        extraMass: 0,
+        role: BOSS_ROLE,
+        entityId,
+      },
+    ) : null;
+    if (!armBody) throw new Error(`보스 팔 ${i} 의 형상을 만들 수 없습니다.`);
+    return { entityId, body: armBody, at: { x: m.cx, y: m.cy, angle: 0 } };
+  });
+
   const boss = {
     coreAt,
-    /** 팔의 장애물 스펙 — 렌더가 **판정에 넘긴 바로 그 점 목록**을 그리도록 그대로 들고 있는다. */
-    arms: spec.arms ?? [],
+    /** 팔 그룹 — 각각 `{entityId, body, at}`. 렌더·피격은 아래 `armParts` 를 쓴다. */
+    armGroups,
+    /** 팔 강체 전부. 화면이 그리기·피격 라우팅에 쓴다. 형태가 안 바뀌므로 팔당 하나뿐이다. */
+    armParts: new Set(armGroups.map((g) => g.body)),
     /** 콜라이더 없는 장식이 물에 잠기기 시작하는 반경 (m). */
     submergeFrom: spec.submergeFrom ?? 15,
     launchArea,
-    /** 살아 있는 몸통 조각들. 깎여 갈라지면 화면이 이 Set 을 갈아 끼운다. */
+    /** 핵 강체를 담은 Set. 폴리곤이 절대 안 바뀌므로 창끝에 만든 강체 하나로 영원히 고정이다. */
     parts: new Set([body]),
-    /** 잔여 면적 비율 0..1 — **이것이 HP 다.** */
+    /**
+     * 잔여 체력 비율 0..1. **더 이상 폴리곤 면적에서 재지 않는다** — 핵은 절대 안 깎이므로
+     * 잴 형상 자체가 없다. `applyDamage()` 가 직접 차감하는 독립 자원이다.
+     */
     health: 1,
     phaseIndex: 0,
-    /** 입이 열려 있는가. 흡입 직후에만 참이고, 이때만 핵에 피해가 들어간다. */
+    /** 입이 열려 있는가 — **연출 전용.** 흡입 직후에만 참이지만 피해 판정에는 안 쓰인다. */
     open: false,
     openUntil: 0,
     fallen: false,
@@ -200,34 +263,25 @@ export function createBoss(world, spec, fields, hooks = {}) {
       return BEAM_LANES[i] ?? 0;
     },
 
-    /** 지금 살아 있는 조각 면적의 합 / 출항 면적. */
-    measure() {
-      let area = 0;
-      for (const b of this.parts) area += b.getUserData()?.hull?.params?.area ?? 0;
-      this.health = launchArea > 0 ? Math.max(0, Math.min(1, area / launchArea)) : 0;
-      return this.health;
-    },
-
     /**
-     * 피해는 **여기 한 곳으로만** 들어온다. 지금은 플레이어 대포가 부르고, 다른 피해원이
-     * 생겨도(충각·특수 포탄) 이 문만 두드리면 된다.
+     * 피해는 **여기 한 곳으로만** 들어온다. 지금은 플레이어 대포가 부르고(핵·팔 둘 다),
+     * 다른 피해원이 생겨도(충각·특수 포탄) 이 문만 두드리면 된다.
      *
-     * 실제로 깎는 것은 호출자다 (`carveMember` → `applyImpact`) — 이 함수는 **결과를 읽고**
-     * 페이즈를 옮길 뿐이라 파손 로직이 두 벌이 되지 않는다.
-     * @returns {boolean} 이번 타격이 유효했는가 (입이 닫혀 있으면 false)
+     * `delta` 는 `launchArea` 대비 분수(0..1) — 핵이든 팔이든 재질 캡이 정하는 근사 면적
+     * (`π·radius²`)이다. 형태가 안 바뀌므로 실제 차감 면적이라는 게 없다 — 둘 다 이 근사뿐.
+     * 취약 창 게이트는 없다 — 맞으면(호출되면) 항상 유효타다.
+     * @returns {boolean} 실제로 피해가 들어갔는가 (이미 쓰러졌거나 delta 가 0/음수면 false)
      */
-    takeHit() {
-      if (this.fallen) return false;
-      // 입이 닫혀 있으면 몸은 이미 깎였어도 페이즈를 옮기지 않는다 — 취약 창이 유일한 진행 수단.
-      if (!this.open) return false;
-      this.measure();
+    applyDamage(delta) {
+      if (this.fallen || !(delta > 0)) return false;
+      this.health = Math.max(0, this.health - delta);
       this.syncPhase();
       if (this.health <= BOSS_TUNING.fallAt) this.fall();
       return true;
     },
 
     /**
-     * 잔여 면적이 다음 문턱을 넘었으면 페이즈를 옮긴다.
+     * 잔여 체력이 다음 문턱을 넘었으면 페이즈를 옮긴다.
      *
      * ⚠ 페이즈마다 `createTurrets` 를 **새로 만드는 것이 필수**다. 스케줄러는 발사 시각을
      *   `startedAt + phase + n × period` 로 세는데, 켜 두고 안 부르면 `while` 백스톱이 밀린
@@ -377,24 +431,30 @@ export function createBoss(world, spec, fields, hooks = {}) {
      * 매 스텝 제자리에 못 박는다 (`stepPirateMotion` 과 같은 수법).
      * 누워만 있으므로 경로조차 없다 — 위치가 시간의 함수가 아니라 상수다.
      *
-     * ⚠ **갈라져 나온 조각은 놓아준다.** 못 박는 것은 아직 핵을 품은(= 원래 자리에 가장 가까운)
-     *   조각 하나뿐이고, 뜯긴 살점은 흘러가야 "뜯겨 나갔다"로 읽힌다.
+     * 핵도 팔도 폴리곤이 절대 안 바뀌므로(그래서 조각이 갈라질 일도 없다) 스폰 자세를
+     * 매 스텝 그대로 되돌리는 것만으로 충분하다 — 충돌·흡입 항력이 밀어내도 다음 스텝에
+     * 원위치한다.
      */
     pin() {
-      if (this.parts.size === 0) return;
-      let anchor = null;
-      let best = Infinity;
-      for (const b of this.parts) {
-        const p = b.getPosition();
-        const d = Math.hypot(p.x - this.coreAt.x, p.y - this.coreAt.y);
-        if (d < best) { best = d; anchor = b; }
+      // ── 핵 ── `coreAt` 에 스냅한다. 입·흡입·도착 지점이 전부 그 상수를 보므로 핵은
+      //          반드시 거기 있어야 한다.
+      const core = nearestTo(this.parts, this.coreAt);
+      if (core) {
+        core.setPosition(new Vec2(this.coreAt.x, this.coreAt.y));
+        core.setAngle(0);
+        core.setLinearVelocity(new Vec2(0, 0));
+        core.setAngularVelocity(0);
       }
-      if (!anchor) return;
-      anchor.setPosition(new Vec2(this.coreAt.x, this.coreAt.y));
-      anchor.setAngle(0);
-      anchor.setLinearVelocity(new Vec2(0, 0));
-      anchor.setAngularVelocity(0);
-      this.anchor = anchor;
+      this.anchor = core;
+
+      // ── 팔 ── 스폰된 자세(`g.at`)로 매 스텝 되돌린다. 형태가 안 바뀌므로 무게중심이
+      //          옮겨갈 일도 없어 핵처럼 상수 하나로 스냅해도 안전하다.
+      for (const g of this.armGroups) {
+        g.body.setPosition(new Vec2(g.at.x, g.at.y));
+        g.body.setAngle(g.at.angle);
+        g.body.setLinearVelocity(new Vec2(0, 0));
+        g.body.setAngularVelocity(0);
+      }
     },
 
     fall() {
@@ -409,7 +469,6 @@ export function createBoss(world, spec, fields, hooks = {}) {
     },
   };
 
-  boss.measure();
   boss.enterPhase(0);
   return boss;
 }

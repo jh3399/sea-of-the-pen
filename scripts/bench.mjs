@@ -15,7 +15,7 @@ import {
 import { Settings, Box } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
-import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
+import { applyHydroToWorld, applyHydroDrag, terminalSpeed } from '../src/physics/hydro.js';
 import {
   applyDevices, DEVICE_TUNING, oarFalloff, strokeGate, STROKE_KEYMAP,
   deviceForcesLocal, createControl, cloneControl,
@@ -199,7 +199,8 @@ for (let i = 0; i < 3600; i++) {
   maxSpeed = Math.max(maxSpeed, speed);
   if (i % 600 === 599) speedTrace.push(speed);
 }
-const terminal = Math.sqrt(thrust / paramTable.sloop.p.drag.x);
+// 저항이 `drag·(v + v₀)·v` 라 종단은 그 이차방정식의 근이다 (v₀ = 0 이면 옛 sqrt(F/drag)).
+const terminal = terminalSpeed(paramTable.sloop.p.drag.x, thrust);
 console.log(`  10초 간격 속도: ${speedTrace.map((s) => s.toFixed(2)).join(' → ')} m/s`);
 console.log(`  이론 종단 속도: ${terminal.toFixed(2)} m/s · 평균 물리 스텝 ${(physicsMs / 3600).toFixed(3)} ms`);
 check('60초 항해가 종단 속도로 수렴 (발산 없음)',
@@ -2807,9 +2808,11 @@ check('암초 수가 1장보다 훨씬 적다 (가르치는 바다지 시험이 
   pm.obstacles.length * 3 < DEMO_MAP.obstacles.length,
   `연습 ${pm.obstacles.length}개 vs 1장 ${DEMO_MAP.obstacles.length}개`);
 
-// 별 기준은 넉넉해야 한다 — 노만 단 배의 종단이 4.66 m/s 다. 직선으로도 goalDist/4.66 초가
-// 드는데, 돌면서 가느라 실제로는 훨씬 더 든다. 3별 기준이 그 직선 시간의 몇 배인지를 본다.
-const straightSeconds = goalDist / 4.66;
+// 별 기준은 넉넉해야 한다 — 직선으로도 goalDist/종단 초가 드는데, 돌면서 가느라 실제로는
+// 훨씬 더 든다. 3별 기준이 그 직선 시간의 몇 배인지를 본다.
+// ⚠ 종단을 상수로 박으면 안 된다. 노 튜닝을 내릴 때마다 이 기준이 조용히 헐거워진다 —
+//   위에서 실제로 60초 몰아 잰 maxCad.speed 를 그대로 쓴다.
+const straightSeconds = goalDist / maxCad.speed;
 const slack = pm.scoring.threeStarMaxSeconds / straightSeconds;
 console.log(`  직선 최소 ${straightSeconds.toFixed(1)}초 · 3별 기준 ${pm.scoring.threeStarMaxSeconds}초 (${slack.toFixed(1)}배)`);
 check('★ 연습 해역의 3별 기준이 넉넉하다 (헤매도 3별 — 연습에서 1별은 배움이 아니라 벌이다)',
@@ -3183,7 +3186,7 @@ check('★ 출항 직후에는 안 빨린다 (좀 항해하다가 걸린다)',
 check('★ 안으로 갈수록 세진다 (걸리는 자리 < 가까운 자리)', catchPull < closePull,
   `−290 m ${catchPull.toFixed(2)} → −40 m ${closePull.toFixed(2)} m/s`);
 
-// ★ 저항은 되지만 못 이긴다 — 노 종단(4.66 m/s)보다 확실히 세야 한다. 같으면 제자리에
+// ★ 저항은 되지만 못 이긴다 — 노 종단보다 확실히 세야 한다. 같으면 제자리에
 //   멈춰 서서 "빨려 든다"가 사라지고, 훨씬 세면 발버둥 자체가 화면에 안 보인다.
 check('★ 흡입이 노 종단보다 세다 (발버둥은 쳐지되 못 이긴다)',
   closePull > maxCad.speed * 1.5 && closePull < maxCad.speed * 3,
@@ -3717,7 +3720,27 @@ const isConvex = (pts) => {
 const bossArms = BULGASARI_MAP.boss.arms;
 check('보스의 팔은 전부 볼록이라 planck 의 볼록껍질이 형상을 바꾸지 않는다',
   bossArms.length > 0 && bossArms.every((a) => isConvex(a.points) && a.points.length <= 12),
-  `${bossArms.length}마디 · 최대 정점 ${Math.max(...bossArms.map((a) => a.points.length))}`);
+  `${bossArms.length}팔 · 최대 정점 ${Math.max(...bossArms.map((a) => a.points.length))}`);
+
+// ★ 팔은 **한 몸**이어야 한다. 마디로 나눠 두면 이음매가 공짜 절단선이 되고(바깥 마디가 따로
+//   못 박혀 있어 안쪽을 끊어도 안 떨어진다), 어디를 끊는가라는 선택이 통째로 사라진다.
+check('★ 팔은 마디가 아니라 하나의 선체다 (이음매가 공짜 절단선이 되지 않는다)',
+  bossArms.length === 5 && bossArms.every((a) => a.material === 'sinew' && a.points.length === 6),
+  `${bossArms.length}개 · 재질 ${[...new Set(bossArms.map((a) => a.material))].join(',')}`);
+
+// ★ 팔도 핵처럼 폴리곤을 절대 안 깎게 된 뒤로(사람 판정, "보스 형태 전체가 안 부서지게")
+//   `maxCarveRadius` 는 더 이상 형상을 자르는 데 안 쓰인다 — 대신 `boss.applyDamage()` 의
+//   근사 피해 면적(`π·radius²`) 산식에서 "발당 최대 피해"만 정한다. 값 자체는 남겨 뒀다
+//   (재질 캡·인성으로 산정한다는 §5.2 원칙을 그대로 따르므로), 용도만 바뀌었다.
+check('★ 힘줄 캡은 이제 형상이 아니라 발당 피해 크기만 정한다 (0 보다 크고 유한하다)',
+  MATERIALS.sinew.maxCarveRadius > 0 && Number.isFinite(MATERIALS.sinew.maxCarveRadius)
+    && MATERIALS.sinew.impactThreshold === MATERIALS.flesh.impactThreshold,
+  `캡 ${MATERIALS.sinew.maxCarveRadius}m → 발당 최대 피해 ${(Math.PI * MATERIALS.sinew.maxCarveRadius ** 2).toFixed(2)} m²(launchArea 대비)`);
+
+// 힘줄에도 규칙표 줄이 없어야 한다 — 살의 자기 면역(§7 원칙 1)과 같은 이유다.
+check('★ 힘줄도 규칙표에 한 줄이 없다 (팔도 자기 빔에 안 녹아야 한다)',
+  RULES.every((r) => r.material !== 'sinew'),
+  `sinew 관련 규칙 ${RULES.filter((r) => r.material === 'sinew').length}줄`);
 
 // 접근로 — 270° 노치가 배가 지나갈 만큼 열려 있는가. 리터럴 3 m 가 아니라 **실제 슬루프의
 // 선폭**과 비교한다. 선체 튜닝이 바뀌면 이 회귀도 같이 따라와야 한다.
@@ -3860,29 +3883,31 @@ check('포탄은 흡입에 안 끌린다 (hull 키가 없어 필드·항력을 �
 
 /**
  * 보스를 세우고 아래에서 조준 사격한다.
- * @param {{open:boolean, shells:number}} opts `open:false` 면 입을 닫아 둔다.
+ *
+ * 취약 창 게이트가 없으므로 `boss.open` 은 손상에 영향이 없다 — `forceOpen` 은 그 사실을
+ * 직접 대조하기 위한 인자일 뿐이다(기본은 건드리지 않는다).
+ * @param {{shells:number, forceOpen:boolean|null}} opts
  */
-function bossFight({ open = true, shells = 40 } = {}) {
+function bossFight({ shells = 40, forceOpen = null } = {}) {
   const world = createWorld();
   const fields = createFields(BULGASARI_MAP.fields);
   let simTime = 0;
   const impacts = installImpactListener(world, { now: () => simTime });
   installProjectileContacts(world);
+  // 팔도 `createBoss` 가 만든다 (예전엔 여기서 `createObstacle` 을 돌렸다 — 이제 팔은 선체다).
   const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
-  for (const arm of BULGASARI_MAP.boss.arms) createObstacle(world, arm);
-  const startArea = [...boss.parts][0].getUserData().hull.params.area;
+  const coreBody = [...boss.parts][0];
+  const startArea = coreBody.getUserData().hull.params.area;
   const stepper = new FixedStepper(world, {
     onPreStep: () => {
       simTime += FIXED_DT;
       boss.pin();
-      boss.open = open && !boss.fallen;
-      boss.openUntil = open ? 1e9 : 0;
+      if (forceOpen !== null) boss.open = forceOpen;
     },
   });
   const lane = [0, -1.2, 1.2, -0.6, 0.6, -1.5, 1.5, 0.3];
   let fired = 0;
   let landed = 0;
-  let blocked = 0;
   while (fired < shells && !boss.fallen) {
     spawnProjectile(world, {
       x: lane[fired % lane.length], y: BULGASARI_MAP.boss.core.y - 11, angle: Math.PI / 2,
@@ -3893,37 +3918,74 @@ function bossFight({ open = true, shells = 40 } = {}) {
       stepper.advance(FIXED_DT);
       for (const im of impacts.drain()) {
         if (!boss.parts.has(im.body)) continue;
-        // 화면(`sail/screen.js#carveBoss`)과 같은 규칙 — 입이 닫혀 있으면 **깎지도 않는다.**
-        if (!boss.open) { blocked += 1; continue; }
-        const out = applyImpact(world, im.body, im.at, im.radius);
-        if (!out) continue;
-        boss.parts.delete(im.body);
-        for (const b of out.bodies) boss.parts.add(b);
-        landed += 1;
-        boss.takeHit();
+        // 화면(`sail/screen.js#carveBoss`)과 같은 공식 — 핵은 절대 안 깎고, 근사 면적만 뺀다.
+        if (boss.applyDamage((Math.PI * im.radius * im.radius) / boss.launchArea)) landed += 1;
       }
       impacts.drainGlances();
     }
   }
-  boss.measure();
-  return { boss, fired, landed, blocked, startArea, seconds: simTime };
+  return { boss, fired, landed, startArea, coreBody, seconds: simTime };
 }
 
-const openFight = bossFight({ open: true, shells: 60 });
-check('★ 입이 열렸을 때 대포가 핵을 깎고, 잔여 면적이 그만큼 줄어든다 (HP 는 면적 그 자체다)',
+const openFight = bossFight({ shells: 60 });
+check('★ 핵에 맞으면 체력이 줄고, 문턱 아래로 내려가면 쓰러진다 (핵 폴리곤은 안 건드린다)',
   openFight.landed > 0 && openFight.boss.health < 1
     && openFight.boss.health <= BOSS_TUNING.fallAt && openFight.boss.fallen,
-  `${openFight.fired}발 · 명중 ${openFight.landed} · 잔여 ${(openFight.boss.health * 100).toFixed(1)}% ` +
-  `(핵 ${openFight.startArea.toFixed(1)} m²)`);
+  `${openFight.fired}발 · 명중 ${openFight.landed} · 잔여 ${(openFight.boss.health * 100).toFixed(1)}%`);
 
-const shutFight = bossFight({ open: false, shells: 20 });
-check('★ 입이 닫혀 있으면 무적이다 — 몸도 안 깎이고 페이즈도 안 넘어간다',
-  shutFight.blocked > 0 && shutFight.landed === 0
-    && shutFight.boss.health === 1 && shutFight.boss.phaseIndex === 0 && !shutFight.boss.fallen,
-  `튕김 ${shutFight.blocked}회 · 잔여 ${(shutFight.boss.health * 100).toFixed(0)}%`);
+// ★ 취약 창 게이트를 없앤 핵심 요구 — 입을 강제로 계속 닫아 둬도 **완전히 같은** 결과가
+//   나와야 게이트가 진짜 사라진 것이다(같은 조준·같은 탄으로 대조해야 몰래 남은 분기가 샌다).
+const shutMouthFight = bossFight({ shells: 60, forceOpen: false });
+check('★ 입을 계속 닫아 둬도 핵은 똑같이 맞는다 (취약 창 게이트가 완전히 사라졌다)',
+  shutMouthFight.fired === openFight.fired && shutMouthFight.landed === openFight.landed
+    && shutMouthFight.boss.fallen
+    && Math.abs(shutMouthFight.boss.health - openFight.boss.health) < 1e-12,
+  `닫힌 입으로 ${shutMouthFight.fired}발 · 명중 ${shutMouthFight.landed} · ` +
+  `잔여 ${(shutMouthFight.boss.health * 100).toFixed(1)}% (입 연 경우와 비트 일치)`);
 
-// 페이즈가 잔여 면적에서 갈리는가 — 문턱을 리터럴이 아니라 표에서 읽는다.
-check('페이즈는 잔여 면적 문턱에서 순서대로 넘어가고 패턴이 누적된다',
+// ★ "몸통은 절대 부서지지 않되 항상 유효타여야 한다" — 사람 판정(2026-08-10, 세 번째 라운드).
+check('★ 핵 폴리곤은 몇 발을 맞아도 절대 안 바뀐다 (몸통 무형태 유지)',
+  openFight.boss.parts.size === 1 && [...openFight.boss.parts][0] === openFight.coreBody
+    && openFight.coreBody.getUserData().hull.params.area === openFight.startArea,
+  `${openFight.landed}발 명중 후에도 핵 강체·면적(${openFight.startArea.toFixed(1)} m²) 그대로`);
+
+// ⚠ 바닥은 이제 게이트가 아니라 `applyDamage` 의 `fallen` 가드와 `Math.max(0, …)` 클램프다.
+//   200발을 퍼부어도 문턱 바로 아래에서 멈추고 더 안 내려가는지, 핵 폴리곤도 그대로인지 잰다.
+{
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  const coreBody = [...boss.parts][0];
+  const startArea = coreBody.getUserData().hull.params.area;
+  const stepper = new FixedStepper(world, { onPreStep: () => { simTime += FIXED_DT; boss.pin(); } });
+  let landed = 0;
+  for (let fired = 0; fired < 200; fired++) {
+    spawnProjectile(world, {
+      x: (fired % 5 - 2) * 0.4, y: BULGASARI_MAP.boss.core.y - 11, angle: Math.PI / 2,
+      speed: 55, radius: 0.15, mass: 12, material: 'iron', bornAt: simTime, lifetime: 2,
+    });
+    for (let i = 0; i < 26; i++) {
+      stepper.advance(FIXED_DT);
+      for (const im of impacts.drain()) {
+        if (!boss.parts.has(im.body)) continue;
+        if (boss.applyDamage((Math.PI * im.radius * im.radius) / boss.launchArea)) landed += 1;
+      }
+      impacts.drainGlances();
+    }
+  }
+  check('★ 200발을 쏴도 체력은 쓰러짐 문턱 바로 아래에서 멈추고 더 안 내려간다 (핵은 여전히 그 폴리곤 그대로)',
+    boss.fallen && boss.health > 0 && boss.health <= BOSS_TUNING.fallAt
+      && boss.health > BOSS_TUNING.fallAt - 0.05 && landed > 0
+      && boss.parts.size === 1 && [...boss.parts][0] === coreBody
+      && coreBody.getUserData().hull.params.area === startArea,
+    `명중 ${landed}발 · 잔여 ${(boss.health * 100).toFixed(1)}% (문턱 ${(BOSS_TUNING.fallAt * 100).toFixed(1)}%) · 핵 폴리곤 불변`);
+}
+
+// 페이즈가 체력 문턱에서 갈리는가 — 문턱을 리터럴이 아니라 표에서 읽는다.
+check('페이즈는 체력 문턱에서 순서대로 넘어가고 패턴이 누적된다',
   BOSS_PHASES.length === 3
     && BOSS_PHASES[0].until > BOSS_PHASES[1].until && BOSS_PHASES[1].until > BOSS_TUNING.fallAt
     && BOSS_PHASES.every((p) => p.suck) && !BOSS_PHASES[0].beam && BOSS_PHASES[1].beam
@@ -3968,15 +4030,115 @@ check('★ 보스 포탄은 나무 임계 위·철 임계 위다 (철이 면역�
   `${Math.min(...bossShellEnergies) / 1000}~${Math.max(...bossShellEnergies) / 1000} kJ > ` +
   `철 ${MATERIALS.iron.impactThreshold / 1000} kJ · 나무 ${MATERIALS.wood.impactThreshold / 1000} kJ`);
 
+// ── 팔도 형태를 지킨다 ──────────────────────────────────────────────────────
+//
+// ★ 팔은 한때(2026-08-10 세 번째 라운드) 깎이는 선체였지만, "보스 형태 전체가 안 부서지게"
+//   사람 판정 이후 핵과 완전히 같은 취급을 받는다 — 폴리곤은 절대 안 바뀌고, 맞은 만큼
+//   같은 체력 풀만 준다. 앞의 데이터 검사로는 이걸 하나도 못 잡는다 — 배를 세우고 포탄을
+//   먹여 결과를 봐야 나온다.
+
+/** 보스를 세우고 팔을 겨눠 쏜다. 취약 창 게이트가 없으니 입 상태는 신경 쓰지 않는다. */
+function armFight({ shots = [], steps = 26 } = {}) {
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  const armBody = boss.armGroups[3].body;
+  const startArmArea = armBody.getUserData().hull.params.area;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      simTime += FIXED_DT;
+      applyFieldsToWorld(world, fields, dt, simTime);
+      boss.pin();
+    },
+  });
+  let landed = 0;
+  for (const shot of shots) {
+    spawnProjectile(world, {
+      x: shot.x, y: shot.y, angle: shot.angle, speed: 55, radius: 0.15, mass: 12,
+      material: 'iron', bornAt: simTime, lifetime: 2,
+    });
+    for (let i = 0; i < steps; i++) {
+      stepper.advance(FIXED_DT);
+      for (const im of impacts.drain()) {
+        // 화면(`sail/screen.js#carveBoss`)과 같은 규칙 — 팔도 근사 면적만 체력에서 뺀다.
+        if (!boss.armParts.has(im.body)) continue;
+        if (boss.applyDamage((Math.PI * im.radius * im.radius) / boss.launchArea)) landed += 1;
+      }
+      impacts.drainGlances();
+      cullProjectiles(world, simTime, BULGASARI_MAP.bounds);
+    }
+  }
+  const armArea = armBody.getUserData().hull.params.area;
+  return { boss, armBody, landed, startArmArea, armArea, simTime };
+}
+
+// 팔 하나(인덱스 3, 218°·reach 12.5 짧은 팔)의 허리 근처를 조준한다.
+const cutArm = BULGASARI_MAP.boss.arms[3];
+const mid2 = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+const rootMid = mid2(cutArm.points[0], cutArm.points[5]);
+const waistMid = mid2(cutArm.points[1], cutArm.points[4]);
+const cutAt = mid2(rootMid, waistMid);
+
+// ① 실제 포탄을 여러 발 날려도 팔은 맞기만 하고 형태는 그대로인가.
+const armShot = armFight({
+  shots: Array.from({ length: 6 }, (_, i) => ({
+    x: cutAt[0] + (i - 2.5) * 0.3, y: BULGASARI_MAP.bounds.minY + 2, angle: Math.PI / 2,
+  })),
+});
+check('★ 팔은 몇 발을 맞아도 폴리곤이 절대 안 바뀐다 (핵과 같은 무형태 유지)',
+  armShot.landed > 0 && armShot.armArea === armShot.startArmArea
+    && armShot.boss.armGroups[3].body === armShot.armBody,
+  `${armShot.landed}발 명중 후에도 팔 강체·면적(${armShot.startArmArea.toFixed(1)} m²) 그대로`);
+
+// ② 팔 피해가 핵과 같은 체력 풀에 합산된다 — 핵은 한 발도 안 맞았는데 준다.
+check('★ 팔만 맞혀도 같은 체력 풀이 준다 (핵은 안 건드렸는데도, 핵과 같은 π·radius² 공식과 정확히 일치)',
+  armShot.boss.health < 1 && !armShot.boss.fallen
+    && Math.abs((1 - armShot.boss.health) - armShot.landed
+      * (Math.PI * MATERIALS.sinew.maxCarveRadius ** 2) / armShot.boss.launchArea) < 1e-6,
+  `${armShot.landed}발 → HP ${(armShot.boss.health * 100).toFixed(2)}% (공식과 정확히 일치)`);
+
+// ③ ★ **보스는 자기 팔을 쏴도 스스로 체력이 안 준다.** 부채꼴 총구가 팔 안에서 열리므로
+//    (3페이즈 자탄의 48%가 팔에 닿는다) 이게 안 지켜지면 아무도 안 쐈는데 체력이 샌다.
+//    지키는 것은 새 코드가 아니라 `contact.js` 의 무장 지연이다 — 팔에 닿는 자탄은 태어난
+//    지 0.1초가 안 됐고, `begin-contact` 가 그 자리에서 `spent` 로 죽인다.
+{
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  boss.phaseIndex = BOSS_PHASES.length - 1;              // 탄이 가장 촘촘한 마지막 페이즈
+  boss.enterPhase(0);
+  const stepper = new FixedStepper(world, { onPreStep: () => { simTime += FIXED_DT; boss.pin(); } });
+  let fired = 0;
+  let selfHits = 0;
+  for (let i = 0; i < Math.round(40 / FIXED_DT); i++) {
+    for (const req of boss.step(simTime)) if (spawnProjectile(world, { ...req, bornAt: simTime })) fired += 1;
+    stepper.advance(FIXED_DT);
+    for (const im of impacts.drain()) {
+      if (!boss.armParts.has(im.body) && !boss.parts.has(im.body)) continue;
+      selfHits += 1;
+    }
+    impacts.drainGlances();
+    cullProjectiles(world, simTime, BULGASARI_MAP.bounds);
+  }
+  check('★ 보스가 자기 팔을 쏴도 체력이 안 준다 (총구가 팔 안에서 열리는데도 — 무장 지연이 막는다)',
+    selfHits === 0 && boss.health === 1,
+    `${fired}발 40초 · 자해 명중 ${selfHits}회 · 잔여 체력 ${(boss.health * 100).toFixed(0)}%`);
+}
+
 // 살에는 온도 규칙이 없다 — 자기 빔에 자기가 녹지 않는 것이 **규칙 부재**로 성립한다.
 check('★ 살은 규칙표에 한 줄도 없어서 자기 빔(1400°)에 안 녹는다 (철의 내화와 같은 원리)',
   RULES.every((r) => r.material !== 'flesh')
     && !Object.keys(MATERIALS).filter((k) => k === 'flesh').some(() => false),
   `flesh 관련 규칙 ${RULES.filter((r) => r.material === 'flesh').length}줄`);
 
-console.log(`  전투 실측: ${openFight.fired}발 · ${openFight.seconds.toFixed(0)}s(창을 계속 열어 둔 기준) · ` +
-  `창 하나에 ${Math.floor(BOSS_TUNING.openFor / 0.8)}발 → 실제 약 ` +
-  `${Math.ceil(openFight.fired / Math.floor(BOSS_TUNING.openFor / 0.8)) * BOSS_TUNING.suckEvery}s`);
+console.log(`  전투 실측: ${openFight.fired}발 · 명중 ${openFight.landed} · ` +
+  `${openFight.seconds.toFixed(0)}s 만에 쓰러짐 (취약 창 게이트 없이 항상 유효타 기준)`);
 
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
   'D2 "배치에서 조향이 창발하는가?"\x1b[0m\n');
