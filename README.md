@@ -7,7 +7,7 @@
 
 **그린 선체가 그대로 물리량이 되는 2D 탑뷰 물리 퍼즐 항해 게임**
 
-NAN 2026 — NHN Game × AI 해커톤 사전 과제 (3인 팀, 바이브코딩)
+NAN 2026 — NHN Game × AI 해커톤 사전 과제
 **팀원** — 김정현 · 이승형 · 박진명
 
 [![Play on GitHub Pages](https://img.shields.io/badge/▶_지금_플레이-jh3399.github.io/sea--of--the--pen-2f7a4a?style=for-the-badge)](https://jh3399.github.io/sea-of-the-pen/)
@@ -17,11 +17,12 @@ NAN 2026 — NHN Game × AI 해커톤 사전 과제 (3인 팀, 바이브코딩)
 
 ---
 
-## 이 게임은
+## 게임 소개
 
-동생이 고칠 수 없는 병에 걸렸다. 하나 남은 길은 바다 밑에 산다는 **불가사리**의 정수뿐이고, 거기까지 가려면 바다를 셋 건너야 한다. 배를 살 돈도, 빌릴 신용도 없다. **그리는 수밖에 없다.**
+동생이 고칠 수 없는 병에 걸렸다. 하나 남은 길은 바다 밑에 산다는 **불가사리**의 정수뿐이고,
+바다를 건너려면 **그리는 수밖에 없다.**
 
-그리고 이 바다에서는 **그린 대로 뜨고, 그린 대로 가라앉는다.**
+**펜으로 나만의 배를 그려보자!**
 
 캔버스에 자유롭게 그린 선체 폴리곤이 그대로 면적·무게중심·저항이 되어 배의 조작감을 만든다. 재질(나무·철)과 환경 필드(바람·해류·온도·어둠)가 만나는 지점마다 규칙표 하나에서 해법이 창발한다 — **맵마다 특수 코드는 0줄.**
 
@@ -31,12 +32,6 @@ NAN 2026 — NHN Game × AI 해커톤 사전 과제 (3인 팀, 바이브코딩)
 |---|---|
 | ▶ **지금 바로** | **[jh3399.github.io/sea-of-the-pen](https://jh3399.github.io/sea-of-the-pen/)** |
 | ▶ **플레이 영상** | **[youtu.be/0-4icTv-z3k](https://youtu.be/0-4icTv-z3k)** |
-
-## 스크린샷
-
-<div align="center">
-<img src="assets/logo/title.preview.png" alt="타이틀 화면" width="720" />
-</div>
 
 ## 조작
 
@@ -99,13 +94,6 @@ archive/            구 프로토타입 (참고용, 빌드 제외)
 ```
 
 자세한 설계 원칙과 진행 기록은 [`CLAUDE.md`](CLAUDE.md) · [`docs/design_doc.md`](docs/design_doc.md) 참고.
-
-## 제출물
-
-1. GitHub Pages 웹 빌드 + 전체 소스 (본 저장소, 커밋 기록 유지)
-2. 플레이 영상 — [youtu.be/0-4icTv-z3k](https://youtu.be/0-4icTv-z3k)
-3. 게임 소개 PDF
-4. AI 활용 기술 문서 PDF
 
 ## 라이선스 · 크레딧
 
