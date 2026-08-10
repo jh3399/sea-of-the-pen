@@ -4,6 +4,7 @@
 // 같은 경로를 탄다. 표적 전용 HP나 피탄 분기는 없고, `hull.role/entityId` 만 게임 계층의 표식이다.
 import { MATERIALS } from '../hull/params.js';
 import { createHullBody } from '../physics/body.js';
+import { rasterizeHullSurface } from '../hull/raster.js';
 
 const SPEC_KEYS = new Set([
   'entityId', 'x', 'y', 'angle', 'width', 'height', 'outline', 'holes', 'material',
@@ -63,7 +64,12 @@ export function createPassiveTarget(world, raw, index = 0) {
   const holes = (raw.holes ?? []).map((h, i) => ring(h, at, `holes[${i}]`));
   const body = createHullBody(
     world,
-    { outline, holes, items: [], crew: null, role: 'target', entityId },
+    {
+      outline, holes, items: [], crew: null, role: 'target', entityId,
+      // sail/screen.js#launch 와 같은 이유로 필요하다 — 없으면 hull.surface 가 null 이라
+      // drawHullPixels 가 아무것도 안 그려 표적 선체가 투명하게 보인다.
+      surface: rasterizeHullSurface({ outline, holes }),
+    },
     {
       position: { x: finite(raw.x, at, 'x'), y: finite(raw.y, at, 'y') },
       angle: finite(raw.angle, at, 'angle', 0),

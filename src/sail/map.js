@@ -89,7 +89,7 @@ export const DEMO_MAP = {
     { entityId: 'route-target-2', x: 82, y: 27, angle: -0.18, width: 5, height: 3.2, material: 'wood' },
     { entityId: 'route-target-3', x: 138, y: -2, angle: 0.22, width: 4, height: 3.5, material: 'wood' },
   ],
-  // 해적선(game/pirates.js)은 테스트용으로 여기 배치했었다 — 스톰 맵이 생기면 거기로 옮긴다.
+  // 해적선(game/pirates.js)은 테스트용으로 여기 배치했었다가 STORM_MAP 으로 옮겼다(아래).
   // 메커니즘 자체는 남겨 둔다: screen.js 는 DEMO_MAP.pirates ?? [] 라 빈 배열이면 그냥 0척.
   obstacles: [
     // 항로 위 (원래 11개) — 골까지의 직선을 막아 지그재그를 강요하는 핵심 배치.
@@ -191,6 +191,41 @@ export const STORM_MAP = {
   },
   weather: { rain: 0.72, gloom: 0.65 },
   damage: true,
+  // 해적선 — DEMO_MAP 에서 테스트로 잠깐 배치했던 것(cde5ce7)을 여기로 옮긴다. 두 척 모두
+  // 선체 반폭(2.2 m)을 뺀 실측 여유가 끝점 기준 4 m 이상인 구간에서만 왕복한다(스크립트로
+  // 경로 전체를 0.5% 간격으로 샘플해 모든 암초까지의 거리를 확인했다 — 끝점만 보면 샌다,
+  // 처음엔 (82,-12)~(100,-12) 로 뒀다가 중간점이 (106,-4,r5) 암초에 2 m 로 스쳤다).
+  // ① x∈[80,99], y=-13 — 중앙 항로(y≈±5~8)와 그 아래 띠(y≈-16~-27) 사이의 빈 복도.
+  // ② x∈[138,155], y=-10 — 골(150,-8) 바로 앞. 가장 가까운 암초(164,-3,r3.5)까지 5.8 m,
+  //    도착 직전에 반드시 상대해야 하는 마지막 관문으로 둔다.
+  // 대포는 좌우현(±0.9 m, ±90°)에 반 주기(1.1s) 어긋난 위상으로 달아 번갈아 쏘게 한다 —
+  // 원래 데모 배치와 같은 구성이다.
+  pirates: [
+    {
+      entityId: 'pirate-storm-1',
+      width: 4.4,
+      height: 2.6,
+      material: 'wood',
+      path: [{ x: 80, y: -13 }, { x: 99, y: -13 }],
+      speed: 2.2,
+      cannons: [
+        { x: 0, y: 0.9, angle: Math.PI / 2, period: 2.2, phase: 0 },
+        { x: 0, y: -0.9, angle: -Math.PI / 2, period: 2.2, phase: 1.1 },
+      ],
+    },
+    {
+      entityId: 'pirate-storm-2',
+      width: 4.4,
+      height: 2.6,
+      material: 'wood',
+      path: [{ x: 138, y: -10 }, { x: 155, y: -10 }],
+      speed: 2.2,
+      cannons: [
+        { x: 0, y: 0.9, angle: Math.PI / 2, period: 2.2, phase: 0 },
+        { x: 0, y: -0.9, angle: -Math.PI / 2, period: 2.2, phase: 1.1 },
+      ],
+    },
+  ],
   obstacles: [
     // 북쪽 바깥 해역 — 띠마다 끊어진 통로를 남겨 레벨 1보다 성기게 배치한다.
     { shape: 'circle', x: 18, y: 60, radius: 4 },

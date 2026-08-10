@@ -10,6 +10,7 @@
 import { Vec2 } from 'planck';
 import { MATERIALS } from '../hull/params.js';
 import { createHullBody } from '../physics/body.js';
+import { rasterizeHullSurface } from '../hull/raster.js';
 import { attachItem, canAttachAt, itemsExtraMass } from '../items/attach.js';
 import { CANNON_TUNING } from '../items/cannon.js';
 
@@ -189,7 +190,13 @@ export function createPirate(world, raw, index = 0) {
 
   const body = createHullBody(
     world,
-    { outline, holes, items: stub.items, crew: null, role: 'pirate', entityId },
+    {
+      outline, holes, items: stub.items, crew: null, role: 'pirate', entityId,
+      // 플레이어 선체와 같은 경로(sail/screen.js#launch)로 고정 픽셀 표면을 만들어 둔다 —
+      // 없으면 hull.surface 가 null 이라 drawHullPixels 가 아무것도 안 그려 선체가 투명하게
+      // 보인다(아이템 아이콘만 떠 있는 것처럼 보인다).
+      surface: rasterizeHullSurface({ outline, holes }),
+    },
     {
       position: { x: start.x, y: start.y },
       angle: facing,
