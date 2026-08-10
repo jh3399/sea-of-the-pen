@@ -44,6 +44,15 @@ export const BOSS_TUNING = {
    */
   fallAt: 0.62,
   /**
+   * 체력 배율. `applyDamage` 가 받는 `delta`(근사 면적/`launchArea`)를 이 값으로 나눠서
+   * 체력 풀에서 뺀다 — **5배로 늘렸다** (2026-08-10). `fallAt`·`BOSS_PHASES.until` 은
+   * 손대지 않는다: 그것들은 0..1 체력 비율 위의 문턱이고, 체력이 실제로 몇 대를 맞아야
+   * 그 비율에 도달하는지만 이 배율이 정한다. `fallAt` 을 직접 낮춰서 같은 효과를 내려면
+   * 0.62 → 1 − 5×(1−0.62) = **−0.9** 가 되는데, `health` 는 `Math.max(0, …)` 로 0 바닥이
+   * 있어 음수 문턱은 영영 안 만족돼 보스가 죽지 않는다 — 그래서 문턱이 아니라 분모를 늘렸다.
+   */
+  healthMultiplier: 5,
+  /**
    * 흡입이 끝난 뒤 입이 열려 있는 시간 (s) — **연출 전용.** 취약 창 게이트를 없앤 뒤로는
    * 피해 판정과 무관하다(핵은 입 상태와 무관하게 항상 맞는다). 입을 벌리는 애니메이션의
    * 지속 시간일 뿐이라 싸움 길이를 더 이상 결정하지 않는다 — 그 역할은 이제 `fallAt` 과
@@ -64,8 +73,16 @@ export const BOSS_TUNING = {
 /**
  * 페이즈 표 — 잔여 면적이 `until` 위인 동안 이 페이즈다. 위에서부터 순서대로 본다.
  *
- * 패턴은 **누적**이다: 부채꼴이 바닥에 깔리고 흡입 → 빔 → 난파선이 차례로 얹힌다.
- * 각 페이즈의 `emitters` 는 `game/turrets.js` 스펙 그대로다 (`angle` 은 도, -90 = 아래).
+ * 패턴은 **누적**이다: 부채꼴이 바닥에 깔리고 흡입 → 빔+난파선 → (더 거세진) 빔+난파선이
+ * 차례로 얹힌다. 각 페이즈의 `emitters` 는 `game/turrets.js` 스펙 그대로다
+ * (`angle` 은 도, -90 = 아래).
+ *
+ * ★ **난파선은 2페이즈부터가 아니라 빔과 같은 페이즈(1페이즈, `눈을 뜬다`)에서 함께 시작한다**
+ *   (2026-08-10). 예전엔 빔이 한 페이즈 먼저 나오고 난파선은 마지막 페이즈에서만 등장해
+ *   "같이 나온다"는 인상이 없었다 — 두 패턴이 **동시에 발동할 필요는 없지만**(각자
+ *   `gap`·`every` 로 독립 순환한다) 같은 구간에서 함께 겪어야 한다는 요청으로, 난파선
+ *   등장 시점만 앞당겼다. 1페이즈 난파선은 2페이즈보다 여유 있게(`every` 길고 `max`·`speed`
+ *   낮게) 잡아 난이도가 그대로 계단식으로 오르게 했다.
  *
  * ★ **포탄 질량 70 kg 은 두 재질 임계 사이를 노린 값이다.** 처음엔 30 kg 이었는데
  *   E = ½mv² 가 10.1 kJ 라 철의 피격 임계 15 kJ **아래**였다 — 실측으로 철 선체가 120발을
@@ -104,7 +121,10 @@ export const BOSS_PHASES = [
     suck: true,
     // 레인은 **선언된 수열**을 돈다. 플레이어를 겨누지 않으므로 외울 수 있다.
     beam: { lanes: [2, 0, 4, 1, 3], telegraph: 1.1, fire: 0.7, gap: 2.6, halfWidth: 3, value: 1400 },
-    wreck: null,
+    // 2페이즈보다 여유 있는 값(느린 주기·적은 동시 최대·느린 속도) — 난파선이 처음 나오는
+    // 자리라 빔 경고와 겹칠 때 첫 학습 부담이 너무 크지 않게 한다. `count` 만큼 한 볼리로
+    // 같이 던진다 — `max` 는 그 볼리가 다 나갈 수 있게 count 보다 여유 있게 잡는다.
+    wreck: { every: 6.5, max: 5, speed: 11, spread: 40, count: 2 },
   },
   {
     name: '삼키려 한다',
@@ -115,7 +135,7 @@ export const BOSS_PHASES = [
     ],
     suck: true,
     beam: { lanes: [0, 3, 1, 4, 2], telegraph: 0.9, fire: 0.8, gap: 1.9, halfWidth: 3, value: 1400 },
-    wreck: { every: 4.5, max: 6, speed: 14, spread: 54 },
+    wreck: { every: 4.5, max: 9, speed: 14, spread: 54, count: 3 },
   },
 ];
 
@@ -274,7 +294,7 @@ export function createBoss(world, spec, fields, hooks = {}) {
      */
     applyDamage(delta) {
       if (this.fallen || !(delta > 0)) return false;
-      this.health = Math.max(0, this.health - delta);
+      this.health = Math.max(0, this.health - delta / BOSS_TUNING.healthMultiplier);
       this.syncPhase();
       if (this.health <= BOSS_TUNING.fallAt) this.fall();
       return true;
@@ -392,20 +412,25 @@ export function createBoss(world, spec, fields, hooks = {}) {
       }
 
       // ── 난파선 ── 방향은 고정 부채다. 화면이 실제 강체를 만든다.
+      // `count` 개를 한 볼리에 같이 던진다 — 부채 위치를 `wreckSeq` 로 연속해서 골라 나가므로
+      // 한 무리가 자연히 옆자리로 퍼진다(같은 위치가 겹쳐 나오지 않는다).
       const wreckCfg = this.phase.wreck;
       if (wreckCfg && now >= this.nextWreckAt) {
         this.nextWreckAt = now + wreckCfg.every;
-        const k = this.wreckSeq++ % 5;
         const spread = wreckCfg.spread;
-        const angle = (-90 + (k - 2) * (spread / 4)) * (Math.PI / 180);
-        this.wreckRequests.push({
-          x: this.coreAt.x + Math.cos(angle) * 8,
-          y: this.coreAt.y + Math.sin(angle) * 8,
-          angle,
-          speed: wreckCfg.speed,
-          max: wreckCfg.max,
-          outline: WRECK_PLANK,
-        });
+        const count = wreckCfg.count ?? 1;
+        for (let i = 0; i < count; i++) {
+          const k = this.wreckSeq++ % 5;
+          const angle = (-90 + (k - 2) * (spread / 4)) * (Math.PI / 180);
+          this.wreckRequests.push({
+            x: this.coreAt.x + Math.cos(angle) * 8,
+            y: this.coreAt.y + Math.sin(angle) * 8,
+            angle,
+            speed: wreckCfg.speed,
+            max: wreckCfg.max,
+            outline: WRECK_PLANK,
+          });
+        }
       }
 
       return this.turrets.step(now);
