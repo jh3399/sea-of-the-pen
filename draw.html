@@ -22,6 +22,7 @@
 
         <button id="btn-clear" class="clear-btn" type="button" title="다시 그리기">↺ 다시 그리기</button>
         <div id="status" class="page-status">선체를 그려 주인공을 감싸세요.</div>
+        <div id="key-picker" class="key-picker hidden" role="menu" aria-label="키 매핑"></div>
       </div>
     </div>
 
@@ -44,8 +45,19 @@
         <div class="panel-card-title">재질</div>
         <div id="material-list" class="material-list"></div>
       </div>
+      <button id="btn-keymap" class="keymap-btn" type="button">⌨ 키 매핑</button>
       <button id="btn-finish" class="finish-btn" type="button" disabled>완성하기</button>
     </aside>
+  </div>
+
+  <div id="keymap-modal" class="keymap-modal hidden">
+    <div class="keymap-card" role="dialog" aria-modal="true" aria-labelledby="keymap-modal-title">
+      <div class="keymap-card-head">
+        <span id="keymap-modal-title">키 매핑</span>
+        <button id="keymap-close" class="keymap-close" type="button" aria-label="닫기">✕</button>
+      </div>
+      <div id="keymap-rows" class="keymap-rows"></div>
+    </div>
   </div>
 
   <div id="draw-tutorial" class="draw-tutorial" hidden>

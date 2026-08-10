@@ -201,6 +201,165 @@ html, body {
 .page-status.ok { border-left-color: #2f7a4a; color: #1f4d30; }
 .page-status.bad { border-left-color: #a33a2b; color: #7a2a1f; }
 
+/* ── 아이템 키 매핑 배지·선택 팝업 ─────────────────────────── */
+
+.key-picker {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: #fbf3de;
+  border: 2px solid var(--wood-dark);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+}
+
+.key-picker.hidden { display: none; }
+
+.key-picker button {
+  font-family: inherit;
+  font-size: 16px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--wood-dark);
+  background: rgba(90, 65, 30, 0.06);
+  border: 1px solid rgba(90, 65, 30, 0.35);
+  cursor: pointer;
+}
+
+.key-picker button:hover { background: rgba(90, 65, 30, 0.18); }
+.key-picker button.current { background: rgba(47, 81, 120, 0.25); border-color: var(--banner); }
+
+/* ── 키 매핑 버튼 · 목록 팝업 ──────────────────────────────── */
+
+.keymap-btn {
+  font-family: inherit;
+  font-size: 18px;
+  padding: 10px 0;
+  color: var(--wood-dark);
+  background: #fbf3de;
+  border: 2px solid var(--wood-dark);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.keymap-btn:hover { background: #fff8e8; }
+.keymap-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 rgba(0, 0, 0, 0.3); }
+
+.keymap-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 24px;
+  /* 배경을 투명하게 둔다 — 화면 전체를 덮는 클릭 캐처는 그대로 필요하지만(바깥 클릭 시
+     닫기), 어둡게 칠하면 카드가 오른쪽에 있어도 가운데 배가 흐려져 보인다. */
+  background: transparent;
+}
+
+.keymap-modal.hidden { display: none; }
+
+.keymap-card {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  color: var(--wood-dark);
+  background:
+    repeating-linear-gradient(0deg, rgba(105, 88, 58, 0.08) 0 1px, transparent 1px 28px),
+    #fffaf0;
+  border: 3px solid var(--wood-dark);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.38);
+}
+
+.keymap-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-size: 21px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: linear-gradient(180deg, var(--banner-light), var(--banner));
+  border-bottom: 2px solid var(--wood-dark);
+}
+
+.keymap-close {
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  color: #fff;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.keymap-close:hover { opacity: 0.75; }
+
+.keymap-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+}
+
+.keymap-empty {
+  padding: 10px 4px;
+  font-size: 17px;
+  opacity: 0.7;
+}
+
+.keymap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(90, 65, 30, 0.15);
+}
+
+.keymap-row:last-child { border-bottom: none; }
+
+.keymap-row .icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.keymap-row .icon svg { width: 100%; height: 100%; }
+
+.keymap-row .name {
+  flex: 1;
+  font-size: 18px;
+}
+
+.keymap-row .keys {
+  display: flex;
+  gap: 4px;
+}
+
+.keymap-row .keys button {
+  font-family: inherit;
+  font-size: 15px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--wood-dark);
+  background: rgba(90, 65, 30, 0.06);
+  border: 1px solid rgba(90, 65, 30, 0.35);
+  cursor: pointer;
+}
+
+.keymap-row .keys button:hover { background: rgba(90, 65, 30, 0.18); }
+.keymap-row .keys button.current { background: rgba(47, 81, 120, 0.25); border-color: var(--banner); }
+
 /* ── 우측 패널 ─────────────────────────────────────────────── */
 
 .side {

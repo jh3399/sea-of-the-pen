@@ -72,6 +72,21 @@ function angleLabel(angle) {
  *  장치라서다 — 다른 마커처럼 선체 안 점으로 찍으면 방향이 읽히지 않는다. */
 const OAR_MARKER_PIXEL = 4;
 
+/** 아이템 위 키 배지 — 마커 중심에서 위로 띄운 자리에 그린다. */
+const KEY_BADGE_OFFSET = 20;
+const KEY_BADGE_RADIUS = 9;
+const KEY_BADGE_HIT_R = 12;
+
+/**
+ * 그 아이템이 트리거 풀(BIND_POOL)에서 키를 받는 종류인가 — 이런 아이템만 키 배지를
+ * 그리고 재매핑을 허용한다. 돛(bind:null, 상시)·밸러스트(트리거 없음)·키(좌우 두 키 합성,
+ * `KeyQ/KeyE`)는 여기 걸리지 않는다. 부착 시 `nextBind` 로 새 키를 받는 것과 **같은 판별**
+ * 이라 카탈로그가 늘어도 이 파일은 고칠 게 없다.
+ */
+function isPooledBind(type) {
+  return BIND_POOL.includes(ITEM_CATALOG[type]?.bind);
+}
+
 class DrawScreen {
   constructor() {
     this.canvas = document.getElementById('ink');
@@ -105,6 +120,13 @@ class DrawScreen {
     this.oarX = null;
     this.oarHoverX = null; // 노 배치 모드에서 커서를 따라다니는 미리보기
     this.itemHoverLocal = null; // 아이템 배치 모드의 선체 로컬 미리보기 위치
+    this.keyBadges = []; // 이번 렌더에서 그려진 키 배지 히트 영역 — 클릭 판정용
+    this.pickerItem = null; // 지금 키 선택 팝업이 열려 있는 아이템 인스턴스
+    this.keyPickerEl = document.getElementById('key-picker');
+    this.keymapBtn = document.getElementById('btn-keymap');
+    this.keymapModalEl = document.getElementById('keymap-modal');
+    this.keymapRowsEl = document.getElementById('keymap-rows');
+    this.keymapCloseBtn = document.getElementById('keymap-close');
 
     this.capture = new StrokeCapture(this.canvas, {
       onStart: () => this.onStrokeStart(),
@@ -116,6 +138,7 @@ class DrawScreen {
     this.buildItemList();
     this.buildMaterialList();
     this.buildBlueprintPanel();
+    this.buildKeyPicker();
     this.bindTopControls();
     this.tutorial = new DrawTutorial({
       getSnapshot: () => this.tutorialSnapshot(),
@@ -168,6 +191,8 @@ class DrawScreen {
     if (this.finished) return;
     const result = strokeToHull(pts);
     if (result.ok) {
+      this.closeKeyPicker(); // 이전 선체의 아이템을 가리키던 팝업이 새 선체에 남으면 안 된다
+      this.closeKeymapModal();
       this.design = result;
       this.hull = { items: [] }; // 새 선체는 로컬 좌표계가 달라지므로 부착물을 비운다
       this.oarX = null; //  ↳ 노 위치도 같은 이유로 무효 (로컬 x 의 뜻이 달라진다)
@@ -341,8 +366,134 @@ class DrawScreen {
     this.capture.enabled = !this.placing;
     this.buildDeviceList();
     this.buildItemList();
+    this.closeKeyPicker();
     this.setStatus(this.placingStatus(), 'ok');
     this.render();
+  }
+
+  // ── 아이템 키 매핑 ────────────────────────────────────────
+  //
+  // 트리거는 이미 `items/attach.js#nextBind` 가 BIND_POOL 에서 자동으로 배정한다 — 여기서는
+  // 그 배정을 **사용자가 눈으로 확인하고 바꿀 수 있게** 만든다. 팝업을 BIND_POOL 여섯 글자로
+  // 한정하는 것은 UI 편의가 아니라 불변식이다: 항해 화면(sail/screen.js)의 입력 계층이
+  // `TRIGGER_KEYS`(BIND_POOL + KeyQ/KeyE)만 `held`/`pressed` 에 채운다. 그 밖의 키를 주면
+  // devices.js 의 `control.held?.[d.bind]` 가 영원히 undefined 라 장치가 죽는다.
+  // 풀 안에서 고르므로 **중복은 자유롭다** — inputActive 가 인스턴스별 상태를 읽어 같은 키를
+  // 공유해도 서로 간섭하지 않는다(physics/devices.js 의 `d.key` 기반 상태가 이미 그렇다).
+
+  /** 팝업 안의 여섯 버튼은 고정이라 한 번만 만든다 — 열 때는 위치와 '현재 값' 강조만 바꾼다. */
+  buildKeyPicker() {
+    this.keyPickerEl.innerHTML = '';
+    for (const key of BIND_POOL) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = bindLabel(key);
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.applyRebind(key);
+      });
+      this.keyPickerEl.appendChild(btn);
+    }
+  }
+
+  /** @param {object} item 재매핑할 아이템 인스턴스 @param {{x:number,y:number}} anchor 배지의 캔버스 좌표 */
+  openKeyPicker(item, anchor) {
+    this.pickerItem = item;
+    [...this.keyPickerEl.children].forEach((btn, i) => {
+      btn.classList.toggle('current', BIND_POOL[i] === item.bind);
+    });
+    this.keyPickerEl.style.left = `${anchor.x}px`;
+    this.keyPickerEl.style.top = `${anchor.y - KEY_BADGE_RADIUS - 2}px`;
+    this.keyPickerEl.classList.remove('hidden');
+  }
+
+  closeKeyPicker() {
+    if (!this.pickerItem) return;
+    this.pickerItem = null;
+    this.keyPickerEl.classList.add('hidden');
+  }
+
+  applyRebind(key) {
+    const item = this.pickerItem;
+    if (!item) return;
+    item.bind = key;
+    this.closeKeyPicker();
+    this.setStatus(`${item.name} — ${bindLabel(key)} 키로 매핑했습니다.`, 'ok');
+    this.render();
+  }
+
+  /** 이번 렌더가 등록한 배지 중 캔버스 좌표 px 를 맞는 것 — 없으면 null. */
+  hitKeyBadge(px) {
+    for (const b of this.keyBadges) {
+      if (Math.hypot(px.x - b.x, px.y - b.y) <= KEY_BADGE_HIT_R) return b;
+    }
+    return null;
+  }
+
+  // ── 키 매핑 목록 팝업 ─────────────────────────────────────
+  //
+  // 배지(캔버스 위)가 "이 아이템이 지금 무슨 키인지" 개별 확인이라면, 이 팝업은 **한눈에
+  // 전부 보고 고치는** 창구다. 같은 불변식(BIND_POOL 여섯 글자, 중복 허용)을 공유하므로
+  // `isPooledBind`·`applyRebind` 와 같은 판별·대입을 그대로 쓴다 — 새 상태를 만들지 않는다.
+
+  openKeymapModal() {
+    this.closeKeyPicker(); // 배지 팝업과 동시에 떠 있으면 어느 쪽이 진짜인지 헷갈린다
+    this.renderKeymapRows();
+    this.keymapModalEl.classList.remove('hidden');
+  }
+
+  closeKeymapModal() {
+    this.keymapModalEl.classList.add('hidden');
+  }
+
+  renderKeymapRows() {
+    this.keymapRowsEl.innerHTML = '';
+    const items = this.hull.items.filter((it) => isPooledBind(it.type));
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'keymap-empty';
+      empty.textContent = '아직 키가 있는 장치가 없습니다. 부스터·대포를 먼저 달아 보세요.';
+      this.keymapRowsEl.appendChild(empty);
+      return;
+    }
+    // 같은 종류가 여럿이면 몇 번째인지 붙인다 — 그게 없으면 목록에 "부스터"가 두 줄 나와도
+    // 캔버스의 어느 마커를 가리키는지 구분할 길이 없다.
+    const totalByType = new Map();
+    for (const it of items) totalByType.set(it.type, (totalByType.get(it.type) ?? 0) + 1);
+    const seenByType = new Map();
+    for (const item of items) {
+      const seen = (seenByType.get(item.type) ?? 0) + 1;
+      seenByType.set(item.type, seen);
+      this.keymapRowsEl.appendChild(this.buildKeymapRow(item, totalByType.get(item.type) > 1 ? seen : null));
+    }
+  }
+
+  buildKeymapRow(item, ordinal) {
+    const row = document.createElement('div');
+    row.className = 'keymap-row';
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.innerHTML = itemIconSVG(item.type, { pixel: 3 });
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = ordinal ? `${item.name} ${ordinal}` : item.name;
+    const keys = document.createElement('span');
+    keys.className = 'keys';
+    for (const key of BIND_POOL) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = bindLabel(key);
+      btn.classList.toggle('current', item.bind === key);
+      btn.addEventListener('click', () => {
+        item.bind = key;
+        this.setStatus(`${item.name} — ${bindLabel(key)} 키로 매핑했습니다.`, 'ok');
+        this.renderKeymapRows(); // 목록을 다시 그려야 이 행의 current 강조가 바뀐 키를 따라간다
+        this.render();           // 캔버스 배지도 같은 값을 보여주므로 같이 갱신한다
+      });
+      keys.appendChild(btn);
+    }
+    row.append(icon, name, keys);
+    return row;
   }
 
   /**
@@ -375,8 +526,16 @@ class DrawScreen {
   }
 
   handleCanvasClick(e) {
-    if (!this.placing || !this.design?.ok) return;
     const px = this.canvasPoint(e);
+    // 키 배지는 배치 모드와 무관하게 항상 클릭 가능하다 — "확인"과 "결정"이 배치 흐름에
+    // 얹혀 있으면 안 되기 때문이다. document 의 캡처 단계 리스너(bindTopControls)가 이
+    // 핸들러보다 먼저 돌아 이전 팝업을 닫으므로, 여기서 새 배지를 열면 그게 최종 상태가 된다.
+    const badge = this.hitKeyBadge(px);
+    if (badge) {
+      this.openKeyPicker(badge.item, badge);
+      return;
+    }
+    if (!this.placing || !this.design?.ok) return;
     if (this.placing === PLACING_OAR) {
       this.placeOarAt(px);
       this.render();
@@ -389,6 +548,7 @@ class DrawScreen {
       (it) => it.type === this.placing && Math.hypot(it.x - local.x, it.y - local.y) < hitRadiusM,
     );
     if (nearby) {
+      if (nearby === this.pickerItem) this.closeKeyPicker();
       detachItem(this.hull, nearby.key);
       this.render();
       return;
@@ -399,18 +559,15 @@ class DrawScreen {
     }
     const type = this.placing;
     /**
-     * 트리거 키를 **풀에서** 새로 받을 아이템인가.
+     * 트리거 키를 **풀에서** 새로 받을 아이템인가 (`isPooledBind` — 배지 표시 여부와 같은 판별).
      *
-     * ★ 판별을 데이터로 한다 — 카탈로그의 기본 bind 가 `BIND_POOL` 안에 있으면 그 아이템은
-     *   "아무 빈 키나 하나" 쓰는 종류다 (부스터 A · 대포 F). 타입 이름을 박아 두면
-     *   카탈로그가 늘 때마다 여기를 고쳐야 한다.
      * ⚠ 키(`KeyQ/KeyE`)·닻(`Space`)은 풀 밖이라 제외된다 — 이게 중요하다. 풀 바인딩을
      *   주면 `devices.js` 가 `held.KeyQ`/`held.KeyE` 를 직접 읽는 키가 엉뚱한 글자를
      *   받아 영영 안 듣는다. 돛(null)도 트리거가 없는 것이 사양이다.
      * ★ 풀에서 고르는 이유: 예전엔 bind 를 안 넘겨 카탈로그 기본값으로 떨어졌고, 그래서
      *   부스터를 둘 달면 **둘 다 A** 였다 — 좌우로 나눠 번갈아 누르는 슬라럼이 불가능했다.
      */
-    const pooled = BIND_POOL.includes(ITEM_CATALOG[type].bind);
+    const pooled = isPooledBind(type);
     const item = attachItem(this.hull, type, {
       x: local.x,
       y: local.y,
@@ -465,9 +622,29 @@ class DrawScreen {
       this.itemHoverLocal = null;
       this.render();
     });
+    // 캡처 단계 — 캔버스의 클릭 리스너(버블 단계)보다 먼저 돌아야 한다. 그래야 새 배지를
+    // 여는 클릭이 "바깥 클릭"으로 오인되어 스스로 닫는 자기 모순이 안 생긴다.
+    document.addEventListener('click', (e) => {
+      if (!this.pickerItem || this.keyPickerEl.contains(e.target)) return;
+      this.closeKeyPicker();
+    }, true);
+    this.keymapBtn.addEventListener('click', () => this.openKeymapModal());
+    this.keymapCloseBtn.addEventListener('click', () => this.closeKeymapModal());
+    // 카드 바깥(반투명 배경)을 클릭해도 닫는다 — 클릭이 카드 자체에서 났으면 target 이
+    // 모달 루트가 아니라 안쪽 요소이므로 여기 안 걸린다.
+    this.keymapModalEl.addEventListener('click', (e) => {
+      if (e.target === this.keymapModalEl) this.closeKeymapModal();
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Escape') return;
+      if (this.pickerItem) this.closeKeyPicker();
+      if (!this.keymapModalEl.classList.contains('hidden')) this.closeKeymapModal();
+    });
   }
 
   resetAll() {
+    this.closeKeyPicker();
+    this.closeKeymapModal();
     this.finished = false;
     this.finishedDesign = null;
     this.design = null;
@@ -494,6 +671,8 @@ class DrawScreen {
 
   finish() {
     if (!this.design?.ok || !this.aboard || this.oarX === null || this.finished) return;
+    this.closeKeyPicker();
+    this.closeKeymapModal();
     this.finished = true;
     this.capture.enabled = false;
     this.placing = null;
@@ -535,6 +714,7 @@ class DrawScreen {
   render() {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.cssWidth, this.cssHeight);
+    this.keyBadges = []; // 이번 프레임에 그려질 아이템 배지 히트 영역을 새로 모은다
 
     this.renderTemplate(ctx);
     if (this.design?.ok) this.renderHull(ctx);
@@ -577,6 +757,9 @@ class DrawScreen {
     if (this.oarX !== null) this.renderOarPair(ctx, this.oarPlacementAt(this.oarX), 1);
     for (const item of this.hull.items) {
       this.renderItemMarker(ctx, item.type, { x: item.x, y: item.y }, 1, null, item.angle ?? 0);
+      if (isPooledBind(item.type)) {
+        this.renderKeyBadge(ctx, item, this.localToPx({ x: item.x, y: item.y }));
+      }
     }
     if (this.placing === PLACING_OAR && this.oarHoverX !== null) {
       this.renderOarPair(ctx, this.oarPlacementAt(this.oarHoverX), 0.55);
@@ -629,6 +812,30 @@ class DrawScreen {
     } else {
       drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);
     }
+    ctx.restore();
+  }
+
+  /**
+   * 아이템 마커 위에 뜨는 키 배지 — "이 아이템은 지금 이 키" 를 항상 눈으로 확인시키고,
+   * 클릭하면 재매핑 팝업을 연다. 히트 영역은 `this.keyBadges` 에 쌓아 `hitKeyBadge` 가 쓴다.
+   */
+  renderKeyBadge(ctx, item, p) {
+    const bx = p.x;
+    const by = p.y - KEY_BADGE_OFFSET;
+    this.keyBadges.push({ x: bx, y: by, item });
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(bx, by, KEY_BADGE_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = this.pickerItem === item ? '#e8b23a' : '#2a1f14';
+    ctx.fill();
+    ctx.strokeStyle = '#f4ead9';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#f4ead9';
+    ctx.font = 'bold 12px NeoDunggeunmo, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(bindLabel(item.bind), bx, by + 1);
     ctx.restore();
   }
 
