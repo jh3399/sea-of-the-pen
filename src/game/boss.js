@@ -27,16 +27,19 @@ export const BOSS_ROLE = 'boss';
 export const BOSS_TUNING = {
   /**
    * 쓰러지는 잔여 면적 비율. **0 이 아닌 것이 이름값이다** — 不可殺伊(죽일 수 없는 것)라
-   * 몸이 사라지지 않는다. 3할 넘게 뜯기면 싸움을 그만두고 늘어질 뿐이다.
+   * 몸이 사라지지 않는다. 2할 채 안 되게 뜯겨도 싸움을 그만두고 늘어진다.
+   *
+   * ★ 체력을 절반으로 낮춘 값이다 (0.62 → 0.81). 원래는 38%(1 − 0.62)를 깎아야 쓰러졌는데,
+   *   그 절반인 19%(1 − 0.81)만 깎으면 쓰러지도록 문턱을 올렸다 — 필요 피해량이 절반이 된다.
    */
-  fallAt: 0.62,
+  fallAt: 0.81,
   /**
    * 흡입이 끝난 뒤 입이 열려 있는 시간 (s). 이때만 핵에 포탄이 박힌다.
    *
    * ★ **이 값이 싸움의 길이를 정한다.** 재장전이 0.8s(`CANNON_TUNING.reload`)이니 창 하나에
-   *   최대 7발이고, 발당 1.33%(살의 파임 캡)라 창 하나가 약 9%다. 쓰러지는 문턱까지 38%면
-   *   **창 넷**, 주기 11s 이니 대략 45~60초 — 3페이즈가 다 나올 만큼 길고 늘어지지는 않는다.
-   *   여기를 줄이려면 `fallAt` 을 같이 올려야 한다.
+   *   최대 7발이고, 발당 1.33%(살의 파임 캡)라 창 하나가 약 9%다. 쓰러지는 문턱까지 19%면
+   *   **창 둘**, 주기 11s 이니 대략 22~30초로 줄었다 (`fallAt` 을 0.62 → 0.81 로 올려 체력을
+   *   절반으로 깎은 결과 — 원래는 38%·창 넷·45~60초였다). 늘리려면 `fallAt` 을 같이 낮춰야 한다.
    */
   openFor: 6.0,
   /** 흡입 지속 (s) 과 주기 (s). */
@@ -75,7 +78,7 @@ export const BOSS_TUNING = {
 export const BOSS_PHASES = [
   {
     name: '누워 있다',
-    until: 0.86,
+    until: 0.93,
     emitters: [
       { x: 0, y: 13, angle: -90, count: 5, spread: 72, period: 2.0, radius: 5.6, speed: 26, mass: 70, projectileRadius: 0.34, lifetime: 2.6 },
     ],
@@ -85,7 +88,7 @@ export const BOSS_PHASES = [
   },
   {
     name: '눈을 뜬다',
-    until: 0.72,
+    until: 0.86,
     emitters: [
       { x: 0, y: 13, angle: -90, count: 7, spread: 104, period: 1.7, radius: 5.6, speed: 28, mass: 70, projectileRadius: 0.34, lifetime: 2.6 },
       { x: 0, y: 13, angle: -90, count: 3, spread: 26, period: 2.3, phase: 0.8, spin: 22, radius: 5.6, speed: 34, mass: 70, projectileRadius: 0.28, lifetime: 2.4 },
