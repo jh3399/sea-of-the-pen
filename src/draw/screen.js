@@ -37,6 +37,7 @@ const PALETTE_MATERIALS = ['wood', 'iron'];
 const ITEM_MARKER_HIT_PX = 16;
 const ITEM_MARKER_PIXEL = 3;
 const RUDDER_MARKER_PIXEL = ITEM_MARKER_PIXEL * 2;
+const BOOSTER_MARKER_PIXEL = ITEM_MARKER_PIXEL * 2;
 
 /** 노 배치 모드의 의사 타입 — 노는 카탈로그 아이템이 아니라 기본 장치라 `placing` 에만 산다. */
 const PLACING_OAR = 'oar';
@@ -665,7 +666,8 @@ class DrawScreen {
       drawRudderMarker(ctx, p.x, p.y, RUDDER_MARKER_PIXEL);
     } else if (ANGLE_KINDS.has(ITEM_CATALOG[type]?.kind)) {
       // 부스터·돛 — 그리드가 위를 보고 있어 `markerAngleToward` 를 거친다 (노와 같은 경로).
-      drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL,
+      drawItemMarker(ctx, type, p.x, p.y,
+        type === 'booster' ? BOOSTER_MARKER_PIXEL : ITEM_MARKER_PIXEL,
         markerAngleToward(tip.x - p.x, tip.y - p.y));
     } else {
       drawItemMarker(ctx, type, p.x, p.y, ITEM_MARKER_PIXEL);

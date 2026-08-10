@@ -29,6 +29,7 @@ const TAU = Math.PI * 2;
  *  여기는 월드 좌표라 선체 스케일에 맞는 작은 값을 쓴다. */
 const ITEM_PIXEL = 0.06;
 const RUDDER_PIXEL = ITEM_PIXEL * 2;
+const BOOSTER_PIXEL = ITEM_PIXEL * 2;
 const CREW_PIXEL = 0.05;
 /** 노는 선체 밖으로 뻗는 장치라 다른 마커보다 크다 (22칸 × 0.09 = 약 2 m 짜리 노). */
 const OAR_PIXEL = 0.09;
@@ -689,6 +690,16 @@ export function drawHullBody(ctx, hull, { target = false } = {}) {
     if (item.type === 'oar' && item.side) { drawOar(ctx, item, hull.control); continue; }
     if (item.type === 'rudder') { drawRudder(ctx, item, rudderAngle); continue; }
     if (item.type === 'cannon') { drawCannon(ctx, hull, item); continue; }
+    if (item.type === 'booster') {
+      // 설계 화면과 같은 경로(markerAngleToward) — 그리드의 +Y(불꽃 반대쪽 = 몸체)를
+      // 부착 각도(추진 방향)로 돌린다. 안 돌리면 어느 방향으로 달았든 항상 같은 자리를
+      // 향해 그려져, 회전 각도가 있는 부스터는 그림과 실제 추진 방향이 어긋난다.
+      const a = item.angle ?? 0;
+      drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(
+        ctx, 'booster', 0, 0, BOOSTER_PIXEL, markerAngleToward(Math.cos(a), Math.sin(a)),
+      ));
+      continue;
+    }
     drawUprightIcon(ctx, item.x, item.y, () => drawItemMarker(ctx, item.type, 0, 0, ITEM_PIXEL));
   }
   if (hull.crew) {
