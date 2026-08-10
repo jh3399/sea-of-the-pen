@@ -104,11 +104,11 @@ export const STAGES = [
      *   `hasNextStage()` 로만 판단하므로(스테이지 이름을 모른다) 여기를 클리어하면
      *   `index.html?ending=1` 로 간다. 뒤에 바다를 더하면 엔딩이 그쪽으로 옮겨 간다.
      *
-     * ⚠ **`items` 에 `'cannon'` 이 아직 없다 — 이대로면 보스를 못 이긴다.**
-     *   보스의 핵은 `hull`(`material:'flesh'`)이라 포탄으로만 깎이는데, 대포가 안 열려
-     *   있으면 무기 없이 들어가게 된다. [S-10] 대사는 이미 "대포. 배에 붙이고 F 로 쏴"
-     *   라고 건네주므로 **인물이 준 것을 화면이 안 주는 상태**다.
-     *   승형님이 대포 밸런싱과 함께 여기 `items: ['cannon']` 을 넣기로 했다.
+     * `items: ['cannon']` — 보스의 핵은 `hull`(`material:'flesh'`)이라 포탄으로만 깎인다.
+     *   [S-10] 대사가 "대포. 배에 붙이고 F 로 쏴"라고 건네는 자리(`maw` 의 `interlude`)가
+     *   끝나면 `playInterlude` 가 `advanceStage()` 로 여기로 넘어온 뒤 `draw.html` 을 연다 —
+     *   그 그리기 화면이 읽는 `unlockedItems()` 가 바로 이 스테이지 것이므로, 대포는
+     *   **여기**(전 바다가 아니라)에 열어야 인물이 건넨 것과 화면이 주는 것이 맞는다.
      */
     id: 'bulgasari',
     label: '불가사리의 바다',
@@ -119,7 +119,7 @@ export const STAGES = [
     //   그대로 맞는다. 설정(Esc)은 끌 수 없으니 보스 시계를 멈춰 막고, 지도(Tab)는
     //   **데이터로** 막는다. 서사적으로도 공짜다 — 여기가 노선의 끝이라 읽을 해도가 없다.
     gear: false,
-    items: [],
+    items: ['cannon'],
     materials: [],
   },
 ];
