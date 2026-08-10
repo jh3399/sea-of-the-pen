@@ -10,6 +10,16 @@
   <!-- 애니메이션 픽셀 배경 (메뉴·컷신 공용). 씬 전환은 scene/pixelbg.js -->
   <canvas id="bg" class="pixel" aria-hidden="true"></canvas>
 
+  <!-- 그림 배경. 절차적 캔버스는 논리 356×200 이라 AI 도트 원본의 결이 통째로 뭉갠다 —
+       타이틀에서 이미 겪은 문제라 같은 길을 낸다: 그림이 있는 씬은 이 레이어가 원본
+       해상도로 깔고, 없는 씬은 투명해져서 아래 캔버스가 그대로 보인다.
+       src 와 페이드는 scene/pixelbg.js 의 setScene() 이 관리한다. -->
+  <img id="bg-photo" alt="" aria-hidden="true" />
+
+  <!-- 그림 위에서 움직이는 것만 다시 그리는 캔버스 (창밖 바다·숨). scene/scenefx.js.
+       그림과 **같은 원본 크기 + 같은 object-fit** 이어야 창 비율이 바뀌어도 안 어긋난다. -->
+  <canvas id="scene-fx" aria-hidden="true"></canvas>
+
   <div id="app">
     <section id="screen-title" class="screen active">
       <div class="title-wrap">
@@ -46,6 +56,29 @@
 
   <!-- 대화창 바깥에 둔다 — 안에 두면 이 클릭이 대사 진행까지 같이 먹는다 -->
   <button id="btn-skip" class="skip-btn" type="button" hidden>건너뛰기 (Esc)</button>
+
+  <!-- THE END — 엔딩 대사가 끝나면 뜬다. 클릭·키 아무거나로 타이틀로 돌아간다.
+       ⚠ `hidden` 을 쓰므로 CSS 에서 `[hidden] { display: none }` 이 반드시 이겨야 한다
+          (`.the-end` 에 display 를 주면 hidden 이 무시돼 화면을 영영 덮는다). -->
+  <div id="the-end" class="the-end" hidden aria-live="polite">
+    <p class="the-end-mark">THE END</p>
+    <p class="the-end-hint">아무 키나 누르세요</p>
+  </div>
+
+  <!-- 확인창 — 「이야기 다시 보기」는 이야기만 다시 트는 것이 아니라 **진행을 버리고
+       처음으로 돌아가는** 버튼이다. 그 사실을 누르기 전에 말해 주는 자리.
+       브라우저 confirm() 을 안 쓰는 이유: 픽셀 톤이 깨지고, 무엇이 사라지는지 못 적는다. -->
+  <div id="confirm-layer" class="confirm-layer" hidden
+       role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="confirm-box">
+      <h2 id="confirm-title">처음부터 다시 시작합니다</h2>
+      <p>인트로를 다시 보고 첫 바다부터 시작합니다.<br />지금까지의 진행과 그린 배는 사라집니다.</p>
+      <div class="confirm-actions">
+        <button id="btn-confirm-yes" class="btn-primary" type="button">예</button>
+        <button id="btn-confirm-no" class="btn-tool" type="button">아니요 (Esc)</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/src/menu/screen.js"></script>
 </body>

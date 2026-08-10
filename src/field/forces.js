@@ -8,17 +8,40 @@ export const SAIL_TUNING = {
    * 풍압계수 — 힘 = coeff × 면적 × (상대풍·법선)|상대풍·법선|.
    *
    * 실제 값이 아니라 게임 노브이고, **기준은 역풍 페널티다.** D3 2장("1장의 정답이 페널티로
-   * 반전")이 성립하려면 역풍에서 돛을 단 배가 눈에 띄게 느려야 한다. 6.5 이면 20초 주행
-   * 거리가 87 → 52 m 로 41% 손해다.
+   * 반전")이 성립하려면 역풍에서 돛을 단 배가 눈에 띄게 느려야 한다.
    *
    * ⚠ 노 추력(oarStrokePeak)과 **묶여 있다.** 이 값은 돛 힘과 노 힘의 비로 체감되므로,
    *   노를 세게 만들면 같은 계수라도 페널티가 희석된다 (실측: 노 250 → 400 으로 올렸더니
    *   페널티가 38% → 15% 로 떨어졌다). 한쪽을 건드리면 벤치의 역풍 케이스를 반드시 다시 본다.
+   *   ⚠ 반대쪽으로도 똑같이 움직인다: 조작감 때문에 노를 800 → 550 으로 **내리자** 같은 6.5
+   *     에서 페널티가 41% → **87%** 로 뛰었다 (20초에 78 → 10 m). 2장의 "돛을 떼라"는 이제
+   *     권유가 아니라 사실상 강제다. 돛을 달고도 기어서 통과할 여지를 남기고 싶으면 **여기를
+   *     내려라** — 노를 다시 올리면 조작감 판정이 되돌아간다.
    */
   pressureCoeff: 6.5,
   /** 젖은 천은 무겁고 바람을 흘린다 (§3 원칙 2 — 젖음 해법의 대가). 규칙표가 이 값을 켠다. */
   wetScale: 0.5,
 };
+
+/**
+ * ★ 순수 함수 — 상대풍과 돛 법선의 내적(w·n). 부호가 있다: 순풍이면 +, 역풍이면 −.
+ *
+ * `sailForceLocal` 의 힘 크기뿐 아니라 `sail/render.js` 의 돛 배 부름(billow) 연출도 같은
+ * 정렬도를 쓴다 — 힘과 그림이 서로 다른 식으로 갈라지면 "세게 미는데 안 부푼 돛"이 생긴다.
+ *
+ * @param {object} item 돛 아이템 (angle = 법선)
+ * @param {{x:number,y:number}} windLocal 선체 로컬 좌표계의 바람 벡터
+ * @param {{u:number,v:number}} vel 선체 로컬 속도 — 상대풍을 만들려면 빼야 한다
+ * @returns {number}
+ */
+export function sailAlignment(item, windLocal, vel) {
+  if (!windLocal) return 0;
+  const wx = windLocal.x - vel.u;
+  const wy = windLocal.y - vel.v;
+  const nx = Math.cos(item.angle ?? 0);
+  const ny = Math.sin(item.angle ?? 0);
+  return wx * nx + wy * ny;
+}
 
 /**
  * ★ 순수 함수 — 돛 하나가 내는 로컬 힘.
@@ -39,14 +62,9 @@ export function sailForceLocal(item, windLocal, vel) {
   const area = item.area ?? 0;
   if (!(area > 0) || !windLocal) return { fx: 0, fy: 0 };
 
-  // 상대풍 — 배가 바람을 따라 달리면 돛이 받는 바람은 그만큼 약해진다.
-  // 이것 하나로 "순풍 항주는 풍속을 못 넘는다"가 저절로 성립한다.
-  const wx = windLocal.x - vel.u;
-  const wy = windLocal.y - vel.v;
-
+  const dot = sailAlignment(item, windLocal, vel);
   const nx = Math.cos(item.angle ?? 0);
   const ny = Math.sin(item.angle ?? 0);
-  const dot = wx * nx + wy * ny;
 
   const scale = item.status?.wet > 0 ? SAIL_TUNING.wetScale : 1;
   const f = SAIL_TUNING.pressureCoeff * area * dot * Math.abs(dot) * scale;

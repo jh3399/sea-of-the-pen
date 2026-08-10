@@ -72,6 +72,43 @@ html, body {
 
 .hud-clock-icon { font-size: 20px; }
 
+/* HUD 오른쪽 끝의 설정 손잡이.
+   ⚠ `.hud` 가 `pointer-events: none` 이라 (바다를 클릭으로 못 만지게 되는 것을 막는 설정)
+     이 버튼만 되살려야 한다. 안 되살리면 눌리지 않는 아이콘이 된다.
+   `margin-left: auto` 인 이유: `.hud-distance` 는 flex:1 이지만 max-width 640 에서 멈추므로
+   남는 공간이 그대로 뜬다. auto 마진이 그 공간을 먹어야 오른쪽 끝에 붙는다. */
+.hud-icon-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: 24px;
+  line-height: 1;
+  background: var(--panel);
+  border: 3px solid var(--panel-edge);
+  border-radius: 10px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.hud-icon-btn:hover { filter: brightness(1.12); }
+
+.hud-icon-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.hud-icon-btn:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
 .hud-label {
   font-size: 13px;
   opacity: 0.75;
@@ -108,6 +145,20 @@ html, body {
   transition: width 0.2s linear;
 }
 
+/* 보스의 잔여 몸. 거리 바(--bar-fill)와 **겸용하지 않는다** — 4장은 보스가 쓰러질 때까지
+   도착 지점 자체가 없다가 그 순간 생기므로, 둘 다 살아 있어야 한다. */
+.hud-boss {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.hud-bar-fill-boss {
+  width: 100%;
+  background: linear-gradient(90deg, #3d1440, #9c2f6e 45%, #f06fa8);
+}
+
 .hud-bar-flag {
   position: absolute;
   right: -2px;
@@ -123,19 +174,178 @@ html, body {
   text-align: right;
 }
 
-.hud-banner {
-  position: absolute;
-  top: 40%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+.hud-equipment {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: max-content;
+}
+
+.hud-equipment-chip {
+  padding: 8px 11px;
+  color: var(--ink);
+  font-size: 14px;
   background: var(--panel);
-  border: 3px solid var(--gold);
-  border-radius: 10px;
-  padding: 18px 36px;
-  font-size: 32px;
+  border: 3px solid var(--panel-edge);
+  border-radius: 7px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+
+.hud-equipment-chip.ready {
   color: var(--gold);
+  border-color: var(--gold);
+}
+
+.hud-equipment-chip.reloading {
+  color: rgba(234, 246, 255, 0.7);
+  border-color: #496079;
+}
+
+.clear-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 12, 28, 0.72);
+  pointer-events: auto;
+}
+
+.clear-panel {
+  width: min(520px, 100%);
+  padding: 28px 30px 24px;
+  text-align: center;
+  background: var(--panel);
+  border: 4px solid var(--panel-edge);
+  border-radius: 12px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.4), inset 0 0 0 2px rgba(255, 255, 255, 0.06);
+}
+
+.clear-kicker {
+  margin: 0 0 4px;
+  color: var(--panel-edge);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+}
+
+/* 침몰 사유 — 글자 하나로 "왜 졌는지"를 말한다. 다시 그릴 때 무엇을 고쳐야 하는지가
+   여기서 나와야 실패가 벌이 아니라 정보가 된다. */
+.fail-badge {
+  display: inline-block;
+  margin: 10px 0 0;
+  padding: 5px 14px;
+  border: 2px solid rgba(255, 120, 120, 0.5);
+  border-radius: 999px;
+  background: rgba(120, 24, 24, 0.35);
+  color: #ffc9c9;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+
+.clear-panel h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(30px, 7vw, 44px);
+  line-height: 1.15;
+}
+
+.clear-stars {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 18px 0 2px;
+  color: #496079;
+  font-size: clamp(42px, 11vw, 62px);
+  line-height: 1;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+
+.clear-stars span.active {
+  color: var(--gold);
+  text-shadow: 0 0 14px rgba(255, 207, 92, 0.45), 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+
+.clear-rating {
+  margin: 4px 0 18px;
+  color: var(--gold);
+  font-size: 16px;
+}
+
+.clear-record {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 0 auto 22px;
+  padding: 12px 16px;
+  background: var(--bar-track);
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+}
+
+.clear-record span {
+  color: rgba(234, 246, 255, 0.72);
+  font-size: 14px;
+}
+
+.clear-record strong {
+  color: var(--gold);
+  font-size: 28px;
+  font-weight: normal;
+}
+
+.clear-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.clear-btn {
+  min-height: 48px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  background: #16385f;
+  border: 3px solid var(--panel-edge);
+  border-radius: 7px;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.35);
-  pointer-events: none;
+  cursor: pointer;
+}
+
+.clear-btn-primary {
+  color: #18233a;
+  background: var(--gold);
+  border-color: #fff0ae;
+}
+
+.clear-btn-ghost {
+  background: transparent;
+}
+
+.clear-btn:not(:disabled):hover { filter: brightness(1.12); }
+
+.clear-btn:not(:disabled):active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.clear-btn:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
+.clear-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.clear-note {
+  margin: 13px 0 0;
+  color: rgba(234, 246, 255, 0.58);
+  font-size: 13px;
 }
 
 .hidden { display: none; }
@@ -143,4 +353,175 @@ html, body {
 @media (max-width: 640px) {
   .hud { flex-direction: column; }
   .hud-distance { max-width: none; width: 100%; }
+  /* 세로로 쌓이면 설정 버튼이 세 번째 줄을 혼자 차지해 바다를 190 px 나 덮는다.
+     흐름에서 빼 시계 옆(비어 있는 자리)에 올린다. */
+  .hud-icon-btn { position: absolute; top: 0; right: 0; margin-left: 0; }
+  .hud-equipment { align-items: flex-start; }
+  .clear-overlay { padding: 14px; }
+  .clear-panel { padding: 22px 18px 18px; }
+  .clear-actions { grid-template-columns: 1fr; }
+  .clear-record { margin-bottom: 16px; }
+}
+
+/* ── 조작 안내 (연습 해역 전용) ──────────────────────────────────
+   HUD 와 같은 톤이되 아래에 둔다 — 위는 시간·거리가 쓰고, 눈이 배를 따라가는 동안
+   시야 가장자리에 걸리는 자리다. pointer-events 를 끄는 것이 중요하다: 안내판이
+   클릭을 먹으면 그 아래 바다를 못 만진다. */
+
+.sail-hints {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 10px 14px 8px;
+  color: var(--ink);
+  background: rgba(8, 20, 34, 0.82);
+  border: 2px solid rgba(140, 190, 230, 0.35);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transition: opacity 700ms ease;
+}
+
+/* 셋을 다 해 보면 사라진다. display 를 건드리지 않고 opacity 만 내리는 이유는
+   전환이 뚝 끊기지 않게 하기 위해서다 — 다 배운 사람에게 판이 툭 없어지면 놀란다. */
+.sail-hints.done { opacity: 0; }
+
+.sail-hints-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  letter-spacing: 2px;
+  opacity: 0.6;
+}
+
+.sail-hints-list {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sail-hints-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 17px;
+  /* 아직 안 해 본 줄은 눌러 둔다. 대비가 곧 "남은 것"의 표시다. */
+  opacity: 0.5;
+  transition: opacity 260ms ease, color 260ms ease;
+}
+
+.sail-hints-list li.on {
+  opacity: 1;
+  color: var(--accent, #f0c987);
+}
+
+.sail-hints-key {
+  padding: 2px 7px;
+  color: #0b1c2c;
+  background: var(--ink, #f5e6c8);
+  border: 2px solid rgba(0, 0, 0, 0.4);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.sail-hints-list li.on .sail-hints-key {
+  background: var(--accent, #f0c987);
+}
+
+@media (max-width: 760px) {
+  .sail-hints { left: 8px; right: 8px; bottom: 10px; transform: none; }
+  .sail-hints-list { flex-wrap: wrap; gap: 10px 14px; }
+}
+
+/* ── 항해 중 오버레이 (Tab 장비·지도 / Esc 설정) ────────────────
+   클리어 오버레이와 같은 톤이되 항해를 멈추지는 않는다 — 창을 열어도 배는 계속 뜬다.
+   그래서 배경을 덜 덮는다(0.62). 완전히 가리면 "무슨 일이 났나" 하고 닫게 된다. */
+
+.sail-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(4, 12, 22, 0.62);
+  z-index: 20;
+}
+
+.sail-panel.hidden { display: none; }
+
+.sail-panel-box {
+  width: min(420px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 18px 20px 16px;
+  color: var(--ink);
+  background: #0b1c2c;
+  border: 3px solid #3d6693;
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.45);
+  /* ⚠ 한글은 기본값(normal)에서 **음절 단위로 아무 데서나** 끊긴다 — "처음부 / 터" 가
+     그래서 나온다. keep-all 은 어절(띄어쓰기) 단위로만 끊으므로 낱말이 안 쪼개진다.
+     폭을 키우는 것만으로는 안 된다: 문장이 조금만 길어지면 같은 일이 다시 난다. */
+  word-break: keep-all;
+}
+
+.sail-panel-box-narrow { width: min(360px, 100%); }
+
+.sail-panel-box h2 {
+  margin: 0 0 12px;
+  font-size: 24px;
+  letter-spacing: 2px;
+}
+
+.sail-panel-sub {
+  margin: 14px 0 6px;
+  font-size: 15px;
+  letter-spacing: 2px;
+  opacity: 0.6;
+}
+.sail-panel-sub:first-of-type { margin-top: 0; }
+
+/* 지도는 논리 320×150 을 통째로 확대한다 — 씬 배경과 같은 도트 규칙이다. */
+.voyage-map {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  border: 2px solid #2f5178;
+}
+
+.gear-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 17px;
+}
+
+.gear-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(140, 190, 230, 0.16);
+}
+
+.gear-list li:last-child { border-bottom: 0; }
+.gear-list .gear-bind { color: var(--accent, #f0c987); }
+.gear-list .gear-empty { opacity: 0.55; justify-content: flex-start; }
+
+.sail-panel-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.sail-panel-actions-stack { flex-direction: column; }
+.sail-panel-actions .clear-btn { flex: 1; }
+
+.sail-panel-note {
+  margin: 10px 0 0;
+  font-size: 14px;
+  opacity: 0.55;
+  text-align: center;
 }

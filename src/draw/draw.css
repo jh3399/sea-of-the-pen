@@ -16,14 +16,26 @@
   --bad: #ff6b6b;
   --ok: #8ce99a;
 
-  --paper: #f3e6c8;
-  --paper-line: rgba(90, 65, 30, 0.14);
-  --paper-edge: #e4d3a8;
+  --paper: #fffdf7;
+  --paper-line: rgba(105, 88, 58, 0.10);
+  --paper-edge: #e8e1d3;
   --wood: #8a5a34;
   --wood-dark: #4a2f1a;
   --wood-light: #c98a52;
   --banner: #2f5178;
   --banner-light: #3d6693;
+
+  /* ★ 만년필 커서 — 모루가 S-04 에서 준 그 펜이다. 모양·팔레트는 `bgkit.js` 의
+     `fountainPen`(과 그것을 쓰는 `the_pen` 씬)과 같은 물건이어야 한다. 여기만 45°로
+     눕혔는데, 커서는 촉이 왼쪽 아래를 향해야 어디를 찍는지 눈으로 읽히기 때문이다.
+     ⚠ hotspot 은 **촉 끝(3 29)** 이다. 다른 데 두면 그리는 자리와 커서가 어긋난다.
+     ⚠ 색은 `#` 을 %23 으로 써야 한다 — data URI 안에서 `#` 은 프래그먼트 구분자다.
+     ⚠ 마지막 `crosshair` 는 폴백이다. SVG 커서를 못 읽는 환경에서 커서가 사라지면
+       그리기 화면이 통째로 못 쓰게 되므로 반드시 남긴다. */
+  --pen-cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' shape-rendering='crispEdges'%3E%3Cg stroke='%230b111a' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpolygon points='9,18 14,23 29.5,7.4 24.5,2.4' fill='%2316202e'/%3E%3Cpolygon points='7.1,19 13,24.9 14.5,23.5 8.5,17.5' fill='%23e8c46a'/%3E%3Cpolygon points='5.1,22.6 9.4,26.9 12.2,24 8,19.8' fill='%2316202e'/%3E%3Cpolygon points='3,29 5.1,22.6 9.4,26.9' fill='%23e8c46a'/%3E%3Cpolygon points='24.5,2.4 29.5,7.4 31.3,5.7 26.3,0.7' fill='%23a8813a'/%3E%3C/g%3E%3Cg stroke='none'%3E%3Cpolygon points='9,18 24.5,2.4 27,4.9 11.5,20.5' fill='%232c4360'/%3E%3Cpolygon points='15,15.6 16.4,17 23.5,9.9 22.1,8.5' fill='%235fd6e8'/%3E%3Cpolygon points='17.1,6.3 19.3,8.6 24.3,3.6 22,1.4' fill='%23e8c46a' stroke='%230b111a' stroke-width='1.2'/%3E%3Crect x='6.2' y='24.4' width='1.8' height='1.8' fill='%230b111a'/%3E%3Cpolygon points='3,29 4,25.8 6.5,25.5' fill='%23f7e6ae'/%3E%3C/g%3E%3C/svg%3E")
+    3 29,
+    crosshair;
 }
 
 * { box-sizing: border-box; }
@@ -81,7 +93,7 @@ html, body {
     var(--paper);
   border: 2px solid var(--paper-edge);
   overflow: hidden;
-  cursor: crosshair;
+  cursor: var(--pen-cursor);
   touch-action: none;
 }
 
@@ -189,6 +201,165 @@ html, body {
 .page-status.ok { border-left-color: #2f7a4a; color: #1f4d30; }
 .page-status.bad { border-left-color: #a33a2b; color: #7a2a1f; }
 
+/* ── 아이템 키 매핑 배지·선택 팝업 ─────────────────────────── */
+
+.key-picker {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: #fbf3de;
+  border: 2px solid var(--wood-dark);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+}
+
+.key-picker.hidden { display: none; }
+
+.key-picker button {
+  font-family: inherit;
+  font-size: 16px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--wood-dark);
+  background: rgba(90, 65, 30, 0.06);
+  border: 1px solid rgba(90, 65, 30, 0.35);
+  cursor: pointer;
+}
+
+.key-picker button:hover { background: rgba(90, 65, 30, 0.18); }
+.key-picker button.current { background: rgba(47, 81, 120, 0.25); border-color: var(--banner); }
+
+/* ── 키 매핑 버튼 · 목록 팝업 ──────────────────────────────── */
+
+.keymap-btn {
+  font-family: inherit;
+  font-size: 18px;
+  padding: 10px 0;
+  color: var(--wood-dark);
+  background: #fbf3de;
+  border: 2px solid var(--wood-dark);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.keymap-btn:hover { background: #fff8e8; }
+.keymap-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 rgba(0, 0, 0, 0.3); }
+
+.keymap-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 24px;
+  /* 배경을 투명하게 둔다 — 화면 전체를 덮는 클릭 캐처는 그대로 필요하지만(바깥 클릭 시
+     닫기), 어둡게 칠하면 카드가 오른쪽에 있어도 가운데 배가 흐려져 보인다. */
+  background: transparent;
+}
+
+.keymap-modal.hidden { display: none; }
+
+.keymap-card {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  color: var(--wood-dark);
+  background:
+    repeating-linear-gradient(0deg, rgba(105, 88, 58, 0.08) 0 1px, transparent 1px 28px),
+    #fffaf0;
+  border: 3px solid var(--wood-dark);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.38);
+}
+
+.keymap-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-size: 21px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: linear-gradient(180deg, var(--banner-light), var(--banner));
+  border-bottom: 2px solid var(--wood-dark);
+}
+
+.keymap-close {
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  color: #fff;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.keymap-close:hover { opacity: 0.75; }
+
+.keymap-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+}
+
+.keymap-empty {
+  padding: 10px 4px;
+  font-size: 17px;
+  opacity: 0.7;
+}
+
+.keymap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(90, 65, 30, 0.15);
+}
+
+.keymap-row:last-child { border-bottom: none; }
+
+.keymap-row .icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.keymap-row .icon svg { width: 100%; height: 100%; }
+
+.keymap-row .name {
+  flex: 1;
+  font-size: 18px;
+}
+
+.keymap-row .keys {
+  display: flex;
+  gap: 4px;
+}
+
+.keymap-row .keys button {
+  font-family: inherit;
+  font-size: 15px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--wood-dark);
+  background: rgba(90, 65, 30, 0.06);
+  border: 1px solid rgba(90, 65, 30, 0.35);
+  cursor: pointer;
+}
+
+.keymap-row .keys button:hover { background: rgba(90, 65, 30, 0.18); }
+.keymap-row .keys button.current { background: rgba(47, 81, 120, 0.25); border-color: var(--banner); }
+
 /* ── 우측 패널 ─────────────────────────────────────────────── */
 
 .side {
@@ -241,6 +412,13 @@ html, body {
   background: rgba(90, 65, 30, 0.03);
 }
 
+/* 기본 장치 행의 상태 꼬리표 (노 — 위치 미정 / 지정됨) */
+.item-row .row-note {
+  display: block;
+  font-size: 14px;
+  opacity: 0.65;
+}
+
 .item-row .icon, .material-row .icon {
   width: 40px;
   height: 40px;
@@ -289,7 +467,174 @@ html, body {
 .menu-btn:hover { background: #fff8e8; }
 .menu-btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 rgba(0, 0, 0, 0.3); }
 
+/* ── 그리기 튜토리얼 ────────────────────────────────────────── */
+
+.side-top-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tutorial-replay-btn,
+.tutorial-next,
+.tutorial-skip {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tutorial-replay-btn {
+  font-size: 17px;
+  padding: 7px 12px;
+  color: var(--wood-dark);
+  background: #fbf3de;
+  border: 2px solid var(--wood-dark);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.tutorial-replay-btn:hover { background: #fff8e8; }
+.tutorial-replay-btn:active { transform: translate(2px, 2px); box-shadow: none; }
+
+.draw-tutorial {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.draw-tutorial[hidden] { display: none; }
+
+.tutorial-mask,
+.tutorial-ring,
+.tutorial-shield,
+.tutorial-card {
+  position: fixed;
+}
+
+.tutorial-mask {
+  /* 입력 차단만 담당한다. 반투명 마스크 네 장을 맞붙이면 소수점 좌표에서 이음선이 보인다. */
+  background: transparent;
+  pointer-events: auto;
+}
+
+.tutorial-ring {
+  border: 4px solid var(--accent);
+  outline: 2px solid #fffdf7;
+  /* 하나의 그림자로 화면을 덮어 작은 대상에서도 마스크 경계선이 생기지 않게 한다. */
+  box-shadow:
+    0 0 0 9999px rgba(5, 13, 22, 0.72),
+    0 0 0 3px rgba(11, 28, 44, 0.8),
+    0 0 22px rgba(240, 201, 135, 0.9);
+  animation: tutorial-pulse 1.25s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.tutorial-shield { background: transparent; }
+
+.tutorial-card {
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 18px 19px 16px;
+  color: var(--wood-dark);
+  background:
+    repeating-linear-gradient(0deg, rgba(105, 88, 58, 0.08) 0 1px, transparent 1px 28px),
+    #fffaf0;
+  border: 3px solid var(--wood-dark);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.38);
+  pointer-events: auto;
+}
+
+.tutorial-step {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 3px 8px;
+  color: #fff;
+  background: var(--banner);
+  font-size: 16px;
+  letter-spacing: 1px;
+}
+
+.tutorial-card h2 {
+  margin: 0 0 10px;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.tutorial-card p {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.55;
+}
+
+.tutorial-card .tutorial-hint {
+  margin-top: 12px;
+  padding: 8px 10px;
+  color: #244b66;
+  background: rgba(127, 227, 255, 0.18);
+  border-left: 3px solid var(--banner);
+  font-size: 16px;
+}
+
+.tutorial-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.tutorial-next,
+.tutorial-skip {
+  min-height: 42px;
+  padding: 8px 14px;
+  border: 2px solid var(--wood-dark);
+  font-size: 17px;
+}
+
+.tutorial-next {
+  margin-left: auto;
+  color: #4a2f10;
+  background: linear-gradient(180deg, #ffe3a3, var(--accent));
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+
+.tutorial-skip {
+  color: var(--wood-dark);
+  background: #fbf3de;
+}
+
+.tutorial-skip span { opacity: 0.65; font-size: 14px; }
+.tutorial-next:hover, .tutorial-skip:hover { filter: brightness(1.05); }
+.tutorial-next:active, .tutorial-skip:active { transform: translate(1px, 1px); }
+
+.tutorial-replay-btn:focus-visible,
+.tutorial-next:focus-visible,
+.tutorial-skip:focus-visible {
+  outline: 3px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+@keyframes tutorial-pulse {
+  from { filter: brightness(0.95); }
+  to { filter: brightness(1.25); }
+}
+
 @media (max-width: 760px) {
   .side { width: 260px; }
   .item-row, .material-row { font-size: 17px; }
+  .tutorial-replay-btn, .menu-btn { font-size: 15px; padding-inline: 9px; }
+  .tutorial-card h2 { font-size: 21px; }
+  .tutorial-card p { font-size: 16px; }
+}
+
+@media (max-height: 560px) {
+  .tutorial-card { padding: 12px 14px; }
+  .tutorial-card h2 { font-size: 20px; margin-bottom: 6px; }
+  .tutorial-card p { font-size: 15px; line-height: 1.4; }
+  .tutorial-actions { margin-top: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-ring { animation: none; }
 }

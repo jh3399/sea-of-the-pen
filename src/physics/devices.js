@@ -10,6 +10,9 @@
 // 장치 배치의 순수한 결과가 되고 키의 전용 양력식은 기본 장착에서 빠진다.
 import { Vec2, RevoluteJoint } from 'planck';
 import { HYDRO_TUNING } from '../hull/params.js';
+import {
+  CANNON_TUNING, cannonEnvelope, cannonPeakForce, cannonShotRequest,
+} from '../items/cannon.js';
 
 export const DEVICE_TUNING = {
   // --- 노: 스트로크(한 번 젓기) 모델 ---
@@ -49,8 +52,15 @@ export const DEVICE_TUNING = {
    *
    * 이 값을 건드리면 종단 속도가 움직이고, 종단 속도는 §6 화산대 통과 타이밍(가설 C)의
    * 전제다. 바꾼 뒤에는 반드시 `npm run bench` 로 젖은 나무배 케이스를 다시 봐야 한다.
+   *
+   * 800 → 550: 사람이 몰아 보고 "노가 배를 너무 세게 민다"는 판정이 나왔다. **여기가 한 번
+   * 젓기의 체감을 정하는 노브다** — 정지에서 한 번 저었을 때 붙는 속도가 1.17 → 0.81 m/s 로
+   * 31% 줄었다. 반면 종단은 거의 안 따라 내려온다 (같은 항력에서 4.66 → 4.44). falloff 곡선이
+   * 종단을 `oarMaxSpeed` 에 묶어 두기 때문이다 — 즉 이 값은 **가속의 크기**를 정하고 최고
+   * 속도는 `oarMaxSpeed` 가 정한다. "느려졌다"가 아니라 "한 번에 덜 튀어나간다"가 된다.
+   * (같은 커밋에서 들어간 `HYDRO_TUNING.dragLowSpeed` 까지 합치면 종단 4.24 m/s.)
    */
-  oarStrokePeak: 800,
+  oarStrokePeak: 550,
   /**
    * 노깃의 스트로크 속도 (m/s). 배가 이만큼 빨라지면 노깃이 더 이상 물을 뒤로 밀지 못해
    * 추력이 0 이 된다 — 프로펠러의 전진비 한계와 같은 이야기다.
@@ -161,16 +171,43 @@ export function oarFalloff(along) {
   return s * s;
 }
 
+/** 대포 하나의 고정 스텝 시계. `t` 는 직전 발사 후 경과, Infinity 면 미발사·장전 완료다. */
+export function createCannonState() {
+  return { t: Infinity, wasHeld: false };
+}
+
+/** 파손·예측용 깊은 복사. 강체나 아이템 참조는 상태에 넣지 않는다. */
+export function cloneCannonState(state) {
+  return state ? { t: state.t, wasHeld: !!state.wasHeld } : createCannonState();
+}
+
 /** 조종 상태의 기본값. 강체마다 하나씩 `hull.control` 에 산다. */
 export function createControl() {
   return {
     stroke: createStrokeState(),
-    /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — D2 아이템(부스터·키)이 읽는다. */
+    /** 눌려 있는 트리거 바인딩 {KeyA: true, …} — 부스터·키·대포가 읽는다. */
     held: {},
+    /** 아이템 고유 key → 독립 재장전·반동 시계. */
+    cannons: {},
     steer: 0,
     rudder: 0,
     anchored: false,
   };
+}
+
+/** 예측이 실제 시계나 held 객체를 앞당기지 않게 하는 조종 상태 깊은 복사. */
+export function cloneControl(control) {
+  const out = createControl();
+  if (!control) return out;
+  out.stroke = cloneStrokeState(control.stroke);
+  out.held = { ...(control.held ?? {}) };
+  out.cannons = Object.fromEntries(
+    Object.entries(control.cannons ?? {}).map(([key, state]) => [key, cloneCannonState(state)]),
+  );
+  out.steer = control.steer ?? 0;
+  out.rudder = control.rudder ?? 0;
+  out.anchored = !!control.anchored;
+  return out;
 }
 
 /**
@@ -234,11 +271,79 @@ export function advanceStrokes(control, dt) {
   if (s.queued && s.t >= strokeGate() - 1e-9) beginCycle(s, s.queued);
 }
 
+/** 대포 반동·재장전 시계를 스텝 끝에서 함께 전진한다. */
+export function advanceCannons(control, dt) {
+  for (const state of Object.values(control.cannons ?? {})) {
+    if (Number.isFinite(state.t)) state.t += dt;
+  }
+}
+
+const inputActive = (source, bind) => source instanceof Set ? source.has(bind) : !!source?.[bind];
+
+/**
+ * 대포 입력 엣지를 소비해 이번 스텝의 발사 아이템을 돌려준다.
+ *
+ * 두 경로가 있고 **둘의 권한이 다르다**:
+ *   `pressed` — 입력 계층이 `!e.repeat && !held` 로 걸러 낸 **진짜 새 키다운**. 무조건 엣지다.
+ *   `held`    — 연속 상태. `wasHeld` 상승 엣지일 때만 엣지로 센다 (홀드 자동 연사 차단).
+ *
+ * ⚠ `pressed` 에도 `wasHeld` 를 걸면 안 된다. 한 물리 스텝 안에서 떼었다 다시 누르면
+ *   `held` 는 다시 true 로 돌아와 `wasHeld` 와 구별되지 않아 **그 재입력이 통째로 삼켜진다**
+ *   (실측: 눌러 1발 → 뗐다 다시 눌러 0발 → 세 번째에 1발). 그 스텝-사이 사건을 알고 있는
+ *   유일한 증거가 `pressed` 라서, 이 래치는 `wasHeld` 보다 세야 한다.
+ *
+ * 재장전 중 들어온 엣지는 어느 쪽이든 저장하지 않는다 — 다시 눌러야 발사된다.
+ */
+export function fireCannons(devices, control, held = {}, pressed = {}) {
+  const fired = [];
+  const liveKeys = new Set();
+  for (const d of devices) {
+    if (d.type !== 'cannon' || !d.key) continue;
+    liveKeys.add(d.key);
+    const state = (control.cannons[d.key] ??= createCannonState());
+    const isHeld = inputActive(held, d.bind);
+    // pressed 는 입력 계층이 이미 key-repeat 을 걸러 낸 새 키다운이라 그 자체로 엣지다.
+    // held 만 있을 때는 wasHeld 상승분만 엣지로 센다.
+    const edge = inputActive(pressed, d.bind) || (isHeld && !state.wasHeld);
+    if (edge && state.t >= CANNON_TUNING.reload - 1e-9) {
+      state.t = 0;
+      fired.push(d);
+    }
+    state.wasHeld = isHeld;
+  }
+  // 탈락한 대포의 시계는 더 이상 필요 없다. 키 기반이라 다른 아이템 상태와 섞이지 않는다.
+  for (const key of Object.keys(control.cannons)) {
+    if (!liveKeys.has(key)) delete control.cannons[key];
+  }
+  return fired;
+}
+
 /** 그 노가 지금 물을 젓고 있는 세기 (렌더·패널 표시용). */
 export function strokeProgress(control, side) {
   const s = control?.stroke;
   if (!s || !s[side]) return 0;
   return strokeEnvelope(s.t);
+}
+
+/**
+ * ★ 그 노가 이번 사이클에 그리는 **스윙 위상** −1..+1 (렌더 전용, 힘에는 쓰지 않는다).
+ *
+ * 힘 봉투가 sin² 이므로 스윙은 **제곱하기 전의 그 sin** 을 그대로 쓴다. 그래서 노깃이 가장
+ * 멀리 밀려난 순간이 곧 추력이 가장 큰 순간이고, 노브(`oarStrokeDuration`)를 돌리면 그림과
+ * 힘이 같이 따라온다 — 렌더가 자기 시계를 따로 갖지 않는다.
+ *
+ * 부호는 젓는 방향(`dir`)이라 역젓기는 반대로 돈다. 값이 **0 에서 시작해 0 으로 끝나므로**
+ * 사이클이 이어 붙어도, 젓기를 그만둬도, 방향을 바꿔도 각도가 튀는 자리가 없다 —
+ * 최대 케이던스에서는 듀티비가 1.0 이라 회수 구간 자체가 없어서(D2), 쉬는 자세로 돌아갈
+ * 시간을 따로 낼 수 없기 때문이다.
+ */
+export function strokeSwing(control, side) {
+  const s = control?.stroke;
+  const dir = s?.[side] ?? 0;
+  if (!dir) return 0;
+  const D = DEVICE_TUNING.oarStrokeDuration;
+  if (!(s.t >= 0) || s.t >= D) return 0;
+  return dir * Math.sin((Math.PI * s.t) / D);
 }
 
 /**
@@ -254,7 +359,8 @@ export function strokeProgress(control, side) {
 export function estimateOarTerminal(params) {
   if (!params?.area || !(params.drag?.x > 0)) return 0;
   const supply = (v) => DEVICE_TUNING.oarStrokePeak * params.area * oarFalloff(v);
-  const demand = (v) => params.drag.x * v * v;
+  // 저속 항(HYDRO_TUNING.dragLowSpeed)까지 넣어야 실측과 맞는다 — hydroForcesLocal 과 같은 식.
+  const demand = (v) => params.drag.x * (v + HYDRO_TUNING.dragLowSpeed) * v;
   let lo = 0;
   let hi = DEVICE_TUNING.oarMaxSpeed;
   for (let i = 0; i < 40; i++) {
@@ -333,6 +439,18 @@ export function deviceForcesLocal(params, devices, vel, control) {
         * u * Math.abs(u) * Math.sin(control.rudder ?? 0);
       fy += lift;
       torque += d.x * lift; // τ = x·Fy − y·Fx, 키는 Fx = 0
+    } else if (d.type === 'cannon') {
+      // 대포 반동 — 포신의 반대 방향으로 sin² 봉투 힘을 가한다. 순간 임펄스로 속도를 직접
+      // 바꾸지 않으므로 planck 과 predict.js 가 같은 고정 스텝 순서로 정확히 재현할 수 있다.
+      const state = control.cannons?.[d.key];
+      const env = cannonEnvelope(state?.t);
+      if (env === 0) continue;
+      const f = -cannonPeakForce(d.impulse) * env;
+      const fxi = f * Math.cos(d.angle ?? 0);
+      const fyi = f * Math.sin(d.angle ?? 0);
+      fx += fxi;
+      fy += fyi;
+      torque += d.x * fyi - d.y * fxi;
     } else if (d.type === 'booster') {
       // §4.2 부스터 — **부착 방향으로 미는 상시력.** 트리거를 누르고 있는 동안만.
       //
@@ -404,17 +522,22 @@ const NO_HELD = {};
  * 렌더 프레임마다 넣으면 planck 이 스텝 후 힘 누산기를 비우는 탓에 조종감이 주사율에 좌우된다.
  *
  * ★ 스텝당 순서는 predict.js 가 그대로 재현한다. 바꾸면 예측선이 어긋난다:
- *   ① 스트로크 요청 소비 → ② 조타 지연 → ③ 힘 계산 → ④ 힘 적용 → ⑤ 스트로크 시계 전진
+ *   ① 스트로크·대포 엣지 소비 → ② 조타 지연 → ③ 힘 계산 → ④ 힘 적용
+ *   → ⑤ 스트로크·대포 시계 전진
  *
  * @param {Body} body 선체 강체
- * @param {{strokes?:Array<{side,dir}>, held?:object, steer?:number, anchor?:boolean}} input
+ * @param {{strokes?:Array<{side,dir}>, held?:object, pressed?:object, steer?:number,
+ *          anchor?:boolean, now?:number}} input
  * @param {number} dt 고정 타임스텝
+ * @returns {Array<{type:'cannonFire'|'oarStroke'|'boosterOn', body:Body, item?:object,
+ *           request?:object}>} 발사·연출 이벤트 — 물리와 무관, 화면 쪽 소리·이펙트 트리거용.
  */
-export function applyDevices(body, input, dt) {
+export function applyDevices(body, input = {}, dt) {
   const hull = body.getUserData()?.hull;
-  if (!hull || dt <= 0) return;
+  if (!hull || dt <= 0) return [];
 
   const control = (hull.control ??= createControl());
+  const events = [];
 
   // ① 스트로크 요청 소비. 이번 스텝의 요청을 **한 사이클로 합쳐** 넘긴다 — ↑ 와 ← 를 같이
   //    누르고 있어도 사이클은 하나이고, 그래서 두 노가 어긋날 방법이 없다.
@@ -431,15 +554,36 @@ export function applyDevices(body, input, dt) {
       sides[req.side] = cur === undefined || cur === req.dir ? req.dir : 0;
     }
   }
-  if (sides) startStroke(control.stroke, sides);
-  control.held = input.held ?? NO_HELD;
+  // startStroke 가 true 를 돌려줄 때만 — 버퍼에 들어가 대기 중인 요청은 아직 "저은 것"이 아니다.
+  if (sides && startStroke(control.stroke, sides)) events.push({ type: 'oarStroke', body });
+
+  const devices = hull.items.filter((it) => it.type);
+  const held = input.held ?? NO_HELD;
+  // 부스터가 이번 스텝에 새로 눌렸는가 — 순수 물리(deviceForcesLocal)는 상시력이라 "켜지는
+  // 순간"을 모른다. 여기서 이전 held 와 비교해 상승 엣지만 이벤트로 낸다.
+  for (const d of devices) {
+    if (d.type !== 'booster' || !d.bind) continue;
+    if (inputActive(held, d.bind) && !inputActive(control.held, d.bind)) {
+      events.push({ type: 'boosterOn', body, item: d });
+    }
+  }
+  const fired = fireCannons(devices, control, held, input.pressed ?? NO_HELD);
+  for (const item of fired) {
+    events.push({
+      type: 'cannonFire',
+      body,
+      item,
+      request: cannonShotRequest(body, item, input.now),
+    });
+  }
+
+  control.held = held;
   control.steer = clamp(input.steer ?? steerFromHeld(control.held), -1, 1);
   // ② 조타 지연
   control.rudder = stepRudder(control.rudder, control.steer, dt);
 
   syncAnchor(body, hull, !!input.anchor);
 
-  const devices = hull.items.filter((it) => it.type);
   if (devices.length > 0) {
     const vLocal = body.getLocalVector(body.getLinearVelocity());
     // ③ 힘
@@ -456,15 +600,19 @@ export function applyDevices(body, input, dt) {
     body.applyTorque(f.torque, true);
   }
 
-  // ⑤ 스트로크 시계 전진
+  // ⑤ 스트로크·대포 시계 전진
   advanceStrokes(control, dt);
+  advanceCannons(control, dt);
+  return events;
 }
 
 /** 월드의 모든 선체에 같은 입력을 적용 (세 척 동시 주행 비교용). */
 export function applyDevicesToWorld(world, input, dt) {
+  const events = [];
   for (let body = world.getBodyList(); body; body = body.getNext()) {
-    if (body.isDynamic()) applyDevices(body, input, dt);
+    if (body.isDynamic()) events.push(...applyDevices(body, input, dt));
   }
+  return events;
 }
 
 /** 홀드 상태(닻·트리거)만 뽑는다. 스트로크는 홀드가 아니라 keydown 엣지에서 온다. */

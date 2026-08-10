@@ -24,11 +24,14 @@ export const TURRET_TUNING = {
   radius: 1.2,
   /**
    * 포탄 초속 (m/s)과 질량 (kg).
-   * 12 kg · 55 m/s → E = J²/2μ ≈ 18.1 kJ → 나무 반경 0.50 m · 철 0.13 m(함몰).
+   * 18 kg · 55 m/s → E = J²/2μ ≈ 27.2 kJ → 나무 반경 0.69 m · 철 0.25 m(함몰).
    * `carveRadiusFromImpact` 와 `MATERIALS` 의 내구 값에서 나온 수치다 (§7.4).
+   * ⚠ 12 → 18 kg 로 올린 값(2026-08-10, 대포 위력 강화). 철의 45° 빗맞음 무해 판정
+   *   (`E_총 × cos²45° < iron.impactThreshold`)이 이 값의 상한이다 — 19.8 kg 을 넘기면
+   *   경사 장갑이 뚫려 벤치가 깨진다. 18 은 그 아래 여유(약 9%)를 둔 값이다.
    */
   speed: 55,
-  mass: 12,
+  mass: 18,
   /** 포탄 반경 (m). */
   projectileRadius: 0.15,
   /**
@@ -56,10 +59,18 @@ export const TURRET_TUNING = {
  */
 export const MIN_PERIOD = 0.25;
 
+/**
+ * 한 번에 나가는 탄 수의 상한. 넘으면 로드 시점에 던진다 — 부채꼴은 한 스텝에 count 발을
+ * 통째로 만들므로, 오타 하나(`count: 700`)가 프레임을 죽이고 `maxAlive` 백스톱까지 밟는다.
+ */
+export const MAX_COUNT = 24;
+
 /** 스펙에 쓸 수 있는 키. 이 밖은 오타로 보고 거부한다. */
 const SPEC_KEYS = new Set([
   'x', 'y', 'angle', 'period', 'phase', 'radius',
   'speed', 'mass', 'projectileRadius', 'material', 'lifetime',
+  // 부채꼴 — 한 문이 한 주기에 여러 발을 부채처럼 편다.
+  'count', 'spread', 'spin',
 ]);
 
 const DEG = Math.PI / 180;
@@ -71,9 +82,13 @@ const DEG = Math.PI / 180;
  *
  * @param {Array<{x:number, y:number, angle:number, period?:number, phase?:number,
  *                radius?:number, speed?:number, mass?:number, projectileRadius?:number,
- *                material?:string, lifetime?:number}>} specs
+ *                material?:string, lifetime?:number,
+ *                count?:number, spread?:number, spin?:number}>} specs
  *   `angle` 은 **도(degree)** 다 — 맵 JSON 은 손으로 쓰는 파일이라 라디안을 적게 하면 안 된다.
  *   월드와 같은 규약: 0° = +X(동), +90° = +Y(북). 발사 요청은 라디안으로 나간다.
+ *   `count`(기본 1)·`spread`(부채 **전체** 폭, 도)·`spin`(초당 도) 은 부채꼴 노브다.
+ *   `spread` 는 양 끝 탄 사이의 각이라 `count` 를 늘려도 부채가 넓어지지 않고 촘촘해진다 —
+ *   밀도와 폭을 따로 돌릴 수 있어야 "빽빽한 좁은 부채"와 "성긴 넓은 부채"가 둘 다 나온다.
  * @param {number} startedAt 시뮬레이션 시각의 기준점 (s). **출항 시각**을 넣는다 —
  *   페이지 로드 기준이면 "그림을 오래 그린 사람은 출항하자마자 피격"이 된다.
  */
@@ -115,6 +130,17 @@ export function createTurrets(specs, startedAt = 0) {
     const projectileRadius = positive('projectileRadius');
     const lifetime = positive('lifetime');
 
+    const count = num('count', 1);
+    if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) {
+      throw new Error(`${at}: count 는 1..${MAX_COUNT} 의 정수여야 합니다 (받은 값 ${count}).`);
+    }
+    const spread = num('spread', 0) * DEG;
+    if (spread < 0) throw new Error(`${at}: spread 는 음수일 수 없습니다.`);
+    const spin = num('spin', 0) * DEG;
+    // 부채는 기준 방위를 **가운데**에 두고 좌우로 편다. 양 끝 사이가 spread 이므로
+    // 간격은 count-1 로 나눈다 (count 1 이면 간격이 없다 — 0 으로 나누지 않도록 분기).
+    const spreadStep = count > 1 ? spread / (count - 1) : 0;
+
     const materialKey = raw.material ?? TURRET_TUNING.material;
     if (!MATERIALS[materialKey]) throw new Error(`${at}: 모르는 재질 '${materialKey}'.`);
 
@@ -131,6 +157,12 @@ export function createTurrets(specs, startedAt = 0) {
       muzzle,
       period,
       phase,
+      angle,
+      count,
+      spreadStep,
+      spin,
+      /** 총구 오프셋. 부채는 탄마다 방위가 다르므로 이 거리를 **탄의 방위로** 다시 밀어낸다. */
+      reach,
       /**
        * 몸체용 장애물 스펙. ★ `createObstacle` 과 `createTurrets` 가 **같은 radius** 를 쓰게
        * 하는 장치다 — 스펙을 두 벌로 쪼개면 총구 오프셋이 몸체보다 작아지는 사고가 난다.
@@ -169,10 +201,32 @@ export function createTurrets(specs, startedAt = 0) {
       for (const t of turrets) {
         // `if` 가 아니라 `while` 인 이유: MIN_PERIOD 검증이 뚫렸거나 호출이 걸러졌을 때
         // 발사가 **조용히 유실**되지 않게 하는 백스톱이다. 정상 경로에서는 한 번만 돈다.
+        //
+        // ⚠ 뒤집어 말하면, `step()` 을 **오래 건너뛰면 밀린 발사가 한 스텝에 쏟아진다.**
+        //   페이즈로 발사기를 켜고 끄려면 `createTurrets(specs, 그 페이즈 시작 시각)` 으로
+        //   새로 만들어야 하고(t.n 이 1 부터 다시 센다), 창을 열어 시계를 멈출 때는 넘기는
+        //   `now` 자체를 멈춰야 한다. 둘 중 하나를 빼먹으면 재개 순간 볼리가 폭발한다.
         while (now >= fireTime(t, t.n)) {
-          out.push({ ...t.request, firedAt: fireTime(t, t.n), bornAt: now });
+          const ft = fireTime(t, t.n);
+          // ★ 회전은 **발사 시각**에서 계산한다. `now` 로 재면 같은 발사가 호출 타이밍에 따라
+          //   다른 방위로 나가 `step(now)` 이 `now` 의 순수 함수라는 성질이 깨진다 (파일 머리말).
+          //   누산도 아니라 드리프트가 없다.
+          const base = t.angle + t.spin * (ft - startedAt);
+          for (let k = 0; k < t.count; k++) {
+            const a = base + (k - (t.count - 1) / 2) * t.spreadStep;
+            out.push({
+              ...t.request,
+              angle: a,
+              // 총구는 **탄의 방위로** 밀어낸다. 몸체 중심에서 쏘면 태어나는 순간 자기 몸에
+              // 닿아 `spent` 로 찍혀 사라진다 (아래 `reach` 주석 참조).
+              x: t.at.x + Math.cos(a) * t.reach,
+              y: t.at.y + Math.sin(a) * t.reach,
+              firedAt: ft,
+              bornAt: now,
+            });
+          }
           t.n += 1;
-          fired += 1;
+          fired += t.count;
         }
       }
       return out;

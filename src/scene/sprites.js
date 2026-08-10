@@ -279,6 +279,203 @@ export const SPRITES = {
     ],
   },
 
+  // 미오 — 루의 동생. **에필로그에서 처음 얼굴이 나온다** (STORY.md §2: 그 전까지는
+  // 목소리만이라 `sprite` 를 주지 않는다). 그래서 이 흉상은 **나은 뒤의 미오**다 —
+  // 병상의 창백함이 아니라 혈색이 도는 쪽으로 그린다. 처음 보는 얼굴이 아픈 얼굴이면
+  // 엔딩이 회수가 아니라 반복이 된다.
+  //
+  // ★ 골격·귀·줄무늬를 `ru` 와 **똑같이** 둔다. 이 파일 머리말의 "같은 귀·같은 줄무늬"
+  //   규칙이고, 남매라는 사실을 대사 없이 그림만으로 말하는 유일한 수단이다.
+  //   갈리는 것은 셋뿐: 보랏빛 눈(루는 초록) · 민트 숄(루는 빨강 스카프) · 정수리의 분홍 리본.
+  //   ⚠ 실루엣을 손대면 남매로 안 읽힌다. 색과 소품만 바꿀 것.
+  mio: {
+    // ⚠ `q`(입)와 `t·n`(숄)을 반드시 갈라 둘 것. 루는 스카프와 입이 둘 다 붉어서 `q` 하나로
+    //   썼는데, 숄을 민트로 바꾸면서 그대로 두었더니 **입까지 민트가 됐다.**
+    palette: {
+      k: '#1a1420', e: '#7a5340', d: '#c39a6e', f: '#eccfa2', l: '#fbeccb',
+      s: '#9a6f46', p: '#efa3ac', w: '#fdf9ee', c: '#d8c5ae',
+      g: '#9a8ff0', v: '#5a4fa8',        // 보랏빛 눈 (루는 초록)
+      q: '#9c2b3f',                      // 입 — 루와 같은 값
+      t: '#7fd4c0', n: '#3f9e8c',        // 민트 숄
+      u: '#3b3475', b: '#f2a0c4',        // 어깨 그늘 · 리본
+    },
+    rows: [
+      '........................',
+      '...kk..............kk...',
+      '..klpk............kpdk..',
+      '..klppk..kbbbbk..kppdk..',
+      '.klfppk..kbqqbk..kppfdk.',
+      '.klffpk...kbbk...kpffdk.',
+      '.klffffeeeeekkkkkfffddk.',
+      '.kllllllfffffffffffffdk.',
+      '.klllsssffffffffsssfddk.',
+      '.kllffsffffffffffsffddk.',
+      '.kllfffffffffffffffdddk.',
+      '.klffffffffffffffffdddk.',
+      // ★ 속눈썹은 **눈꺼풀을 바깥으로 늘려서** 만든다. 눈 위에 따로 띄우면 눈썹으로 읽혀
+      //   화난 얼굴이 된다 (한 번 그렇게 나왔다). 안쪽은 줄무늬(s)를 그대로 두어 비대칭이
+      //   되게 하는 것이 요점 — 눈초리 쪽으로만 뻗는 것이 속눈썹의 모양이다.
+      '.klfkkkkksffffskkkkkddk.',
+      '.klffkwggkffffkwggkfddk.',
+      '.klffkggvkffffkggvkfddk.',
+      '.klfffkkkffffffkkkffddk.',
+      '.klffffffffffffffffdddk.',
+      '.kfppfffwwwppwccfppddek.',
+      '.kffffffwwwqqwwcfffdeek.',
+      '.kffffffwwqwwqwcfffdeek.',
+      '.kfffffffwwwwccffffdeek.',
+      '..kffffffcwwcccfffddek..',
+      '...kfffffffffffffddek...',
+      '....kfffffffffffddek....',
+      '.....kttttttttttnnk.....',
+      '....ktttttttttttnnnk....',
+      '..knntttttttttttnnnnnk..',
+      '.kvvvvnnttttttttnnvuuuk.',
+      '.kvvvvvvddffffdduuuuuuk.',
+      '.kvvvvvvfllfffdduuuuuuk.',
+      '.kvvvvvvvffffdduuuuuuuk.',
+      '.kkkkkkkkkkkkkkkkkkkkkk.',
+    ],
+  },
+
+  // ── 불가사리 3인방 ─────────────────────────────────────────────
+  //
+  // 마그마섬의 작은 불가사리들. **괴물이 된 불가사리와 같은 종**이라는 것이 이 셋의 요점이라
+  // (§ "쟤도 우리랑 같은 거였어"), 실루엣을 셋이 완전히 공유한다 — 팔레트와 표정만 다르다.
+  // 그래야 "삼인방"으로 읽히고, 동시에 보스와 같은 별 모양이라는 사실도 같이 읽힌다.
+  //
+  // ★ 다른 캐스트와 문법이 갈린다. 루·모루·네일은 **얼굴 반, 몸 반**의 흉상인데 이 셋은
+  //   몸 전체가 얼굴이다. 눈이 화면 폭의 절반을 먹는 것이 그래서 가능하고, 그게 곧 "귀엽다"다.
+  // ⚠ 눈을 줄이면 이 셋은 그냥 불가사리 그림이 된다. 크기가 캐릭터다.
+  //
+  // 이름과 성격 — **표정이 곧 성격**이라 대사를 쓸 때 이 줄을 먼저 볼 것:
+  //   캐럿(주황)     홍조 + 웃는 입     말 많은 쪽
+  //   애플(빨강)     일자 입 + 속눈썹   시큰둥한 쪽
+  //   블루베리(파랑)  졸린 눈           느긋한 쪽 — [S-08] 돌풍섬에서 혼자 먼저 나온다
+  star_orange: {
+    palette: {
+      k: '#3a1806', d: '#c05a17', f: '#f5872b', l: '#ffbc63',
+      e: '#241108', w: '#fffcf2', p: '#ff9db0',   // p = 홍조
+    },
+    rows: [
+      '........................',
+      '..........kkkk..........',
+      '..........klfk..........',
+      '.........klffdk.........',
+      '.........klffdk.........',
+      '........klfffddk........',
+      '........klfffddk........',
+      '.......kllfffdddk.......',
+      '.......klfffffddk.......',
+      '......kllfffffdddk......',
+      '....kllfffffffffdddk....',
+      'kkllffffffffffffffffddkk',
+      'klllffffffffffffffffdddk',
+      'kllfffkkkkffffkkkkffdddk',
+      '.klffkwweekffkwweekfddk.',
+      '.klffkwweekffkwweekfddk.',
+      '..kffkeeeekffkeeeekfdk..',
+      '..kffkeeeekffkeeeekfdk..',
+      '...kfkeeeekffkeeeekdk...',
+      '...kppkkkkffffkkkkppk...',
+      '....kppffffffffppddk....',
+      '....kffffkffffkffddk....',
+      '....kfffffkkkkfffddk....',
+      '..klffffffffffffdddddk..',
+      '..klfffffdk..kfffffddk..',
+      '.klfffffdk....kfffffddk.',
+      '.klfffffdk....kfffffddk.',
+      'klfffffdk......kfffffddk',
+      'klfffffdk......kfffffddk',
+      'klffffdk........kffffddk',
+      'klffffdk........kffffddk',
+      'klfffdk..........kfffddk',
+    ],
+  },
+
+  star_red: {
+    palette: {
+      k: '#3d0d12', d: '#b32832', f: '#e8434f', l: '#ff8089',
+      e: '#2b0a0e', w: '#fffcf2',
+    },
+    rows: [
+      '........................',
+      '..........kkkk..........',
+      '..........klfk..........',
+      '.........klffdk.........',
+      '.........klffdk.........',
+      '........klfffddk........',
+      '........klfffddk........',
+      '.......kllfffdddk.......',
+      '.......klfffffddk.......',
+      '......kllfffffdddk......',
+      '....kllfffffffffdddk....',
+      'kkllffffffffffffffffddkk',
+      'klllffffffffffffffffdddk',
+      // 속눈썹 — 미오와 같은 수법이다. 눈꺼풀을 바깥으로 2px 늘릴 뿐 눈 위에 띄우지 않는다.
+      'kllfkkkkkkffffkkkkkkdddk',
+      '.klffkwweekffkwweekfddk.',
+      '.klffkwweekffkwweekfddk.',
+      '..kffkeeeekffkeeeekfdk..',
+      '..kffkeeeekffkeeeekfdk..',
+      '...kfkeeeekffkeeeekdk...',
+      '...kffkkkkffffkkkkfdk...',
+      '....kffffffffffffddk....',
+      '....kffffkkkkkkffddk....',
+      '....kffffffffffffddk....',
+      '..klffffffffffffdddddk..',
+      '..klfffffdk..kfffffddk..',
+      '.klfffffdk....kfffffddk.',
+      '.klfffffdk....kfffffddk.',
+      'klfffffdk......kfffffddk',
+      'klfffffdk......kfffffddk',
+      'klffffdk........kffffddk',
+      'klffffdk........kffffddk',
+      'klfffdk..........kfffddk',
+    ],
+  },
+
+  star_blue: {
+    palette: {
+      k: '#0d1e3d', d: '#2559a8', f: '#3d86e0', l: '#7fc0f5',
+      e: '#0a1428', w: '#fffcf2',
+    },
+    rows: [
+      '........................',
+      '..........kkkk..........',
+      '..........klfk..........',
+      '.........klffdk.........',
+      '.........klffdk.........',
+      '........klfffddk........',
+      '........klfffddk........',
+      '.......kllfffdddk.......',
+      '.......klfffffddk.......',
+      '......kllfffffdddk......',
+      '....kllfffffffffdddk....',
+      'kkllffffffffffffffffddkk',
+      'klllffffffffffffffffdddk',
+      'kllfffffffffffffffffdddk',
+      '.klfffffffffffffffffddk.',
+      '.klffkkkkkkffkkkkkkfddk.',
+      '..kffkwweekffkwweekfdk..',
+      '..kffkeeeekffkeeeekfdk..',
+      '...kfkeeeekffkeeeekdk...',
+      '...kffkkkkffffkkkkfdk...',
+      '....kffffffffffffddk....',
+      '....kffffkffffkffddk....',
+      '....kfffffkkkkfffddk....',
+      '..klffffffffffffdddddk..',
+      '..klfffffdk..kfffffddk..',
+      '.klfffffdk....kfffffddk.',
+      '.klfffffdk....kfffffddk.',
+      'klfffffdk......kfffffddk',
+      'klfffffdk......kfffffddk',
+      'klffffdk........kffffddk',
+      'klffffdk........kffffddk',
+      'klfffdk..........kfffddk',
+    ],
+  },
+
 };
 
 // 스프라이트를 캔버스로 렌더 (scale 배율로 확대 표시)

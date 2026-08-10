@@ -53,6 +53,40 @@ html, body {
   z-index: 0;
 }
 
+/* 그림 배경 — 절차적 캔버스 바로 위. 그림이 있는 씬에서만 불투명해진다.
+   object-fit: cover 는 #title-fx 와 같은 이유다: 창 비율이 어떻든 그림을 잘라서 채운다.
+   페이드 시간은 pixelbg.js 의 FADE_MS 와 맞춰 둔다 — 캔버스 크로스페이드와 그림 페이드가
+   서로 다른 속도로 돌면 전환 중간에 두 배경이 겹쳐 보인다. */
+#bg-photo, #scene-fx {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  z-index: 0;
+  pointer-events: none;
+
+  /* ⚠ 여기만 pixelated 를 쓰지 않는다.
+     다른 그림(로고 134px · 타이틀 배경 418px)은 화면에서 3~4배로 늘어나므로 니어리스트가
+     맞다. 이 그림은 1672px 짜리 등배 도트라 화면 크기와 거의 1:1 이고, 그 배율에서
+     니어리스트는 픽셀을 고르지 않게 겹치거나 버려서 오히려 계단이 생긴다.
+     auto 로 두면 1:1 근처에서는 눈에 안 띄고 어긋난 배율만 매끄럽게 받아 준다. */
+  image-rendering: auto;
+}
+
+#bg-photo {
+  opacity: 0;
+  transition: opacity 650ms ease;   /* = pixelbg.js 의 FADE_MS */
+}
+#bg-photo[data-on='1'] { opacity: 1; }
+
+/* 움직임 레이어는 그림과 같이 뜨고 같이 사라진다 */
+#scene-fx {
+  opacity: 0;
+  transition: opacity 650ms ease;
+}
+#scene-fx[data-on='1'] { opacity: 1; }
+
 /* CRT 스캔라인 */
 body::after {
   content: '';
@@ -176,6 +210,86 @@ body::after {
 
 .title-menu { display: flex; flex-direction: column; gap: 12px; align-items: center; min-width: 260px; }
 .title-menu .btn-primary, .title-menu .btn-tool { width: 100%; }
+
+/* ---- THE END ---- */
+
+.the-end {
+  position: fixed;
+  inset: 0;
+  z-index: 50;                              /* 확인창(40)보다도 위 — 마지막 화면이다 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: #05070f;
+  animation: the-end-in 1.6s ease-out both;
+}
+
+/* ⚠ 반드시 있어야 한다. `display: flex` 가 `hidden` 을 이겨서, 없으면 처음부터 떠 있는다. */
+.the-end[hidden] { display: none; }
+
+/* ★ 글씨는 **검은 화면이 그림을 다 덮은 뒤에** 떠오른다. 같이 페이드하면 그림 위에
+   글씨가 겹쳐 보이는 순간이 생겨 "덮었다"가 아니라 "포개졌다"가 된다.
+   지연(1.6s)은 `.the-end` 의 페이드 길이와 같다 — 한쪽을 바꾸면 다른 쪽도 바꿀 것.
+   ⚠ `menu/screen.js` 의 `THE_END_FADE_MS` 도 이 값과 맞물려 있다 (그동안 입력을 안 받는다). */
+.the-end-mark {
+  margin: 0;
+  color: var(--sand);
+  font-size: 40px;
+  letter-spacing: 12px;                     /* 자간이 넓어야 마침표처럼 읽힌다 */
+  text-indent: 12px;                        /* 자간이 만든 오른쪽 여백을 상쇄 */
+  animation: the-end-in 1.4s ease-out 1.6s both;
+}
+
+/* 안내는 글씨보다 더 늦게. 마침표를 먼저 읽히고, "이제 눌러도 된다"는 그 뒤에 온다.
+   ⚠ `the-end-in` 을 쓰면 안 된다 — 그건 opacity 1 로 끝나서 여기 0.4 를 덮고, 이어지는
+     깜빡임의 기준값까지 1 로 만든다. 흐린 상태로 끝나는 키프레임을 따로 둔다. */
+.the-end-hint {
+  margin: 0;
+  color: var(--sand);
+  font-size: 13px;
+  letter-spacing: 2px;
+  animation: the-end-hint-in 0.8s ease-out 3s both,
+             the-end-blink 2s step-end 3.8s infinite;
+}
+
+@keyframes the-end-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes the-end-hint-in { from { opacity: 0; } to { opacity: 0.4; } }
+@keyframes the-end-blink { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.12; } }
+
+/* ---- 확인창 (되돌릴 수 없는 것 앞에서 한 번 묻는다) ---- */
+
+.confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;                              /* 대화 오버레이·건너뛰기 버튼보다 위 */
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 8, 22, 0.78);
+}
+
+/* ⚠ 반드시 있어야 한다. `display: grid` 가 `hidden` 속성의 기본 display:none 을 이겨서,
+   이 줄이 없으면 창이 처음부터 떠 있는다. */
+.confirm-layer[hidden] { display: none; }
+
+.confirm-box {
+  width: min(380px, 100%);
+  padding: 22px 24px 20px;
+  color: var(--sand);
+  text-align: center;
+  background: var(--panel);
+  border: 3px solid var(--panel-border);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.5);
+  word-break: keep-all;                     /* sail.css 와 같은 이유 — 낱말이 쪼개진다 */
+}
+
+.confirm-box h2 { margin: 0 0 12px; font-size: 20px; letter-spacing: 1px; }
+.confirm-box p { margin: 0 0 20px; font-size: 15px; line-height: 1.7; opacity: 0.82; }
+
+.confirm-actions { display: flex; gap: 10px; }
+.confirm-actions button { flex: 1; }
 
 .title-credit {
   position: absolute;

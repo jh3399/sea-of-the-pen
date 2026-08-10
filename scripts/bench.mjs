@@ -5,21 +5,34 @@
 //
 // D0 은 성능("세 스파이크가 프레임 드랍 없이 도는가")을, D1 은 설계 의도가 코드로 성립하는지를
 // 묻는다 — 정지 시 키가 무효인가, 비대칭 선체가 조향 코드 0줄로 도는가, 예측선이 정직한가.
-import { strokeToHull } from '../src/hull/polygon.js';
+import { strokeToHull, HULL_DEFAULTS } from '../src/hull/polygon.js';
 import { computeHullParams, HYDRO_TUNING, MATERIALS } from '../src/hull/params.js';
 import { decomposeHull } from '../src/hull/decompose.js';
 import { CORPUS, CORPUS_LABELS } from '../src/hull/corpus.js';
+import {
+  pointInHullSolid, rasterizeHullSurface, surfaceCellKey, surfaceCellPoint,
+} from '../src/hull/raster.js';
 import { Settings, Box } from 'planck';
 import { createWorld, FixedStepper, FIXED_DT, Vec2 } from '../src/physics/world.js';
 import { createHullBody } from '../src/physics/body.js';
-import { applyHydroToWorld, applyHydroDrag } from '../src/physics/hydro.js';
+import { applyHydroToWorld, applyHydroDrag, terminalSpeed } from '../src/physics/hydro.js';
 import {
   applyDevices, DEVICE_TUNING, oarFalloff, strokeGate, STROKE_KEYMAP,
+  deviceForcesLocal, createControl, cloneControl,
 } from '../src/physics/devices.js';
 import { predictPath } from '../src/physics/predict.js';
 import { defaultDevices, deviceExtraMass, sternAnchor, sideAnchors } from '../src/items/defaults.js';
 import { attachItem, itemsExtraMass, canAttachAt } from '../src/items/attach.js';
 import { ITEM_CATALOG } from '../src/items/catalog.js';
+import {
+  CANNON_TUNING, cannonEnvelope, cannonPeakForce, furthestRayOutlineHit,
+  cannonMuzzleLocal, cannonShotRequest,
+} from '../src/items/cannon.js';
+import { createPassiveTarget, createPassiveTargets } from '../src/game/targets.js';
+import {
+  createPirate, createPirates, buildPathTable, pathProgress, stepPirateMotion, stepPirateCannons,
+  rebindPirate,
+} from '../src/game/pirates.js';
 import { applyImpact } from '../src/damage/apply.js';
 import { burnRadius, carveRadiusFromImpact, DAMAGE_TUNING } from '../src/damage/impact.js';
 import { installImpactListener, offCooldown, CONTACT_TUNING } from '../src/damage/contact.js';
@@ -31,6 +44,12 @@ import {
 import { fieldBehind } from '../src/rules/provenance.js';
 import { crewWorldPoint, findCrewBody } from '../src/game/crew.js';
 import { createGoal, goalDistance, goalReached } from '../src/game/goal.js';
+import { rateTravelTime } from '../src/game/scoring.js';
+import {
+  DEMO_MAP, PRACTICE_MAP, STORM_MAP, VOLCANO_MAP, MAW_MAP, BULGASARI_MAP, MAPS, boundaryWalls,
+} from '../src/sail/map.js';
+import { createBoss, BOSS_PHASES, BOSS_TUNING } from '../src/game/boss.js';
+import { STAGES, ROUTE } from '../src/game/progress.js';
 import { bounds, rotate, translate } from '../src/geom/poly.js';
 import { createFields } from '../src/field/field.js';
 import { applyFieldsToWorld } from '../src/physics/fields.js';
@@ -136,7 +155,9 @@ console.log('\n\x1b[36m▌스파이크 ③ — 이방성 저항 안정성\x1b[0m
 function spawn(key, options = {}) {
   const world = createWorld();
   const hull = hulls[key];
-  const items = options.devices ? defaultDevices(hull.outline) : [];
+  const items = options.devices
+    ? defaultDevices(hull.outline, { oarX: options.oarX ?? null })
+    : [];
   if (options.rudder) items.push(rudderItem(hull.outline));
   // §4.1 부착 아이템 — 기본 장치와 **같은 배열, 같은 형식**으로 얹힌다.
   for (const spec of options.attach ?? []) {
@@ -178,7 +199,8 @@ for (let i = 0; i < 3600; i++) {
   maxSpeed = Math.max(maxSpeed, speed);
   if (i % 600 === 599) speedTrace.push(speed);
 }
-const terminal = Math.sqrt(thrust / paramTable.sloop.p.drag.x);
+// 저항이 `drag·(v + v₀)·v` 라 종단은 그 이차방정식의 근이다 (v₀ = 0 이면 옛 sqrt(F/drag)).
+const terminal = terminalSpeed(paramTable.sloop.p.drag.x, thrust);
 console.log(`  10초 간격 속도: ${speedTrace.map((s) => s.toFixed(2)).join(' → ')} m/s`);
 console.log(`  이론 종단 속도: ${terminal.toFixed(2)} m/s · 평균 물리 스텝 ${(physicsMs / 3600).toFixed(3)} ms`);
 check('60초 항해가 종단 속도로 수렴 (발산 없음)',
@@ -238,6 +260,7 @@ function drive(key, input, setup = {}) {
   const seconds = setup.seconds ?? 3;
   const { world, body } = spawn(key, {
     devices: setup.devices ?? true, rudder: setup.rudder, attach: setup.attach,
+    oarX: setup.oarX,
   });
   if (setup.v) body.setLinearVelocity(new Vec2(setup.v.x, setup.v.y));
   if (setup.w) body.setAngularVelocity(setup.w);
@@ -578,6 +601,94 @@ const halfBeamOf = (key) => sideAnchors(hulls[key].outline, oarX(key)).halfBeam;
 check('넓은 배가 한쪽 젓기로 더 잘 돈다 (팔길이 = 노 반폭)',
   halfBeamOf('round') > halfBeamOf('sloop'),
   `둥근 배 반폭 ${halfBeamOf('round').toFixed(2)} > 슬루프 ${halfBeamOf('sloop').toFixed(2)} m`);
+
+// ── 플레이어가 정하는 노 위치 (그리기 화면 → oarX) ────────────────────────────
+//
+// 정하는 것은 **세로 위치 x 하나**다. 좌우로 벌리는 일은 sideAnchors 가, 중심선은
+// sternAnchor 반직선이 맡는다 — 조향 코드는 여전히 0줄이고, x 는 그 두 수치를 고르는
+// 손잡이일 뿐이다. 아래가 그 손잡이가 실제로 무엇을 바꾸는지 (그리고 무엇을 안 바꾸는지) 다.
+console.log('\n  \x1b[36m노 위치 지정 (oarX)\x1b[0m');
+
+// ① 인자를 주지 않으면 D1~D3 의 자동 배치와 **비트 단위로 같아야** 한다. 그리기 화면이
+//    생겨도 하니스·폴백 설계·기존 벤치 89건이 재는 것이 달라지면 안 된다.
+const autoDevices = defaultDevices(hulls.sloop.outline);
+const autoAgain = defaultDevices(hulls.sloop.outline, {});
+check('oarX 를 주지 않으면 자동 배치와 비트 일치 (기존 경로 회귀)',
+  autoDevices.every((d, i) => d.x === autoAgain[i].x && d.y === autoAgain[i].y),
+  `장치 ${autoDevices.length}개 좌표 동일`);
+
+// ② 플레이어가 찍은 x 에 두 노가 놓이고, 좌우는 그 자리의 실제 선폭에서 나온다.
+const PICKED_X = -1.2;
+const picked = defaultDevices(hulls.sloop.outline, { oarX: PICKED_X })
+  .filter((d) => d.type === 'oar');
+const pickedSpan = sideAnchors(hulls.sloop.outline, PICKED_X,
+  sternAnchor(hulls.sloop.outline).y * (PICKED_X / sternAnchor(hulls.sloop.outline).x));
+check('찍은 x 에 좌우 노가 놓인다 (플레이어는 앞뒤만 정한다)',
+  picked.length === 2 && picked.every((d) => Math.abs(d.x - PICKED_X) < 1e-12),
+  `x = ${picked.map((d) => d.x.toFixed(3)).join(' · ')} m`);
+check('좌우 벌림은 그 자리의 실제 선폭에서 나온다 (손으로 찍는 값이 아니다)',
+  Math.abs(Math.abs(picked[0].y - picked[1].y) - pickedSpan.halfBeam * 2) < 1e-12,
+  `노 간격 ${Math.abs(picked[0].y - picked[1].y).toFixed(3)} m = 반폭 ×2`);
+
+// ③ ★ 대칭 선체에서는 x 를 어디에 찍든 **가짜 토크가 생기면 안 된다.** 중심선을 sideAnchors
+//    의 국소 중심으로 되돌리면 여기서 걸린다 (D1·D2 에서 두 번 잡힌 버그의 세 번째 재발 지점).
+const roundBB = bounds(hulls.round.outline);
+const worstOffset = [0.2, 0.4, 0.6, 0.8].reduce((worst, r) => {
+  const x = roundBB.minX + roundBB.width * r;
+  const pair = defaultDevices(hulls.round.outline, { oarX: x }).filter((d) => d.type === 'oar');
+  return Math.max(worst, Math.abs(pair[0].y + pair[1].y));
+}, 0);
+check('★ 대칭 선체는 어느 x 에 찍어도 두 노의 y 합이 0 이다 (가짜 선회 없음)',
+  worstOffset < 0.01,
+  `4자리 중 최악 어긋남 ${(worstOffset * 100).toFixed(2)} cm`);
+
+// ④ §7.5 — 두 부착점이 선체 안이어야 한다. 그리기 화면이 canAttachAt 으로 막는 그 조건을
+//    여기서도 확인한다 (밖에 걸친 노는 첫 파손에 무조건 사라진다).
+const insideAll = [0.25, 0.5, 0.75].every((r) => {
+  const bb = bounds(hulls.sloop.outline);
+  const pair = defaultDevices(hulls.sloop.outline, { oarX: bb.minX + bb.width * r })
+    .filter((d) => d.type === 'oar');
+  return pair.every((d) => canAttachAt(hulls.sloop.outline, [], { x: d.x, y: d.y }));
+});
+check('선체 중앙부에 찍은 노는 두 짝 모두 선체 안이다 (§7.5 소속 판정)',
+  insideAll, '앞·중앙·뒤 3자리 모두 통과');
+
+// ⑤ 그래서 x 는 무엇을 바꾸는가 — **반폭뿐이다.** 노 힘은 fx += f · torque += −y·f 라
+//    x 항이 아예 없다. 넓은 자리에 찍으면 선회가 커지고, 직진 속도는 그대로다.
+const beamAt = (r) => {
+  const bb = bounds(hulls.sloop.outline);
+  const x = bb.minX + bb.width * r;
+  return { x, half: sideAnchors(hulls.sloop.outline, x).halfBeam };
+};
+// 슬루프의 최대 선폭은 뱃머리 1/4 지점이고 선미·선수로 갈수록 좁아진다 (실측 프로파일).
+const wideSpot = beamAt(0.25);
+const narrowSpot = beamAt(0.8);
+// 입력은 반드시 STROKE_KEYMAP 을 거친다 (위 ⚠ 와 같은 이유).
+const wideOars = drive('sloop', holdKeys('ArrowLeft'), { seconds: 6, oarX: wideSpot.x });
+const narrowOars = drive('sloop', holdKeys('ArrowLeft'), { seconds: 6, oarX: narrowSpot.x });
+// 직진(↑)은 토크 없이 추력만 — x 를 옮겨도 달라지지 않아야 한다 (힘 식에 x 항이 없다).
+const wideStraight = drive('sloop', holdKeys('ArrowUp'), { seconds: 6, oarX: wideSpot.x });
+const narrowStraight = drive('sloop', holdKeys('ArrowUp'), { seconds: 6, oarX: narrowSpot.x });
+console.log(`  넓은 자리(반폭 ${wideSpot.half.toFixed(2)} m) → ← 6초 ${wideOars.turned.toFixed(1)}° · ` +
+  `↑ 6초 ${wideStraight.speed.toFixed(3)} m/s`);
+console.log(`  좁은 자리(반폭 ${narrowSpot.half.toFixed(2)} m) → ← 6초 ${narrowOars.turned.toFixed(1)}° · ` +
+  `↑ 6초 ${narrowStraight.speed.toFixed(3)} m/s`);
+check('넓은 자리에 찍을수록 잘 돈다 (플레이어의 x 선택이 조향으로 이어진다)',
+  wideOars.turned > narrowOars.turned * 1.5,
+  `${wideOars.turned.toFixed(1)}° > ${narrowOars.turned.toFixed(1)}° × 1.5`);
+// ⚠ **원칙 2 미해결 — 통과/미달로 재지 않고 경고로 남긴다.**
+//
+// 노 힘은 `fx += f` · `τ += −y·f` 라 **x 항이 아예 없다.** 그래서 넓은 자리에 찍으면 선회만
+// 얻고 직진 속도는 한 푼도 잃지 않는다 (아래 실측 차이는 비대칭 잔여 요잉이 만든 항력 차이
+// 뿐이다). 지금 상태에서는 "가장 넓은 곳"이 **항상 정답**이라 §5.2 원칙 2 를 만족하지 못한다.
+//
+// 이것을 check 로 고정하지 않는 이유: 지금의 결함을 불변식으로 박아 두면, 대가를 붙이는 날
+// 벤치가 그것을 회귀로 신고한다. 고쳐야 할 것은 코드지 이 수치가 아니다.
+const straightGap = Math.abs(wideStraight.speed - narrowStraight.speed);
+console.log(`  \x1b[33m⚠ 원칙 2 미해결\x1b[0m — 넓은 자리는 선회를 `
+  + `${(wideOars.turned / narrowOars.turned).toFixed(1)}배 얻고 직진 속도는 `
+  + `${(straightGap / wideStraight.speed * 100).toFixed(3)}% 만 잃는다 (사실상 대가 없음).`);
+console.log('    노 힘 식에 x 항이 없어 "가장 넓은 곳"이 항상 정답이다 — 약점을 붙일 자리다.');
 
 // ── 부착 아이템으로서의 키: 유속 비례 선회력, 정지 시 무효 (§5.1) ───────────────
 //
@@ -1529,6 +1640,82 @@ check('첫 발화는 가장 돌출한 부위에서 시작한다 (§2.2 "뾰족�
     && Math.abs(Math.hypot(exposed.x, exposed.y) - maxReach) < 1e-9,
   exposed ? `반경 ${Math.hypot(exposed.x, exposed.y).toFixed(3)} = 최대 ${maxReach.toFixed(3)} m` : 'hotspot.js 미구현');
 
+// ── ★ 파손 표면 도트가 물리 형상을 그대로 따르는가 ────────────────────────────────
+const rasterOuter = [
+  { x: -2, y: -2 }, { x: 2, y: -2 }, { x: 2, y: 2 }, { x: -2, y: 2 },
+];
+const rasterHole = [
+  { x: -0.8, y: -0.8 }, { x: 0.8, y: -0.8 }, { x: 0.8, y: 0.8 }, { x: -0.8, y: 0.8 },
+];
+const rasterA = rasterizeHullSurface({ outline: rasterOuter, holes: [rasterHole] });
+const rasterB = rasterizeHullSurface({ outline: rasterOuter, holes: [rasterHole] });
+const rasterKeysA = rasterA.cells.map(surfaceCellKey);
+const rasterKeysB = rasterB.cells.map(surfaceCellKey);
+check('선체 도트 격자는 같은 형상에서 결정론적이다',
+  rasterA.cell === rasterB.cell && rasterA.originX === rasterB.originX
+    && rasterA.originY === rasterB.originY && rasterKeysA.join('|') === rasterKeysB.join('|'),
+  `${rasterA.cells.length}칸 · cell ${rasterA.cell.toFixed(3)} m`);
+check('선체 내부 구멍에는 표면 도트가 남지 않는다',
+  rasterA.cells.every((cell) => {
+    const p = surfaceCellPoint(rasterA, cell);
+    return pointInHullSolid(p, rasterOuter, [rasterHole]);
+  }),
+  `외곽 ${rasterA.cells.length}칸 · 구멍 제외`);
+
+const surfaceSplit = (() => {
+  const world = createWorld();
+  const outline = hulls.barbell.outline;
+  const parentSurface = rasterizeHullSurface({ outline, holes: [] });
+  const body = createHullBody(world, { outline, holes: [], items: [], surface: parentSurface },
+    { position: { x: 3, y: -2 }, angle: 0.37, material: 'wood' });
+  const before = new Map(parentSurface.cells.map((cell) => {
+    const p = surfaceCellPoint(parentSurface, cell);
+    const w = body.getWorldPoint(new Vec2(p.x, p.y));
+    return [surfaceCellKey(cell), { x: w.x, y: w.y }];
+  }));
+  const out = applyImpact(world, body, body.getWorldPoint(new Vec2(0, 0)), 0.9);
+  const seen = new Set();
+  let duplicate = false;
+  let outside = false;
+  let maxDrift = 0;
+  let count = 0;
+  for (const child of out.bodies) {
+    const hull = child.getUserData().hull;
+    for (const cell of hull.surface.cells) {
+      const key = surfaceCellKey(cell);
+      if (seen.has(key)) duplicate = true;
+      seen.add(key);
+      count++;
+      const local = surfaceCellPoint(hull.surface, cell);
+      if (!pointInHullSolid(local, hull.outline, hull.holes)) outside = true;
+      const w = child.getWorldPoint(new Vec2(local.x, local.y));
+      const old = before.get(key);
+      maxDrift = Math.max(maxDrift, Math.hypot(w.x - old.x, w.y - old.y));
+    }
+  }
+  return { parent: parentSurface.cells.length, count, duplicate, outside, maxDrift, pieces: out.bodies.length };
+})();
+check('절단된 도트는 한 조각에만 속하고 새로 생기지 않는다',
+  surfaceSplit.pieces === 2 && !surfaceSplit.duplicate && !surfaceSplit.outside
+    && surfaceSplit.count < surfaceSplit.parent,
+  `${surfaceSplit.parent} → ${surfaceSplit.count}칸 · ${surfaceSplit.pieces}조각`);
+check('강체 재중심화 뒤에도 살아남은 도트의 월드 위치가 같다',
+  surfaceSplit.maxDrift < 1e-9,
+  `최대 이동 ${(surfaceSplit.maxDrift * 1e9).toFixed(3)} nm`);
+
+const surfaceMiss = (() => {
+  const world = createWorld();
+  const outline = hulls.sloop.outline;
+  const surface = rasterizeHullSurface({ outline, holes: [] });
+  const body = createHullBody(world, { outline, holes: [], items: [], surface },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const out = applyImpact(world, body, { x: 100, y: 100 }, 0.2);
+  return { sameBody: out.bodies[0] === body, sameSurface: body.getUserData().hull.surface === surface };
+})();
+check('빗맞음은 강체와 도트 표면을 재생성하지 않는다',
+  surfaceMiss.sameBody && surfaceMiss.sameSurface,
+  `body ${surfaceMiss.sameBody ? '유지' : '교체'} · surface ${surfaceMiss.sameSurface ? '유지' : '교체'}`);
+
 // ── ★ 균일한 화염 지대에서 배가 원이 되지 않는가 ─────────────────────────────────
 //
 // §6.1 의 disc 는 `radius × (1−falloff)` 안쪽이 평평하다 (화염 지대는 27 m, 화산대는 7.15 m).
@@ -1539,9 +1726,12 @@ check('첫 발화는 가장 돌출한 부위에서 시작한다 (§2.2 "뾰족�
 function burnWalk(key, mode, rounds = 12) {
   const src = hulls[key];
   const world = createWorld();
-  let body = createHullBody(world, { outline: src.outline, holes: [], items: [] },
+  const surface = rasterizeHullSurface({ outline: src.outline, holes: [] });
+  let body = createHullBody(world, { outline: src.outline, holes: [], items: [], surface },
     { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
   const octants = new Set();
+  const cellCounts = [surface.cells.length];
+  const cellHistory = [new Set(surface.cells.map(surfaceCellKey))];
   let cycles = 0;
   for (let i = 0; i < rounds; i++) {
     const h = body.getUserData().hull;
@@ -1556,11 +1746,18 @@ function burnWalk(key, mode, rounds = 12) {
     const w = body.getWorldPoint(new Vec2(local.x, local.y));
     const out = applyImpact(world, body, { x: w.x, y: w.y },
       burnRadius(mode === 'far' ? h.params.area : (h.launchArea ?? h.params.area)));
-    if (!out || out.bodies.length === 0) return { octants: octants.size, cycles, dead: true };
+    if (!out || out.bodies.length === 0) {
+      cellCounts.push(0);
+      cellHistory.push(new Set());
+      return { octants: octants.size, cycles, dead: true, cellCounts, cellHistory };
+    }
     body = out.bodies.sort((x, y) =>
       y.getUserData().hull.params.area - x.getUserData().hull.params.area)[0];
+    const cells = body.getUserData().hull.surface?.cells ?? [];
+    cellCounts.push(cells.length);
+    cellHistory.push(new Set(cells.map(surfaceCellKey)));
   }
-  return { octants: octants.size, cycles, dead: false };
+  return { octants: octants.size, cycles, dead: false, cellCounts, cellHistory };
 }
 
 const walkFar = burnWalk('round', 'far');
@@ -1571,9 +1768,21 @@ console.log(`\n  12회 연속 연소, 차감 지점이 건드린 8분면 (적을
 console.log(`  ${pad('', 14)}${pad('가장 먼 점', 12)}번짐`);
 console.log(`  ${pad('둥근 배', 14)}${pad(walkFar.octants + '/8', 12)}${walkSpread.octants}/8`);
 console.log(`  ${pad('슬루프', 14)}${pad(walkFarSloop.octants + '/8', 12)}${walkSpreadSloop.octants}/8`);
+// ⚠ 2026-08-10 burnRadiusOfHull 0.30→0.45(용암 전손 가속) 뒤로 절대 상한이 4→6 으로
+//   올랐다 — 한 입이 커진 만큼 12회 안에 남은 선체의 더 많은 호를 삼킨다. 핵심 불변식은
+//   그대로다: "번짐"은 항상 "가장 먼 점"보다 좁게 남는다(6/8 < 8/8, 슬루프 3/8 < 4/8).
 check('★ 균일한 화염에서도 배가 원이 되지 않는다 (직전 화점에서 번진다)',
-  walkSpread.octants < walkFar.octants && walkSpread.octants <= 4,
+  walkSpread.octants < walkFar.octants && walkSpread.octants <= 6,
   `둥근 배 — 가장 먼 점 ${walkFar.octants}/8 vs 번짐 ${walkSpread.octants}/8`);
+
+const progressiveCells = walkSpread.cellCounts.every((n, i, a) => i === 0 || n <= a[i - 1]);
+const progressiveIds = walkSpread.cellHistory.every((set, i, history) => i === 0
+  || [...set].every((key) => history[i - 1].has(key)));
+const visibleDrops = walkSpread.cellCounts.reduce((n, count, i, a) =>
+  n + Number(i > 0 && count < a[i - 1]), 0);
+check('연속 파손에서 표면 도트는 단계적으로 줄고 다시 생기지 않는다',
+  progressiveCells && progressiveIds && visibleDrops >= 3,
+  `${walkSpread.cellCounts[0]} → ${walkSpread.cellCounts.at(-1)}칸 · 감소 ${visibleDrops}회`);
 
 // ── ★ 배가 유한 사이클에 전손하는가 ─────────────────────────────────────────────
 //
@@ -2089,13 +2298,18 @@ check('★ 포탑 탄이 배를 깎는다 (피탄 → 파손은 암초 충돌과
 //
 //    판정을 **에너지**로 하는 이유: 명중 횟수만 보면 갈라진 임펄스가 우연히 둘 다 임계를
 //    넘는 배치에서 통과해 버린다. 포구 에너지의 70% 를 밑돌면 갈라진 것이다.
+//
+//    ⚠ 2026-08-10 나무 강화 뒤로는 `hits.length === fired` 를 못 박을 수 없다 — 첫 두 발이
+//    같은 자리를 뚫어 버려서 세 번째 발은 그 구멍을 그냥 지나간다(명중도 이음매 분리도
+//    아니다, 맞을 표적이 없을 뿐이다). 그래서 "명중은 몇 발이든 전부 안 갈라졌는가"만 본다
+//    — 표적이 사라져 못 맞히는 것과 맞았는데 무해했던 것은 다른 사건이다.
 const muzzleEnergy = 0.5 * TURRET_TUNING.mass * TURRET_TUNING.speed ** 2;
 console.log(`  명중 에너지 [${shelled.hits.map((h) => (h.energy / 1000).toFixed(1)).join(', ')}] kJ ` +
   `(포구 ${(muzzleEnergy / 1000).toFixed(1)} kJ)`);
 check('★ 한 발의 충격이 볼록 분해 이음매에서 갈라지지 않는다 (갈라지면 임계를 못 넘어 무해해진다)',
-  shelled.hits.length === shelled.fired
+  shelled.hits.length > 0
     && shelled.hits.every((h) => h.energy > muzzleEnergy * 0.7),
-  `${shelled.fired}발 전부 명중 · 최소 ${(Math.min(...shelled.hits.map((h) => h.energy)) / 1000).toFixed(1)} kJ`);
+  `${shelled.hits.length}/${shelled.fired}발 명중 · 최소 ${(Math.min(...shelled.hits.map((h) => h.energy)) / 1000).toFixed(1)} kJ`);
 
 const passing = bombard({ ahead: 25, shipV: { x: 4, y: 0 }, seconds: 12 });
 check('★ 지나가는 배는 포탑이 있는 쪽 옆구리를 깎인다 (부호를 반대로 쓰면 반대편이 깎인다)',
@@ -2299,10 +2513,13 @@ check('감쇠 노브의 방향이 뒤집히지 않는다 (나무 < 철)',
 
 // ★ 감쇠 노브가 **정타를 건드리면 안 된다.** 건드리면 D3 ② 의 암초 밸런스와 위 명중 수치가
 //   통째로 흔들린다. 정타에서는 법선분이 곧 총 에너지라 되돌려 줄 접선분이 0 이다.
+//   임펄스는 포구 운동량(μ·v)에서 실측된 솔버 오버슈트(~5%, 위 "20.0 vs 18.1 kJ" 참고)를
+//   더한 값으로 잡는다 — 상수로 박으면 TURRET_TUNING 을 튜닝할 때마다 조용히 깨진다.
+const headOnImpulse = TURRET_TUNING.mass * TURRET_TUNING.speed * 1.05;
 const headOnUnaffected = carveRadiusFromImpact({
-  impulse: 690, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
+  impulse: headOnImpulse, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
 }) === carveRadiusFromImpact({
-  impulse: 690, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
+  impulse: headOnImpulse, effectiveMass: TURRET_TUNING.mass, material: MATERIALS.wood, hullArea: 32,
   strikeEnergy: 0.5 * TURRET_TUNING.mass * TURRET_TUNING.speed ** 2,
 });
 check('입사각 감쇠는 정타를 건드리지 않는다 (기존 암초·정타 밸런스가 그대로여야 한다)',
@@ -2507,7 +2724,1434 @@ check('주인공 없는 선체도 파손 경로를 그대로 탄다 (crew 는 �
     (bd) => bd.getUserData().hull.crew === null),
   `조각 ${splitResult.bodies.length}개 · crew null · crewLost false`);
 
-// ─────────────────────────────────────────────── 종합
+// 도착 결과는 그림을 채점하지 않고 맵 데이터의 시간 기준만 읽는다.
+const starScoring = DEMO_MAP.scoring;
+check('클리어 시간 3별 경계는 포함된다', rateTravelTime(60, starScoring) === 3,
+  `60.000초 → ${rateTravelTime(60, starScoring)}별`);
+check('3별 경계를 한 물리 스텝 넘으면 2별이다', rateTravelTime(60 + FIXED_DT, starScoring) === 2,
+  `${(60 + FIXED_DT).toFixed(3)}초 → ${rateTravelTime(60 + FIXED_DT, starScoring)}별`);
+check('클리어 시간 2별 경계는 포함된다', rateTravelTime(90, starScoring) === 2,
+  `90.000초 → ${rateTravelTime(90, starScoring)}별`);
+check('2별 경계를 한 물리 스텝 넘으면 1별이다', rateTravelTime(90 + FIXED_DT, starScoring) === 1,
+  `${(90 + FIXED_DT).toFixed(3)}초 → ${rateTravelTime(90 + FIXED_DT, starScoring)}별`);
+let malformedScoringRejected = false;
+let reversedScoringRejected = false;
+try { rateTravelTime(30, { threeStarMaxSeconds: NaN, twoStarMaxSeconds: 90 }); } catch (error) {
+  malformedScoringRejected = error instanceof RangeError;
+}
+try { rateTravelTime(30, { threeStarMaxSeconds: 90, twoStarMaxSeconds: 60 }); } catch (error) {
+  reversedScoringRejected = error instanceof RangeError;
+}
+check('잘못되거나 역전된 별 시간 기준은 거절한다', malformedScoringRejected && reversedScoringRejected,
+  `잘못된 값 ${malformedScoringRejected ? '거절' : '통과'} · 역전 ${reversedScoringRejected ? '거절' : '통과'}`);
+
+// ─────────────────────────────────────────────── D3 ⑤ 해역
+// D3 통과 질문 (b) "3맵 전부 클리어 가능한가" 의 반대편 — 클리어는 되어야 하지만 **옆으로
+// 돌아가서** 되면 안 된다. 항해 화면의 줌은 20 px/m 이라 한 화면이 대략 70 m × 40 m 다.
+// 암초를 항로 주변에만 깔면 y 로 한 화면만 벗어나도 텅 빈 바다가 나오고, 그러면 암초는
+// 장애물이 아니라 무시해도 되는 장식이 된다. 여기서는 암초밭이 해역 전체를 덮는지와,
+// 해역 밖으로는 정말 못 나가는지를 잰다.
+console.log('\n\x1b[36m▌D3 ⑤ — 해역 (암초밭의 폭 · 경계 벽)\x1b[0m\n');
+
+const sea = DEMO_MAP.bounds;
+/** 화면 한 폭에 못 미치는 띠로 해역을 가로로 썰어, 빈 띠가 있는지 본다. */
+const BAND = 25;
+const bands = [];
+for (let y0 = sea.minY; y0 < sea.maxY; y0 += BAND) {
+  const n = DEMO_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length;
+  bands.push({ y0, n });
+}
+const rockSpanY = Math.max(...DEMO_MAP.obstacles.map((o) => Math.abs(o.y) + o.radius));
+console.log(`  암초 ${DEMO_MAP.obstacles.length}개 · y 도달폭 ±${rockSpanY.toFixed(0)} m · ` +
+  `${BAND} m 띠별 개수 ${bands.map((b) => b.n).join('·')}`);
+check('★ 암초밭이 해역 전체를 덮는다 (빈 띠가 없다 — y 로 벗어나도 계속 암초를 만난다)',
+  bands.every((b) => b.n > 0),
+  `${bands.length}개 띠 중 빈 띠 ${bands.filter((b) => b.n === 0).length}개`);
+check('암초가 화면 한 폭(±20 m)보다 훨씬 넓게 퍼져 있다', rockSpanY > 60,
+  `y ±${rockSpanY.toFixed(0)} m`);
+
+// 출항 지점과 도착 지점은 암초에 묻혀 있으면 안 된다 (맵이 애초에 성립 불가가 된다).
+const clearance = (p) => Math.min(...DEMO_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const startClear = clearance({ x: 0, y: 0 });
+const goalClear = clearance(DEMO_MAP.goal) - DEMO_MAP.goal.radius;
+console.log(`  출항 지점 여유 ${startClear.toFixed(1)} m · 도착 원 밖 여유 ${goalClear.toFixed(1)} m`);
+check('출항 지점과 도착 원이 암초에 묻히지 않았다', startClear > 5 && goalClear > 0,
+  `출항 ${startClear.toFixed(1)} m · 도착 ${goalClear.toFixed(1)} m`);
+check('도착 지점이 해역 안에 있다 (경계 벽이 골을 삼키지 않는다)',
+  DEMO_MAP.goal.x + DEMO_MAP.goal.radius < sea.maxX
+  && Math.abs(DEMO_MAP.goal.y) + DEMO_MAP.goal.radius < sea.maxY,
+  `골 x=${DEMO_MAP.goal.x} · 해역 x≤${sea.maxX}`);
+
+// ── 0장 「연습 해역」 ─────────────────────────────────────────────
+// 앞의 암초밭과 정반대의 것을 잰다. 여기는 **가르치는 바다**라 벌을 주면 안 되고, 대신
+// 한 가지만은 반드시 강요해야 한다 — 돌지 않으면 못 간다는 것.
+console.log('\n\x1b[36m▌0장 — 연습 해역 (조작을 가르치는 바다)\x1b[0m\n');
+
+const pm = PRACTICE_MAP;
+const pb = pm.bounds;
+
+// ★ 이 맵의 전부. 출항(원점)에서 뱃머리(+X)로 직진하면 지나는 선은 y=0 이므로, 골까지의
+//   최단 거리는 |goal.y| 다. 그것이 골 반지름보다 크면 ↑ 만 눌러서는 **영원히 못 닿는다.**
+//   조작을 글로 설명하는 대신 지형이 강요하게 만든 것이고, 이 값이 무너지면 연습 해역이
+//   그냥 짧은 직진 구간이 된다.
+const straightMiss = Math.abs(pm.goal.y) - pm.goal.radius;
+const goalDist = Math.hypot(pm.goal.x, pm.goal.y);
+const goalBearing = Math.abs(Math.atan2(pm.goal.y, pm.goal.x)) * 180 / Math.PI;
+console.log(`  골 ${goalDist.toFixed(1)} m · 뱃머리에서 ${goalBearing.toFixed(0)}° 옆 · ` +
+  `직진 시 최단 거리 ${straightMiss.toFixed(1)} m`);
+check('★ 직진(↑ 만)으로는 골에 닿을 수 없다 — 반드시 돌아야 한다',
+  straightMiss > 0, `직진 최단 거리가 골 원 밖으로 ${straightMiss.toFixed(1)} m`);
+check('그렇다고 뒤에 있지도 않다 (뱃머리 기준 90° 안)', goalBearing < 90,
+  `${goalBearing.toFixed(0)}°`);
+
+// 가는 길은 뚫려 있어야 한다. 출항 → 골 직선에서 암초까지의 여유를 잰다.
+const segClear = (o) => {
+  const dx = pm.goal.x, dy = pm.goal.y;
+  const t = Math.max(0, Math.min(1, (o.x * dx + o.y * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(o.x - dx * t, o.y - dy * t) - o.radius;
+};
+const laneClear = Math.min(...pm.obstacles.map(segClear));
+console.log(`  암초 ${pm.obstacles.length}개 · 항로 최소 여유 ${laneClear.toFixed(1)} m`);
+check('★ 연습 해역은 항로를 막지 않는다 (부딪히려면 일부러 가야 한다)', laneClear > 8,
+  `최소 여유 ${laneClear.toFixed(1)} m`);
+check('암초 수가 1장보다 훨씬 적다 (가르치는 바다지 시험이 아니다)',
+  pm.obstacles.length * 3 < DEMO_MAP.obstacles.length,
+  `연습 ${pm.obstacles.length}개 vs 1장 ${DEMO_MAP.obstacles.length}개`);
+
+// 별 기준은 넉넉해야 한다 — 직선으로도 goalDist/종단 초가 드는데, 돌면서 가느라 실제로는
+// 훨씬 더 든다. 3별 기준이 그 직선 시간의 몇 배인지를 본다.
+// ⚠ 종단을 상수로 박으면 안 된다. 노 튜닝을 내릴 때마다 이 기준이 조용히 헐거워진다 —
+//   위에서 실제로 60초 몰아 잰 maxCad.speed 를 그대로 쓴다.
+const straightSeconds = goalDist / maxCad.speed;
+const slack = pm.scoring.threeStarMaxSeconds / straightSeconds;
+console.log(`  직선 최소 ${straightSeconds.toFixed(1)}초 · 3별 기준 ${pm.scoring.threeStarMaxSeconds}초 (${slack.toFixed(1)}배)`);
+check('★ 연습 해역의 3별 기준이 넉넉하다 (헤매도 3별 — 연습에서 1별은 배움이 아니라 벌이다)',
+  slack > 3, `직선 시간의 ${slack.toFixed(1)}배`);
+
+// ⚠ 처음엔 골이 53 m 였는데 **너무 가까웠다** — 출발하자마자 도착 표시가 화면에 들어와서
+//   익히는 구간이 아니라 짧은 심부름이 됐다. 아래위로 가둔다: 짧으면 못 배우고, 길면
+//   배우는 시간이 아니라 그냥 젓는 시간이 된다.
+check('★ 연습 해역이 너무 짧지 않다 (직진으로도 15초는 든다)', straightSeconds > 15,
+  `직선 ${straightSeconds.toFixed(1)}초`);
+check('그렇다고 1장보다 길지도 않다 (연습이 본편보다 멀면 안 된다)',
+  goalDist < Math.hypot(DEMO_MAP.goal.x, DEMO_MAP.goal.y),
+  `연습 ${goalDist.toFixed(0)} m vs 1장 ${Math.hypot(DEMO_MAP.goal.x, DEMO_MAP.goal.y).toFixed(0)} m`);
+
+// 조작 안내는 **연습 해역에만** 켠다 — D4 통과 질문이 "튜토리얼 텍스트 없이 1장을
+// 클리어하는가"라, 1장부터는 화면이 설명하면 안 된다.
+check('★ 조작 안내가 연습 해역에만 켜져 있다', STAGES[0].hints === true
+  && STAGES.slice(1).every((st) => !st.hints),
+  STAGES.map((st) => `${st.id}:${st.hints ? 'on' : 'off'}`).join(' · '));
+
+check('연습 해역도 출항·도착이 암초에 묻히지 않았다',
+  Math.min(...pm.obstacles.map((o) => Math.hypot(o.x, o.y) - o.radius)) > 5
+  && Math.min(...pm.obstacles.map((o) => Math.hypot(o.x - pm.goal.x, o.y - pm.goal.y) - o.radius)) > pm.goal.radius,
+  '출항·도착 모두 여유 있음');
+check('연습 해역의 골이 해역 안에 있다',
+  pm.goal.x + pm.goal.radius < pb.maxX && pm.goal.y + pm.goal.radius < pb.maxY,
+  `골 (${pm.goal.x}, ${pm.goal.y}) · 해역 x≤${pb.maxX} y≤${pb.maxY}`);
+check('연습 해역이 1장보다 좁다 (넓은 바다에서 길을 잃는 것 자체가 초반 좌절이다)',
+  (pb.maxX - pb.minX) * (pb.maxY - pb.minY) < (sea.maxX - sea.minX) * (sea.maxY - sea.minY) * 0.7,
+  `연습 ${(pb.maxX - pb.minX)}×${(pb.maxY - pb.minY)} vs 1장 ${(sea.maxX - sea.minX)}×${(sea.maxY - sea.minY)}`);
+
+// ★ 진행 표와 맵 표가 어긋나면 화면이 빈 바다를 띄운다 (MAPS[id] 가 undefined).
+//   둘을 따로 고칠 수 있게 나눠 놓았으므로 여기서 붙여 둔다.
+const stageIds = STAGES.map((stage) => stage.id);
+const mapIds = Object.keys(MAPS);
+check('★ STAGES 와 MAPS 가 양방향 1:1 이다 (진행 표와 맵 표)',
+  STAGES.every((stage) => Boolean(MAPS[stage.id]))
+    && mapIds.every((id) => stageIds.includes(id))
+    && new Set(stageIds).size === stageIds.length,
+  stageIds.map((id) => `${id}${MAPS[id] ? '✓' : '✗'}`).join(' · '));
+check('연습 해역이 첫 스테이지다', STAGES[0].id === 'practice', stageIds.join(' → '));
+/**
+ * ★ 파손이 꺼진 바다에는 **저마다 적어 둔 이유가 있어야 한다.** 둘뿐이다:
+ *
+ *   practice — 배우는 곳이라 벌하지 않는다. 연습에서 배가 깨지면 배움이 아니라 혼나는 것이다.
+ *   maw      — [S-09] 에서 3인방이 "아무것에도 맞추지 말고 타고 싶은 걸 그려"라고 해 놓은
+ *              뒤라, 그 배가 깨지면 자유가 벌이 된다. 게다가 여기서 결과를 정하는 것은
+ *              플레이어의 조작이 아니라 흡입이다 — 못 피하는 것으로 벌하지 않는다.
+ *
+ * 나머지는 전부 시험이라 켜져 있다 (보스전 `bulgasari` 도 포함).
+ *
+ * ⚠ 「양 끝 둘」로 재던 시절이 있었는데, 보스전이 마지막으로 들어오면서 깨졌다.
+ *   위치가 아니라 **이유**로 재야 바다가 늘어도 뜻이 남는다 — 새 바다를 끄고 싶으면
+ *   여기 이름과 이유를 같이 적게 된다.
+ */
+const byNumber = [...Object.values(MAPS)].sort((a, b) => a.number - b.number);
+const DAMAGE_OFF = new Set(['practice', 'maw']);
+check('파손이 꺼진 바다는 이유가 적힌 둘뿐이다 (나머지는 전부 시험이다)',
+  byNumber.every((map) => map.damage === !DAMAGE_OFF.has(map.id)),
+  byNumber.map((map) => `${map.id}:${map.damage ? 'on' : 'off'}`).join(' · '));
+
+// 경계 벽 — 배를 계속 밀어붙여도 넘어가지 못한다. 벽을 빼면 그대로 나가 버리는 것이 대조군이다.
+const seaWalls = boundaryWalls(sea);
+/**
+ * 경계를 향해 12초간 배를 밀어붙이고, 그 방향으로 가장 멀리 간 지점을 돌려준다.
+ * 항력은 켜지 않는다 — 여기서 재는 것은 "벽이 막는가" 하나이고, 항력이 있으면 벽에
+ * 닿기도 전에 멎어 무엇이 막았는지 알 수 없게 된다.
+ */
+function pushOut(dir, { walls = true, seconds = 12 } = {}) {
+  const world = createWorld();
+  if (walls) for (const spec of seaWalls) createObstacle(world, spec);
+  const body = createHullBody(world,
+    { outline: hulls.sloop.outline, holes: [], items: [], crew: { x: 0, y: 0 } },
+    { position: { x: 0, y: 0 }, angle: 0, material: 'wood' });
+  const st = new FixedStepper(world, {});
+  let far = -Infinity;
+  for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) {
+    body.setLinearVelocity(new Vec2(dir.x * 20, dir.y * 20));
+    st.advance(FIXED_DT);
+    const p = body.getPosition();
+    far = Math.max(far, p.x * dir.x + p.y * dir.y);
+  }
+  return far;
+}
+
+const ramNorth = pushOut({ x: 0, y: 1 });
+const ramEast = pushOut({ x: 1, y: 0 });
+const ramSouth = pushOut({ x: 0, y: -1 });
+const ramWest = pushOut({ x: -1, y: 0 });
+const ramFree = pushOut({ x: 0, y: 1 }, { walls: false });
+console.log(`  20 m/s 로 12초간 밀어붙임 — 북 ${ramNorth.toFixed(1)} / 남 ${ramSouth.toFixed(1)} / ` +
+  `동 ${ramEast.toFixed(1)} / 서 ${ramWest.toFixed(1)} m (벽 없으면 ${ramFree.toFixed(0)} m)`);
+check('★ 해역 밖으로는 나갈 수 없다 (사방이 암초 벽 — 경계 전용 물리 코드 0줄)',
+  ramNorth < sea.maxY && ramSouth < -sea.minY && ramEast < sea.maxX && ramWest < -sea.minX,
+  `북 ${ramNorth.toFixed(1)} ≤ ${sea.maxY} · 동 ${ramEast.toFixed(1)} ≤ ${sea.maxX}`);
+check('막는 것이 정말 벽이다 (빼면 그대로 나간다 — 대조군)', ramFree > 200,
+  `벽 없이 ${ramFree.toFixed(0)} m`);
+
+// ─────────────────────────────────────────────── 레벨 2 · 시변 폭풍
+console.log('\n\x1b[36m▌레벨 2 — 성긴 암초밭 · 5초 방향 폭풍\x1b[0m\n');
+
+const playableMaps = Object.values(MAPS);
+check('기존 1장 맵은 MAPS.reef 로 그대로 보존된다', MAPS.reef === DEMO_MAP,
+  playableMaps.map((map) => map.label).join(' → '));
+// 번호는 **0부터 빈틈없이** 이어져야 한다. 개수를 리터럴로 박으면 바다를 더할 때마다
+// 여기를 고쳐야 하고, 그러다 보면 정작 "번호가 겹쳤다"를 놓친다.
+check('연습 0장부터 마지막 장까지 ID·번호가 겹치지 않고 빈틈없이 이어진다',
+  new Set(playableMaps.map((map) => map.id)).size === playableMaps.length
+    && new Set(playableMaps.map((map) => map.number)).size === playableMaps.length
+    && playableMaps.map((map) => map.number).sort((a, b) => a - b)
+      .every((n, i) => n === i)
+    && playableMaps.length === STAGES.length,
+  `${playableMaps.length}장 · ${playableMaps.map((map) => `${map.id}:${map.number}`).join(' / ')}`);
+
+function declarativeMap(value, key = '') {
+  if (typeof value === 'function') return false;
+  if (['script', 'code', 'on', 'fn', 'expr'].includes(key) || key.includes('=>')) return false;
+  if (Array.isArray(value)) return value.every((entry) => declarativeMap(entry));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).every(([childKey, child]) => declarativeMap(child, childKey));
+  }
+  return true;
+}
+check('맵 데이터에는 콜백·스크립트 실행 구멍이 없다',
+  playableMaps.every((map) => declarativeMap(map)),
+  '모든 잎이 값 데이터');
+
+const stormBands = [];
+for (let y0 = STORM_MAP.bounds.minY; y0 < STORM_MAP.bounds.maxY; y0 += BAND) {
+  stormBands.push(STORM_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length);
+}
+const stormClearance = (p) => Math.min(...STORM_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const stormStartClear = stormClearance({ x: 0, y: 0 });
+const stormGoalClear = stormClearance(STORM_MAP.goal) - STORM_MAP.goal.radius;
+console.log(`  레벨 1 암초 ${DEMO_MAP.obstacles.length}개 → 레벨 2 ${STORM_MAP.obstacles.length}개 · ` +
+  `${BAND} m 띠별 ${stormBands.join('·')}`);
+check('레벨 2 암초는 45~55개로 레벨 1보다 성기다',
+  STORM_MAP.obstacles.length >= 45 && STORM_MAP.obstacles.length <= 55
+    && STORM_MAP.obstacles.length < DEMO_MAP.obstacles.length,
+  `${STORM_MAP.obstacles.length}개 < ${DEMO_MAP.obstacles.length}개`);
+check('레벨 2도 해역 전체에 빈 암초 띠가 없고 출발·도착이 열려 있다',
+  stormBands.every((n) => n > 0) && stormStartClear > 5 && stormGoalClear > 0,
+  `띠 ${stormBands.join('·')} · 출발 ${stormStartClear.toFixed(1)} m · 골 ${stormGoalClear.toFixed(1)} m`);
+check('레벨 2 도착 지점은 해역 경계 안에 있다',
+  STORM_MAP.goal.x + STORM_MAP.goal.radius < STORM_MAP.bounds.maxX
+    && STORM_MAP.goal.y - STORM_MAP.goal.radius > STORM_MAP.bounds.minY
+    && STORM_MAP.goal.y + STORM_MAP.goal.radius < STORM_MAP.bounds.maxY,
+  `골 (${STORM_MAP.goal.x}, ${STORM_MAP.goal.y})`);
+
+const stormFields = createFields(STORM_MAP.fields);
+const windAt = (t) => stormFields.sampleVector('wind', 0, 0, t);
+const w0 = windAt(0);
+const wBefore = windAt(4.999);
+const w5 = windAt(5);
+const w10 = windAt(10);
+const w40 = windAt(40);
+const mag = (v) => Math.hypot(v.x, v.y);
+console.log(`  바람 t=0 (${w0.x.toFixed(1)},${w0.y.toFixed(1)}) → ` +
+  `5s (${w5.x.toFixed(1)},${w5.y.toFixed(1)}) → 10s (${w10.x.toFixed(1)},${w10.y.toFixed(1)})`);
+check('★ 바람은 4.999초까지 유지되고 5.000초에 다음 방향으로 바뀐다',
+  wBefore.x === w0.x && wBefore.y === w0.y && (w5.x !== w0.x || w5.y !== w0.y),
+  `4.999s (${wBefore.x.toFixed(1)},${wBefore.y.toFixed(1)}) · 5s (${w5.x.toFixed(1)},${w5.y.toFixed(1)})`);
+check('방향 목록은 5초마다 순서대로 돌고 한 주기 뒤 재현된다',
+  (w10.x !== w5.x || w10.y !== w5.y) && w40.x === w0.x && w40.y === w0.y,
+  `10s (${w10.x.toFixed(1)},${w10.y.toFixed(1)}) · 40s (${w40.x.toFixed(1)},${w40.y.toFixed(1)})`);
+check('폭풍 방향이 바뀌어도 풍속 크기는 일정하다',
+  Math.abs(mag(w0) - mag(w5)) < 1e-3 && Math.abs(mag(w0) - mag(w10)) < 1e-3,
+  `${mag(w0).toFixed(3)} / ${mag(w5).toFixed(3)} / ${mag(w10).toFixed(3)} m/s`);
+check('레벨 2 어둠과 비 강도가 유효하다',
+  stormFields.sampleScalar('darkness', 0, 0, 20) > 0.4
+    && STORM_MAP.weather.rain > 0 && STORM_MAP.weather.rain <= 1,
+  `어둠 ${stormFields.sampleScalar('darkness', 0, 0, 20).toFixed(2)} · 비 ${STORM_MAP.weather.rain.toFixed(2)}`);
+
+const stormPrediction = (() => {
+  const { world, body } = spawn('sloop', { attach: [{ type: 'sail', x: 0, y: 0, angle: 0 }] });
+  body.setLinearVelocity(new Vec2(2.5, 0.4));
+  const startTime = 4.8;
+  const horizon = 1.2;
+  const path = predictPath(body, {}, {
+    fields: stormFields, startTime, horizon, stride: 1,
+  });
+  let step = 0;
+  const live = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      step += 1;
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, stormFields, dt, startTime + step * FIXED_DT);
+    },
+  });
+  for (let i = 0; i < Math.round(horizon / FIXED_DT); i++) live.advance(FIXED_DT);
+  const actual = body.getWorldCenter();
+  const predicted = path.at(-1);
+  return Math.hypot(actual.x - predicted.x, actual.y - predicted.y);
+})();
+check('★ 5초 바람 전환을 가로질러도 예측선과 실물리가 일치한다', stormPrediction < 1e-7,
+  `최종 오차 ${(stormPrediction * 1000).toFixed(6)} mm`);
+
+// ─────────────────────────────────────────────── 레벨 3 · 흐르는 용암
+console.log('\n\x1b[36m▌레벨 3 — 암초 사이로 흐르는 불의 바다\x1b[0m\n');
+
+const volcanoBands = [];
+for (let y0 = VOLCANO_MAP.bounds.minY; y0 < VOLCANO_MAP.bounds.maxY; y0 += BAND) {
+  volcanoBands.push(VOLCANO_MAP.obstacles.filter((o) => o.y >= y0 && o.y < y0 + BAND).length);
+}
+const volcanoClearance = (p) => Math.min(...VOLCANO_MAP.obstacles.map(
+  (o) => Math.hypot(o.x - p.x, o.y - p.y) - o.radius));
+const volcanoStartClear = volcanoClearance({ x: 0, y: 0 });
+const volcanoGoalClear = volcanoClearance(VOLCANO_MAP.goal) - VOLCANO_MAP.goal.radius;
+check('레벨 3도 해역 전체에 빈 암초 띠가 없고 출발·도착이 열려 있다',
+  volcanoBands.every((n) => n > 0) && volcanoStartClear > 5 && volcanoGoalClear > 0,
+  `띠 ${volcanoBands.join('·')} · 출발 ${volcanoStartClear.toFixed(1)} m · 골 ${volcanoGoalClear.toFixed(1)} m`);
+check('레벨 3 도착 지점은 해역 경계 안에 있다',
+  VOLCANO_MAP.goal.x + VOLCANO_MAP.goal.radius < VOLCANO_MAP.bounds.maxX
+    && VOLCANO_MAP.goal.y - VOLCANO_MAP.goal.radius > VOLCANO_MAP.bounds.minY
+    && VOLCANO_MAP.goal.y + VOLCANO_MAP.goal.radius < VOLCANO_MAP.bounds.maxY,
+  `골 (${VOLCANO_MAP.goal.x}, ${VOLCANO_MAP.goal.y})`);
+// ⚠ 지도(ROUTE)에 잠긴 채 남은 바다가 있으면 안 된다. `locked` 는 아직 스테이지가 없는
+//   목적지를 흐리게 그리려고 둔 표시라, 스테이지가 생겼는데 잠긴 채면 지도가 거짓말을 한다.
+check('불의 바다는 storm 다음이고, 스테이지가 있는 바다는 전부 지도에 열려 있다',
+  STAGES.findIndex((stage) => stage.id === 'volcano') === STAGES.findIndex((stage) => stage.id === 'storm') + 1
+    && STAGES.every((stage) => ROUTE.find((node) => node.id === stage.id)?.locked !== true),
+  STAGES.map((stage) => stage.id).join(' → '));
+
+const volcanoFields = createFields(VOLCANO_MAP.fields);
+const calmCurrent = volcanoFields.sampleVector('current', 0, 0, 0);
+const northCurrent = volcanoFields.sampleVector('current', 60, 25, 0);
+const southCurrent = volcanoFields.sampleVector('current', 60, -34, 0);
+// 해역 구석구석 — "전부 용암"은 표본 하나로 보증되지 않는다. 출발·골·네 귀퉁이를 다 훑는다.
+const { minX, maxX, minY, maxY } = VOLCANO_MAP.bounds;
+const volcanoProbes = [
+  { x: 0, y: 0 }, { x: VOLCANO_MAP.goal.x, y: VOLCANO_MAP.goal.y },
+  { x: minX + 1, y: minY + 1 }, { x: maxX - 1, y: minY + 1 },
+  { x: minX + 1, y: maxY - 1 }, { x: maxX - 1, y: maxY - 1 },
+  { x: 60, y: 25 }, { x: 60, y: -34 },
+].map((p) => volcanoFields.sampleScalar('temperature', p.x, p.y, 0));
+const coldest = Math.min(...volcanoProbes);
+check('용암은 전 해역에서 흐르고 고온 띠마다 흐름 방향이 달라진다',
+  mag(calmCurrent) > 0
+    && (northCurrent.x !== calmCurrent.x || northCurrent.y !== calmCurrent.y)
+    && (southCurrent.x !== northCurrent.x || southCurrent.y !== northCurrent.y),
+  `중앙 (${calmCurrent.x.toFixed(1)},${calmCurrent.y.toFixed(1)}) · 북 (${northCurrent.x.toFixed(1)},${northCurrent.y.toFixed(1)}) · 남 (${southCurrent.x.toFixed(1)},${southCurrent.y.toFixed(1)})`);
+// 임계는 규칙표에서 읽는다 — 250 을 벤치에 박아 두면 표를 고쳤을 때 조용히 어긋난다.
+const woodIgnite = RULES.find((r) => r.id === 'wood-ignites')?.when?.gte ?? Infinity;
+check('★ 해역 전체가 목재 발화점 위다 — 안전 지대가 없다',
+  coldest >= woodIgnite,
+  `가장 서늘한 표본 ${coldest.toFixed(0)}° ≥ 발화점 ${woodIgnite}°`);
+
+/**
+ * 불의 바다에 배 하나를 띄우고 12초를 돌린다.
+ *
+ * ⚠ 온도를 재는 것으로는 부족하다 — 규칙 엔진·파손 소비 경로가 통째로 빠져도 온도 검사는
+ *   통과한다. 실제로 "화면은 용암인데 배가 안 부서진다"가 그렇게 새어 나갔다.
+ */
+function volcanoVoyage(material, attach = []) {
+  const { world, body } = spawn('sloop', { devices: true, material, attach });
+  const engine = createRuleEngine(RULES, volcanoFields);
+  const hull = body.getUserData().hull;
+  let t = 0;
+  let destroyedAt = null;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, volcanoFields, dt, t);
+      engine.tick(world, dt, t);
+      t += dt;
+    },
+  });
+  for (let i = 0; i < Math.round(12 / FIXED_DT); i++) {
+    stepper.advance(FIXED_DT);
+    for (const ev of engine.drain()) {
+      if (ev.type === 'destroyed' && destroyedAt === null) destroyedAt = t;
+    }
+  }
+  return { destroyedAt, kinds: hull.items.map((it) => it.kind ?? it.type) };
+}
+
+const woodInLava = volcanoVoyage('wood');
+check('★ 나무 선체는 출발점에서 그대로 불타 무너진다',
+  woodInLava.destroyedAt !== null && woodInLava.destroyedAt < 6,
+  `파괴 ${woodInLava.destroyedAt === null ? '없음' : `${woodInLava.destroyedAt.toFixed(1)}s`}`);
+
+// 철의 내화는 **규칙이 없어서** 성립한다 (§6). 강점 코드가 아니라 규칙 부재가 근거다.
+const ironInLava = volcanoVoyage('iron');
+check('철 선체는 같은 자리에서 멀쩡하지만 나무 노는 타 없어진다',
+  ironInLava.destroyedAt === null && !ironInLava.kinds.includes('oar'),
+  `파괴 ${ironInLava.destroyedAt === null ? '없음' : `${ironInLava.destroyedAt.toFixed(1)}s`} · 남은 장치 ${ironInLava.kinds.join(',') || '없음'}`);
+
+// 그래서 이 바다의 추진은 부스터다 — 노가 사라져도 철 장치는 남는다.
+const ironBooster = volcanoVoyage('iron', [{ type: 'booster', x: -3, y: 0, angle: 0 }]);
+check('★ 철 부스터는 살아남아 노를 잃은 뒤의 추진이 된다',
+  ironBooster.destroyedAt === null && ironBooster.kinds.includes('thruster'),
+  `남은 장치 ${ironBooster.kinds.join(',') || '없음'}`);
+check('용암 표면은 current 를 읽는 선언형 팔레트다',
+  VOLCANO_MAP.surface?.flowField === 'current'
+    && VOLCANO_MAP.surface.base !== '#1c4fae'
+    && ['base', 'deep', 'glint', 'shoal', 'wake'].every((key) => VOLCANO_MAP.surface[key]),
+  `${VOLCANO_MAP.surface?.base} · ${VOLCANO_MAP.surface?.flowField}`);
+
+const currentDrift = (() => {
+  const { world, body } = spawn('sloop');
+  const live = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, volcanoFields, dt);
+    },
+  });
+  for (let i = 0; i < Math.round(3 / FIXED_DT); i++) live.advance(FIXED_DT);
+  return body.getWorldCenter();
+})();
+check('★ 돛과 장치가 없는 정지 선체도 해류를 따라 움직인다',
+  Math.hypot(currentDrift.x, currentDrift.y) > 0.01,
+  `3초 뒤 (${currentDrift.x.toFixed(3)}, ${currentDrift.y.toFixed(3)}) m`);
+
+const currentPrediction = (() => {
+  const { world, body } = spawn('sloop');
+  body.setPosition(new Vec2(20, 17.5));
+  body.setLinearVelocity(new Vec2(2.2, 1.2));
+  const horizon = 1.5;
+  const path = predictPath(body, {}, {
+    fields: volcanoFields, startTime: 0, horizon, stride: 1,
+  });
+  let step = 0;
+  const live = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      step += 1;
+      applyHydroToWorld(world, dt);
+      applyFieldsToWorld(world, volcanoFields, dt, step * FIXED_DT);
+    },
+  });
+  for (let i = 0; i < Math.round(horizon / FIXED_DT); i++) live.advance(FIXED_DT);
+  const actual = body.getWorldCenter();
+  const predicted = path.at(-1);
+  return Math.hypot(actual.x - predicted.x, actual.y - predicted.y);
+})();
+check('★ 해류 띠 경계를 지나도 예측선과 실물리가 일치한다', currentPrediction < 1e-7,
+  `최종 오차 ${(currentPrediction * 1000).toFixed(6)} mm`);
+
+// ─────────────────────────────────── 레벨 4 · 끌려가는 바다 (보스전 앞 구간)
+console.log('\n\x1b[36m▌레벨 4 — 삼키는 바다 (보스전으로 끌려가는 구간)\x1b[0m\n');
+
+const suck = createFields(MAW_MAP.fields);
+const bGoal = MAW_MAP.goal;
+const sampleSuck = (x, y) => suck.sampleVector('current', x, y, 0);
+
+// ★ 방향이 **위치에 따라** 골을 향한다. 여태 벡터 소스는 어디서나 방향이 같았으므로
+//   (uniform·band·directionCycle) 이게 `mode:'radial'` 프리미티브의 유일한 존재 이유다.
+//   골을 둘러싼 네 방향에서 재서, 전부 안쪽을 향하는지 본다.
+const inward = [[-60, 0], [0, 60], [0, -60], [40, 0]].map(([dx, dy]) => {
+  const v = sampleSuck(bGoal.x + dx, bGoal.y + dy);
+  const len = Math.hypot(v.x, v.y) || 1;
+  const toGoal = Math.hypot(dx, dy);
+  // 흐름 단위벡터와 "골 쪽" 단위벡터의 내적 — 1 이면 정확히 골을 향한다.
+  return (v.x * (-dx) + v.y * (-dy)) / (len * toGoal);
+});
+check('★ 흐름이 사방에서 골을 향한다 (방향이 위치의 함수인 유일한 소스 — mode:radial)',
+  inward.every((dot) => dot > 0.95),
+  `사방 내적 ${inward.map((d) => d.toFixed(3)).join(' · ')}`);
+
+// ★ "좀 항해하다가" 빨려 든다. 반경 150 m 원 **밖**에서는 흡입이 0 이고, 출항점에서
+//   골까지가 190 m 이므로 걸리기 시작하는 자리의 남은 거리가 정확히 150 m 다.
+//   (2026-08-10 맵 길이를 절반으로 줄이며 380/300 → 190/150 — 아래 오프셋도 같이 ×0.5.)
+const atStart = sampleSuck(0, 0);
+const atCatch = sampleSuck(bGoal.x - 145, 0);
+const atClose = sampleSuck(bGoal.x - 20, 0);
+const startPull = Math.hypot(atStart.x, atStart.y);
+const catchPull = Math.hypot(atCatch.x, atCatch.y);
+const closePull = Math.hypot(atClose.x, atClose.y);
+check('★ 출항 직후에는 안 빨린다 (좀 항해하다가 걸린다)',
+  startPull < 1 && Math.hypot(bGoal.x, bGoal.y) > 150,
+  `출항점 ${startPull.toFixed(2)} m/s · 골까지 ${Math.hypot(bGoal.x, bGoal.y).toFixed(0)} m`);
+check('★ 안으로 갈수록 세진다 (걸리는 자리 < 가까운 자리)', catchPull < closePull,
+  `−290 m ${catchPull.toFixed(2)} → −40 m ${closePull.toFixed(2)} m/s`);
+
+// ★ 저항은 되지만 못 이긴다 — 노 종단보다 확실히 세야 한다. 같으면 제자리에
+//   멈춰 서서 "빨려 든다"가 사라지고, 훨씬 세면 발버둥 자체가 화면에 안 보인다.
+check('★ 흡입이 노 종단보다 세다 (발버둥은 쳐지되 못 이긴다)',
+  closePull > maxCad.speed * 1.5 && closePull < maxCad.speed * 3,
+  `흡입 ${closePull.toFixed(2)} vs 노 종단 ${maxCad.speed.toFixed(2)} m/s`);
+
+/**
+ * ★ **배를 띄워서 재야 한다.** 필드 값만 보면 이 버그를 못 잡는다 — 실제로 그랬다.
+ *
+ * `falloff` 를 0.9 로 뒀을 때 위 세 검사(방향·세짐·최대 세기)는 전부 통과했는데, 정작
+ * 흡입 구간 **한가운데**에서 뒤로 저으면 15초에 32 m 를 되돌아가 그냥 도망칠 수 있었다.
+ * 골 바로 앞만 세고 나머지가 약했기 때문이다. 위 검사들은 그 두 지점을 안 봤다.
+ *
+ * 그래서 여기서는 구간 한가운데(골까지 90 m)에 배를 놓고 **최대 케이던스로 뒤로 저어** 본다.
+ * 늦춰지기는 해야 하고(발버둥이 화면에 보여야 한다), 그래도 끌려가야 한다(못 이긴다).
+ */
+const suckStruggle = (() => {
+  const drill = (keys) => {
+    const { world, body } = spawn('sloop', { devices: true });
+    const fields = createFields(MAW_MAP.fields);
+    // 흡입 구간 한가운데 — 골까지 90 m (2026-08-10 맵 절반 축소: 원래 180 m 의 ×0.5).
+    body.setTransform(new Vec2(bGoal.x - 90, 0), 0);
+    const stroke = [];
+    for (const key of keys) stroke.push(...STROKE_KEYMAP[key]);
+    const x0 = body.getPosition().x;
+    const steps = Math.round(15 / FIXED_DT);
+    for (let i = 0; i < steps; i++) {
+      applyDevices(body, { strokes: stroke, held: {} }, FIXED_DT);
+      applyHydroToWorld(world, FIXED_DT);
+      applyFieldsToWorld(world, fields, FIXED_DT, i * FIXED_DT);
+      world.step(FIXED_DT);
+    }
+    return body.getPosition().x - x0;
+  };
+  return { drift: drill([]), fight: drill(['ArrowDown']) };
+})();
+check('★ 빨려 드는 도중 뒤로 저어도 못 이긴다 (구간 한가운데에서 — 필드 값만으로는 못 잡는 회귀)',
+  suckStruggle.fight > 0,
+  `가만히 +${suckStruggle.drift.toFixed(1)} m · 뒤로 저으며 +${suckStruggle.fight.toFixed(1)} m`);
+check('그래도 발버둥이 눈에 보인다 (뒤로 저으면 확실히 늦춰진다)',
+  suckStruggle.fight < suckStruggle.drift * 0.75,
+  `${(suckStruggle.drift - suckStruggle.fight).toFixed(1)} m 늦춘다`);
+
+// 끌려가는 길에 박을 수 없어야 한다 — 피할 방법이 없는 사고로 벌하지 않는다.
+const mawLaneClear = Math.min(...MAW_MAP.obstacles
+  .filter((o) => o.x > 40)
+  .map((o) => Math.abs(o.y) - o.radius));
+check('★ 흡입 구간의 암초는 항로에서 비켜나 있다 (끌려가며 박을 수 없다)', mawLaneClear > 25,
+  `항로에서 최소 ${mawLaneClear.toFixed(1)} m`);
+
+check('마지막 바다의 도착 지점이 해역 안에 있다',
+  bGoal.x + bGoal.radius < MAW_MAP.bounds.maxX
+    && Math.abs(bGoal.y) + bGoal.radius < MAW_MAP.bounds.maxY,
+  `골 (${bGoal.x}, ${bGoal.y}) · 해역 x≤${MAW_MAP.bounds.maxX}`);
+
+// ─────────────────────────────────────────────── 플레이어 대포 코어 회귀
+console.log('\n\x1b[36m▌플레이어 대포 — 입력 엣지 · 반동 · 포구 · 표적 파손\x1b[0m\n');
+
+function cannonItem(overrides = {}) {
+  return {
+    key: overrides.key ?? 'bench-cannon', type: 'cannon', kind: ITEM_CATALOG.cannon.kind,
+    side: null, name: ITEM_CATALOG.cannon.name, mass: ITEM_CATALOG.cannon.mass,
+    material: ITEM_CATALOG.cannon.material, impulse: ITEM_CATALOG.cannon.impulse,
+    bind: overrides.bind ?? 'KeyF', angle: overrides.angle ?? 0,
+    x: overrides.x ?? 0, y: overrides.y ?? 0, status: {}, ...overrides,
+  };
+}
+
+function cannonRig({ outline = hulls.sloop.outline, items = [cannonItem()], position = { x: 0, y: 0 } } = {}) {
+  const world = createWorld();
+  const body = createHullBody(world, { outline, holes: [], items }, {
+    position, angle: 0, material: 'wood', extraMass: itemsExtraMass(items),
+  });
+  return { world, body, items };
+}
+
+// 홀드 입력은 상승 엣지 한 번만 소비한다. 장전이 끝나도 손을 놓지 않으면 자동 연사하지 않는다.
+const heldEdge = (() => {
+  const { body } = cannonRig();
+  let shots = applyDevices(body, { held: { KeyF: true }, now: 0 }, FIXED_DT).length;
+  for (let i = 1; i <= Math.ceil((CANNON_TUNING.reload + 0.2) / FIXED_DT); i++) {
+    shots += applyDevices(body, { held: { KeyF: true }, now: i * FIXED_DT }, FIXED_DT).length;
+  }
+  return { body, shots };
+})();
+check('대포 키를 계속 눌러도 한 발만 나간다 (홀드 자동 연사 없음)',
+  heldEdge.shots === 1, `${(CANNON_TUNING.reload + 0.2).toFixed(1)}초 홀드 → ${heldEdge.shots}발`);
+
+const repress = (() => {
+  const body = heldEdge.body;
+  applyDevices(body, { held: {}, now: 1.1 }, FIXED_DT);
+  return applyDevices(body, { held: { KeyF: true }, now: 1.1 + FIXED_DT }, FIXED_DT).length;
+})();
+check('장전 뒤 키를 놓았다 다시 누르면 다음 한 발이 나간다', repress === 1,
+  `release → repress ${repress}발`);
+
+const rejectedReload = (() => {
+  const { body } = cannonRig();
+  let now = 0;
+  const first = applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  for (let i = 0; i < 6; i++) { now += FIXED_DT; applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT); }
+  now += FIXED_DT;
+  applyDevices(body, { held: {}, now }, FIXED_DT);
+  now += FIXED_DT;
+  const early = applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  let delayed = 0;
+  for (let i = 0; i < Math.ceil((CANNON_TUNING.reload + 0.2) / FIXED_DT); i++) {
+    now += FIXED_DT;
+    delayed += applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  }
+  now += FIXED_DT;
+  applyDevices(body, { held: {}, now }, FIXED_DT);
+  now += FIXED_DT;
+  const fresh = applyDevices(body, { held: { KeyF: true }, now }, FIXED_DT).length;
+  return { first, early, delayed, fresh };
+})();
+check('재장전 중 입력은 거절되고 장전 완료 뒤 지연 발사되지 않는다',
+  rejectedReload.first === 1 && rejectedReload.early === 0
+    && rejectedReload.delayed === 0 && rejectedReload.fresh === 1,
+  `첫 ${rejectedReload.first} · 조기 ${rejectedReload.early} · 지연 ${rejectedReload.delayed} · 새 엣지 ${rejectedReload.fresh}`);
+
+const substepTap = (() => {
+  const { body } = cannonRig();
+  return applyDevices(body, { held: {}, pressed: { KeyF: true }, now: 0 }, FIXED_DT).length;
+})();
+check('물리 스텝 사이의 짧은 탭도 pressed 래치로 한 발 나간다', substepTap === 1,
+  `held 없이 pressed → ${substepTap}발`);
+
+const recoilD = CANNON_TUNING.recoilDuration;
+const envA = cannonEnvelope(recoilD * 0.17);
+const envB = cannonEnvelope(recoilD * 0.83);
+check('반동 봉투는 양 끝이 0이고 시간 대칭이다',
+  cannonEnvelope(-FIXED_DT) === 0 && cannonEnvelope(0) === 0
+    && cannonEnvelope(recoilD) === 0 && Math.abs(envA - envB) < 1e-12,
+  `env(0)=0 · env(D)=0 · 대칭 오차 ${Math.abs(envA - envB).toExponential(1)}`);
+
+let integratedRecoil = 0;
+for (let t = 0; t < recoilD - 1e-12; t += FIXED_DT) {
+  integratedRecoil += cannonPeakForce(ITEM_CATALOG.cannon.impulse) * cannonEnvelope(t) * FIXED_DT;
+}
+check('고정 스텝으로 적분한 반동 총충격량이 카탈로그 6000 N·s 와 같다',
+  Math.abs(integratedRecoil - 6000) < 1e-9 && ITEM_CATALOG.cannon.impulse === 6000,
+  `${integratedRecoil.toFixed(6)} N·s`);
+
+const recoilForces = (() => {
+  const params = paramTable.sloop.p;
+  const full = cannonItem({ key: 'full', y: 2, impulse: ITEM_CATALOG.cannon.impulse });
+  const half = cannonItem({ key: 'half', y: 2, impulse: ITEM_CATALOG.cannon.impulse / 2 });
+  const control = createControl();
+  control.cannons.full = { t: recoilD / 2, wasHeld: true };
+  const a = deviceForcesLocal(params, [full], { u: 0, v: 0, w: 0 }, control);
+  control.cannons = { half: { t: recoilD / 2, wasHeld: true } };
+  const b = deviceForcesLocal(params, [half], { u: 0, v: 0, w: 0 }, control);
+  return { a, b };
+})();
+check('반동은 포신 반대 방향이고 비중심 대포의 토크가 아이템 impulse 에 비례한다',
+  recoilForces.a.fx < 0 && recoilForces.a.torque > 0
+    && Math.abs(recoilForces.a.fx / recoilForces.b.fx - 2) < 1e-12
+    && Math.abs(recoilForces.a.torque / recoilForces.b.torque - 2) < 1e-12,
+  `Fx ${recoilForces.a.fx.toFixed(0)} N · τ ${recoilForces.a.torque.toFixed(0)} N·m · 절반 impulse 에 정확히 1/2`);
+
+const cannonPrediction = (() => {
+  const item = cannonItem({ y: 1.4 });
+  const { world, body } = cannonRig({ items: [item] });
+  let first = true;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, first ? { held: { KeyF: true }, now: 0 } : { held: {} }, dt);
+      first = false;
+      applyHydroToWorld(world, dt);
+    },
+  });
+  for (let i = 0; i < 4; i++) stepper.advance(FIXED_DT);
+
+  const live = body.getUserData().hull.control;
+  const copy = cloneControl(live);
+  copy.cannons[item.key].t += 10;
+  copy.held.KeyF = true;
+  const before = JSON.stringify(live);
+  const horizon = 0.3;
+  const path = predictPath(body, { held: {} }, { horizon, stride: 1 });
+  const after = JSON.stringify(live);
+  for (let i = 0; i < Math.round(horizon / FIXED_DT); i++) stepper.advance(FIXED_DT);
+  const actual = body.getWorldCenter();
+  const predicted = path.at(-1);
+  return {
+    cloneIndependent: copy.cannons[item.key].t !== live.cannons[item.key].t && !live.held.KeyF,
+    untouched: before === after,
+    gap: Math.hypot(actual.x - predicted.x, actual.y - predicted.y),
+  };
+})();
+check('cloneControl 과 predictPath 가 실제 대포 시계·held 상태를 바꾸지 않는다',
+  cannonPrediction.cloneIndependent && cannonPrediction.untouched,
+  `깊은 복사 ${cannonPrediction.cloneIndependent ? '독립' : '공유'} · 예측 전후 ${cannonPrediction.untouched ? '동일' : '변경'}`);
+check('진행 중인 대포 반동 예측이 실제 고정 스텝 주행과 일치한다',
+  cannonPrediction.gap < 1e-6, `0.3초 오차 ${(cannonPrediction.gap * 1e6).toFixed(3)} µm`);
+
+const convexOutline = [
+  { x: -5, y: -2 }, { x: 5, y: -2 }, { x: 5, y: 2 }, { x: -5, y: 2 },
+];
+// U자 오목선체: 왼쪽 팔에서 +X 로 쏘면 외곽을 나갔다 오른쪽 팔에 다시 들어간다.
+const concaveOutline = [
+  { x: -3, y: -3 }, { x: 3, y: -3 }, { x: 3, y: 3 }, { x: 1, y: 3 },
+  { x: 1, y: -1 }, { x: -1, y: -1 }, { x: -1, y: 3 }, { x: -3, y: 3 },
+];
+const convexCannon = cannonItem({ x: 0, y: 0 });
+const concaveCannon = cannonItem({ x: -2, y: 1 });
+const convexHit = furthestRayOutlineHit(convexOutline, convexCannon, 0);
+const concaveHit = furthestRayOutlineHit(concaveOutline, concaveCannon, 0);
+const convexMuzzle = cannonMuzzleLocal(convexOutline, convexCannon);
+const concaveMuzzle = cannonMuzzleLocal(concaveOutline, concaveCannon);
+const muzzleClearance = CANNON_TUNING.radius + CANNON_TUNING.margin;
+check('볼록·오목 선체 모두 가장 먼 외곽 뒤에 포구 여유를 둔다',
+  Math.abs(convexHit - 5) < 1e-9 && Math.abs(convexMuzzle.x - (5 + muzzleClearance)) < 1e-9
+    && Math.abs(concaveHit - 5) < 1e-9 && Math.abs(concaveMuzzle.x - (3 + muzzleClearance)) < 1e-9,
+  `볼록 hit ${convexHit.toFixed(2)} → muzzle ${convexMuzzle.x.toFixed(2)} · ` +
+  `오목 hit ${concaveHit.toFixed(2)} → muzzle ${concaveMuzzle.x.toFixed(2)}`);
+
+const selfEscape = (() => {
+  const item = cannonItem();
+  const { world, body } = cannonRig({ outline: convexOutline, items: [item] });
+  installProjectileContacts(world);
+  const request = cannonShotRequest(body, item, 0);
+  const shot = spawnProjectile(world, request);
+  let elapsed = 0;
+  let first = true;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      applyDevices(body, first ? { held: { KeyF: true }, now: 0 } : { held: {} }, dt);
+      first = false;
+    },
+  });
+  const steps = Math.ceil((CONTACT_TUNING.armDelay + 0.1) / FIXED_DT);
+  for (let i = 0; i < steps; i++) { stepper.advance(FIXED_DT); elapsed += FIXED_DT; }
+  return {
+    elapsed, spent: shot.getUserData().projectile.spent,
+    alive: countProjectiles(world), separation: shot.getPosition().x - body.getPosition().x,
+  };
+})();
+check('플레이어 포탄이 자기 선체를 건드리지 않고 무장 지연 너머까지 살아서 빠져나간다',
+  selfEscape.elapsed > CONTACT_TUNING.armDelay && !selfEscape.spent
+    && selfEscape.alive === 1 && selfEscape.separation > 5 + muzzleClearance,
+  `${selfEscape.elapsed.toFixed(3)}초 · 선체 앞 ${selfEscape.separation.toFixed(2)} m · spent ${selfEscape.spent}`);
+
+const cannonCarve = (() => {
+  const outline = hulls.barbell.outline;
+  const b = bounds(outline);
+  const survivor = cannonItem({ key: 'survivor', x: b.minX + b.width * 0.15, y: 0 });
+  const lost = cannonItem({ key: 'lost', x: 0, y: 0, bind: 'KeyG' });
+  const { world, body } = cannonRig({ outline, items: [survivor, lost] });
+  const control = createControl();
+  control.cannons.survivor = { t: 0.31, wasHeld: true };
+  control.cannons.lost = { t: 0.47, wasHeld: false };
+  body.getUserData().hull.control = control;
+  const oldState = control.cannons.survivor;
+  const out = applyImpact(world, body, { x: 0, y: 0 }, 0.9);
+  const carrier = out.bodies.find((bd) => bd.getUserData().hull.items.some((it) => it.key === 'survivor'));
+  const nextState = carrier?.getUserData().hull.control?.cannons?.survivor;
+  return {
+    pieces: out.bodies.length,
+    lost: out.result.droppedItems.some((it) => it.key === 'lost'),
+    kept: !!nextState && nextState.t === 0.31 && nextState.wasHeld === true,
+    copied: !!nextState && nextState !== oldState,
+    strayLostState: out.bodies.some((bd) => bd.getUserData().hull.control?.cannons?.lost),
+  };
+})();
+check('절단 시 잃은 대포는 사라지고 살아남은 대포의 재장전 상태만 깊은 복사된다',
+  cannonCarve.pieces === 2 && cannonCarve.lost && cannonCarve.kept
+    && cannonCarve.copied && !cannonCarve.strayLostState,
+  `조각 ${cannonCarve.pieces} · 탈락 ${cannonCarve.lost} · 상태 승계 ${cannonCarve.kept} · 독립 ${cannonCarve.copied}`);
+
+const passiveTargets = (() => {
+  const world = createWorld();
+  return createPassiveTargets(world, [
+    { entityId: 'target-a', x: 8, y: 0, width: 4, height: 4 },
+    { entityId: 'target-b', x: 16, y: 2, width: 3, height: 2, material: 'iron' },
+  ]).map((body) => body.getUserData().hull);
+})();
+check('수동 표적은 일반 선체이면서 role=target 과 entityId 를 유지한다',
+  passiveTargets.every((h, i) => h.role === 'target' && h.entityId === `target-${i ? 'b' : 'a'}`),
+  passiveTargets.map((h) => `${h.entityId}:${h.role}`).join(' · '));
+
+const targetHit = (() => {
+  const world = createWorld();
+  let elapsed = 0;
+  let target = createPassiveTarget(world, { entityId: 'damage-target', x: 10, y: 0, width: 4, height: 4 });
+  installProjectileContacts(world);
+  const queue = installImpactListener(world, { now: () => elapsed });
+  const shot = spawnProjectile(world, {
+    x: 0, y: 0, angle: 0, speed: CANNON_TUNING.speed, radius: CANNON_TUNING.radius,
+    mass: CANNON_TUNING.mass, material: CANNON_TUNING.material, bornAt: 0,
+    lifetime: CANNON_TUNING.lifetime,
+  });
+  const stepper = new FixedStepper(world, {});
+  let impact = null;
+  let removed = 0;
+  let roleKept = false;
+  for (let i = 0; i < 60 && !impact; i++) {
+    stepper.advance(FIXED_DT);
+    elapsed += FIXED_DT;
+    for (const im of queue.drain()) {
+      if (im.body !== target) continue;
+      impact = im;
+      const out = applyImpact(world, target, im.at, im.radius);
+      removed = out?.result.removedArea ?? 0;
+      roleKept = out?.bodies.every((b) => {
+        const h = b.getUserData().hull;
+        return h.role === 'target' && h.entityId === 'damage-target';
+      }) ?? false;
+      target = out?.bodies[0] ?? target;
+      break;
+    }
+  }
+  return { impact, removed, roleKept, spent: shot.getUserData().projectile.spent };
+})();
+check('플레이어 포탄도 generic contact → impact → carve 경로로 수동 표적을 파손한다',
+  targetHit.impact?.source === 'shot' && targetHit.removed > 0
+    && targetHit.roleKept && targetHit.spent,
+  `source ${targetHit.impact?.source ?? '없음'} · 제거 ${targetHit.removed.toFixed(3)} m² · role 승계 ${targetHit.roleKept}`);
+
+// ─────────────────────────────────────────────── D3 ④ — 해적선
+//
+// 조준·추적 로직은 0줄이다(turrets.js 와 같은 전제). 새로 짠 것은 "경로를 따라 걷는 시계"뿐이고,
+// 선체 파손은 game/targets.js 의 표적과, 대포 발사는 items/cannon.js + physics/devices.js 의
+// 플레이어 파이프라인과 완전히 같은 경로를 탄다.
+console.log('\n\x1b[36m▌D3 ④ — 해적선\x1b[0m\n');
+
+const pirateThrows = [
+  ['미지 키', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }], script: 'boom' }],
+  ['entityId 없음', { width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['path 점 1개', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['path 중복점(길이 0 구간)', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 0, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+  ['cannons 비어있음', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [] }],
+  [`대포 period < ${CANNON_TUNING.reload}s`, { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0, period: 0.3 }] }],
+  ['대포 부착점이 선체 밖', { entityId: 'p', width: 4, height: 2, path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 10, y: 0, angle: 0 }] }],
+  ['모르는 재질', { entityId: 'p', width: 4, height: 2, material: 'adamantium', path: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speed: 1, cannons: [{ x: 0, y: 0, angle: 0 }] }],
+];
+const pirateThrowWorld = createWorld();
+const pirateRejected = pirateThrows.filter(([, spec]) => {
+  try { createPirate(pirateThrowWorld, spec); return false; } catch { return true; }
+});
+check('해적 스펙이 스키마 밖이면 로드 시점에 던진다 (표적·포탑과 같은 원칙)',
+  pirateRejected.length === pirateThrows.length,
+  `${pirateRejected.length}/${pirateThrows.length}종 거부`);
+
+// ── 경로 진행은 turrets.js 의 fireTime 과 같은 급의 순수 함수여야 한다. 값 자체를 기하로 검증한다.
+const straightTable = buildPathTable([{ x: 0, y: 0 }, { x: 10, y: 0 }], false);
+const midOutbound = pathProgress(straightTable, false, 2, 2.5); // 5 m, 정방향
+const atTurn = pathProgress(straightTable, false, 2, 5); // 10 m, 끝점
+const midReturn = pathProgress(straightTable, false, 2, 7.5); // 15 m → 5 m 되짚음
+const pingpongOk = Math.abs(midOutbound.x - 5) < 1e-9 && midOutbound.angle === 0
+  && Math.abs(atTurn.x - 10) < 1e-9
+  && Math.abs(midReturn.x - 5) < 1e-9 && midReturn.angle === Math.PI;
+check('왕복(loop:false) 경로는 끝에서 정확히 되짚어 오고, 되짚는 구간은 방향이 뒤집힌다',
+  pingpongOk,
+  `왕복 중간 x=${midOutbound.x.toFixed(2)} · 끝점 x=${atTurn.x.toFixed(2)} · 되짚음 중간 x=${midReturn.x.toFixed(2)},각 ${midReturn.angle.toFixed(2)}`);
+
+const loopTable = buildPathTable([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], true);
+const afterOneLap = pathProgress(loopTable, true, loopTable.total, 1);
+check('순환(loop:true) 경로는 한 바퀴 뒤 시작점으로 돌아온다',
+  Math.abs(afterOneLap.x) < 1e-6 && Math.abs(afterOneLap.y) < 1e-6,
+  `한 바퀴(${loopTable.total.toFixed(2)} m) 후 (${afterOneLap.x.toFixed(4)}, ${afterOneLap.y.toFixed(4)})`);
+
+// ★★ 누산 드리프트 회귀 — turrets.js 의 것과 같은 종류. 대포 시계(`n`)는 컨트롤러에 남는
+//    가변 상태라, 호출을 걸러 내면(스텝을 건너뛰면) 씹히는 구현이 되기 쉽다.
+//    `pressed` 는 turrets.js 의 `firedAt` 처럼 정확한 발사 시각을 들고 있지 않으므로(그 순간의
+//    edge 만 전달), 여기서 보증하는 것은 시각 일치가 아니라 **발사 횟수 일치**다.
+const pirateScheduleSpec = () => [
+  { body: {}, cannons: [{ bind: 'a', period: 1.5, phase: 0, n: 1 }] },
+  { body: {}, cannons: [{ bind: 'b', period: 0.4, phase: 0.17, n: 1 }] },
+];
+const denseSchedule = pirateScheduleSpec();
+const sparseSchedule = pirateScheduleSpec();
+const firedPirateDense = [[], []];
+const firedPirateSparse = [[], []];
+for (let k = 1; k <= 1200; k++) {
+  const now = k * FIXED_DT;
+  denseSchedule.forEach((p, i) => { if (stepPirateCannons([p], now).get(p.body)) firedPirateDense[i].push(now); });
+  if (k % 5 === 0) {
+    sparseSchedule.forEach((p, i) => { if (stepPirateCannons([p], now).get(p.body)) firedPirateSparse[i].push(now); });
+  }
+}
+check('★ 해적 대포 발사 횟수는 now 의 순수 함수다 (호출을 걸러 내도 같은 발사 수가 나온다 = 프레임률 독립)',
+  firedPirateDense.every((seq, i) => seq.length > 0 && seq.length === firedPirateSparse[i].length),
+  `[${firedPirateDense.map((a) => a.length)}] / [${firedPirateSparse.map((a) => a.length)}]`);
+
+// ── 통합: 실제 파손 가능 선체 + 실제 발사 → 플레이어와 같은 손상 파이프라인을 태워 표적을 맞힌다.
+const pirateShotHitsTarget = (() => {
+  const world = createWorld();
+  installProjectileContacts(world);
+  let elapsed = 0;
+  const queue = installImpactListener(world, { now: () => elapsed });
+  const [pirate] = createPirates(world, [{
+    entityId: 'bench-pirate-shot',
+    width: 4,
+    height: 2,
+    material: 'wood',
+    path: [{ x: 0, y: 0 }, { x: 0.4, y: 0 }],
+    speed: 0.05,
+    cannons: [{ x: 1.8, y: 0, angle: 0, period: 1.0, phase: 0 }],
+  }]);
+  let target = createPassiveTarget(world, { entityId: 'pirate-shot-victim', x: 14, y: 0, width: 4, height: 4 });
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      elapsed += dt;
+      stepPirateMotion([pirate], elapsed);
+      const pressed = stepPirateCannons([pirate], elapsed).get(pirate.body) ?? {};
+      const events = applyDevices(pirate.body, {
+        strokes: [], held: {}, pressed, anchor: false, now: elapsed,
+      }, dt);
+      for (const event of events) {
+        if (event.type !== 'cannonFire' || !event.request) continue;
+        spawnProjectile(world, event.request);
+      }
+    },
+  });
+  let impact = null;
+  let removed = 0;
+  for (let i = 0; i < 300 && !impact; i++) {
+    stepper.advance(FIXED_DT);
+    for (const im of queue.drain()) {
+      if (im.body !== target) continue;
+      impact = im;
+      const out = applyImpact(world, target, im.at, im.radius);
+      removed = out?.result.removedArea ?? 0;
+      target = out?.bodies[0] ?? target;
+      break;
+    }
+  }
+  return { impact, removed };
+})();
+check('해적 대포도 플레이어와 완전히 같은 발사·손상 파이프라인을 타 표적을 맞힌다',
+  pirateShotHitsTarget.impact?.source === 'shot' && pirateShotHitsTarget.removed > 0,
+  `source ${pirateShotHitsTarget.impact?.source ?? '없음'} · 제거 ${pirateShotHitsTarget.removed.toFixed(3)} m²`);
+
+// ── 절단 승계: fireCannons 가 탈락한 대포의 재장전 시계를 지우는 것과 같은 이유로, 조각에
+//    남지 않은 대포의 발사 스케줄도 rebindPirate 가 함께 버려야 한다 (안 지우면 죽은 대포가
+//    영원히 pressed 를 찍어 대는 유령 시계가 된다).
+const rebindTest = (() => {
+  const world = createWorld();
+  const [pirate] = createPirates(world, [{
+    entityId: 'rebind-test',
+    width: 4,
+    height: 2,
+    material: 'wood',
+    path: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    speed: 1,
+    cannons: [{ x: 1, y: 0.5, angle: 0, period: 1.0 }, { x: 1, y: -0.5, angle: 0, period: 1.0 }],
+  }]);
+  const survivingBind = pirate.cannons[0].bind;
+  // 조각 하나에 대포 하나만 남았다고 가정 — 실제 carve 가 만들어 낼 hull.items 모양을 흉내낸다.
+  const survivingItem = pirate.body.getUserData().hull.items.find((it) => it.bind === survivingBind);
+  const newBody = createHullBody(
+    world,
+    { outline: hulls.sloop.outline, holes: [], items: [survivingItem], crew: null, role: 'pirate', entityId: 'rebind-test' },
+    { position: { x: 5, y: 5 }, angle: 0, material: 'wood', role: 'pirate', entityId: 'rebind-test' },
+  );
+  const rebound = rebindPirate(pirate, newBody);
+  return {
+    keptCount: rebound.cannons.length,
+    keptBind: rebound.cannons[0]?.bind,
+    survivingBind,
+    bodyUpdated: rebound.body === newBody,
+    independentCopy: rebound.cannons[0] !== pirate.cannons[0],
+  };
+})();
+check('절단 조각에 없는 대포의 발사 스케줄은 함께 버려진다 (devices.js#fireCannons 와 같은 원칙)',
+  rebindTest.keptCount === 1 && rebindTest.keptBind === rebindTest.survivingBind
+    && rebindTest.bodyUpdated && rebindTest.independentCopy,
+  `승계 ${rebindTest.keptCount}개(bind ${rebindTest.keptBind}) · body 갱신 ${rebindTest.bodyUpdated} · 독립 복사 ${rebindTest.independentCopy}`);
+
+// 해적선은 데모 맵에서 빠졌다(스톰 맵으로 이관 예정) — DEMO_MAP.pirates 는 없거나 빈 배열이어야
+// createPirates 가 빈 배열을 그대로 돌려주는지만 확인한다. 스펙 파싱 자체는 위 pirateThrows 와
+// 아래 스케줄/명중/승계 테스트가 명시적 스펙으로 이미 덮는다.
+check('DEMO_MAP 에는 해적선이 배치되어 있지 않다 (테스트용 배치 제거됨)',
+  createPirates(createWorld(), DEMO_MAP.pirates ?? []).length === 0,
+  `${(DEMO_MAP.pirates ?? []).length}척`);
+
+// ─────────────────────────────────────────────── D3 ⑤ — 보스전 (4장 불가사리의 바다)
+//
+// ★ 이 절의 설계 제약은 위 3장 절의 교훈 하나다: **필드 값을 재는 것으로는 아무것도
+//   증명되지 않는다.** 온도만 검사하면 규칙 엔진도 파손 경로도 통째로 빠진 채 통과한다.
+//   그래서 아래는 전부 (a) 실제로 시뮬레이션을 돌려 결과를 보거나 (b) 임계를 규칙표·튜닝
+//   상수에서 **읽는다**. 리터럴로 박으면 노브를 돌릴 때 회귀가 조용히 뜻을 잃는다.
+console.log('\n\x1b[36m▌D3 ⑥ — 보스전 (불가사리의 바다)\x1b[0m\n');
+
+// ★ 보스전은 **마지막** 스테이지다. volcano 바로 다음이 아니다 — 사이에 4장 「삼키는
+//   바다」(`maw`)가 있다. 끌려가는 것과 싸우는 것은 다른 층이라 바다를 나눴고, 그래서
+//   여기서는 "volcano 다음"이 아니라 "맨 끝"으로 재야 한다.
+//   ⚠ 맨 끝인 것이 곧 **엔딩 트리거**다 (`sail/screen.js` 의 `hasNextStage()`). 뒤에 바다를
+//     더하면 엔딩이 그쪽으로 옮겨 가므로, 이 줄이 깨지는 것이 그 사실을 알리는 신호다.
+check('보스전은 맨 마지막 플레이 스테이지이고 지도에서 열려 있다',
+  STAGES.at(-1).id === 'bulgasari'
+    && STAGES.findIndex((s) => s.id === 'bulgasari') > STAGES.findIndex((s) => s.id === 'volcano')
+    && ROUTE.find((node) => node.id === 'bulgasari')?.locked !== true
+    && Boolean(MAPS.bulgasari),
+  STAGES.map((s) => s.id).join(' → '));
+
+// 아레나 줌이 다른 바다와 같은 자릿수인가. 리터럴이 아니라 기존 줌에서 범위를 만든다 —
+// 여기가 어긋나면 물 타일·바위 그리드 등 모든 렌더 튜닝이 같이 어긋난다.
+const arenaPpm = Math.min(1280 / BULGASARI_MAP.camera.fit.w, 720 / BULGASARI_MAP.camera.fit.h);
+const sailPpm = HULL_DEFAULTS.pixelsPerMeter * 0.5;
+check('고정 아레나의 줌이 다른 바다(20 px/m)와 같은 자릿수다',
+  BULGASARI_MAP.camera.mode === 'arena' && arenaPpm > sailPpm * 0.7 && arenaPpm < sailPpm * 1.3,
+  `${arenaPpm.toFixed(2)} px/m (기준 ${sailPpm})`);
+
+// 탄막 구도를 **기하로** 단정한다 — 플레이어가 아래, 보스가 위, 뱃머리는 옆(+X).
+check('플레이어는 화면 아래·보스는 화면 위이고 뱃머리는 위협과 직각이다',
+  BULGASARI_MAP.start.y < 0 && BULGASARI_MAP.start.y < BULGASARI_MAP.boss.core.y
+    && BULGASARI_MAP.start.angle === 0,
+  `출발 y ${BULGASARI_MAP.start.y} · 핵 y ${BULGASARI_MAP.boss.core.y} · 뱃머리 ${BULGASARI_MAP.start.angle}°`);
+
+// ★ 기존 네 바다가 안 건드려졌다. "모든 맵에 기본값을 준다"가 하나를 바꿨을 때 잡는 회귀다.
+check('앞의 네 바다는 camera·start 가 없고 도착 지점을 그대로 갖는다',
+  [PRACTICE_MAP, DEMO_MAP, STORM_MAP, VOLCANO_MAP]
+    .every((m) => m.camera === undefined && m.start === undefined && m.goal != null),
+  '4/4');
+
+// ★ planck 이 오목 폴리곤의 볼록껍질을 **조용히** 취하므로, 볼록이 아닌 팔은 보이는
+//   가장자리와 멈추는 자리가 갈라진다. 이 검사가 그 유일한 기계적 방어선이다.
+const isConvex = (pts) => {
+  let sign = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length]; const c = pts[(i + 2) % pts.length];
+    const z = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (Math.abs(z) < 1e-9) continue;
+    if (sign === 0) sign = Math.sign(z);
+    else if (Math.sign(z) !== sign) return false;
+  }
+  return true;
+};
+const bossArms = BULGASARI_MAP.boss.arms;
+check('보스의 팔은 전부 볼록이라 planck 의 볼록껍질이 형상을 바꾸지 않는다',
+  bossArms.length > 0 && bossArms.every((a) => isConvex(a.points) && a.points.length <= 12),
+  `${bossArms.length}팔 · 최대 정점 ${Math.max(...bossArms.map((a) => a.points.length))}`);
+
+// ★ 팔은 **한 몸**이어야 한다. 마디로 나눠 두면 이음매가 공짜 절단선이 되고(바깥 마디가 따로
+//   못 박혀 있어 안쪽을 끊어도 안 떨어진다), 어디를 끊는가라는 선택이 통째로 사라진다.
+check('★ 팔은 마디가 아니라 하나의 선체다 (이음매가 공짜 절단선이 되지 않는다)',
+  bossArms.length === 5 && bossArms.every((a) => a.material === 'sinew' && a.points.length === 6),
+  `${bossArms.length}개 · 재질 ${[...new Set(bossArms.map((a) => a.material))].join(',')}`);
+
+// ★ 팔도 핵처럼 폴리곤을 절대 안 깎게 된 뒤로(사람 판정, "보스 형태 전체가 안 부서지게")
+//   `maxCarveRadius` 는 더 이상 형상을 자르는 데 안 쓰인다 — 대신 `boss.applyDamage()` 의
+//   근사 피해 면적(`π·radius²`) 산식에서 "발당 최대 피해"만 정한다. 값 자체는 남겨 뒀다
+//   (재질 캡·인성으로 산정한다는 §5.2 원칙을 그대로 따르므로), 용도만 바뀌었다.
+check('★ 힘줄 캡은 이제 형상이 아니라 발당 피해 크기만 정한다 (0 보다 크고 유한하다)',
+  MATERIALS.sinew.maxCarveRadius > 0 && Number.isFinite(MATERIALS.sinew.maxCarveRadius)
+    && MATERIALS.sinew.impactThreshold === MATERIALS.flesh.impactThreshold,
+  `캡 ${MATERIALS.sinew.maxCarveRadius}m → 발당 최대 피해 ${(Math.PI * MATERIALS.sinew.maxCarveRadius ** 2).toFixed(2)} m²(launchArea 대비)`);
+
+// 힘줄에도 규칙표 줄이 없어야 한다 — 살의 자기 면역(§7 원칙 1)과 같은 이유다.
+check('★ 힘줄도 규칙표에 한 줄이 없다 (팔도 자기 빔에 안 녹아야 한다)',
+  RULES.every((r) => r.material !== 'sinew'),
+  `sinew 관련 규칙 ${RULES.filter((r) => r.material === 'sinew').length}줄`);
+
+// 접근로 — 270° 노치가 배가 지나갈 만큼 열려 있는가. 리터럴 3 m 가 아니라 **실제 슬루프의
+// 선폭**과 비교한다. 선체 튜닝이 바뀌면 이 회귀도 같이 따라와야 한다.
+const segDistTo = (p, a, b) => {
+  const vx = b[0] - a[0]; const vy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / (vx * vx + vy * vy || 1)));
+  return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
+};
+let corridorHalf = Infinity;
+for (let y = BULGASARI_MAP.start.y; y <= BULGASARI_MAP.boss.core.y - 6; y += 0.25) {
+  for (const arm of bossArms) {
+    for (let i = 0; i < arm.points.length; i++) {
+      const d = segDistTo([0, y], arm.points[i], arm.points[(i + 1) % arm.points.length]);
+      if (d < corridorHalf) corridorHalf = d;
+    }
+  }
+}
+const sloopBeam = spawn('sloop', { devices: true }).body.getUserData().hull.params.beam;
+check('270° 접근로가 슬루프 선폭보다 넓다 (지나갈 수 있되 공짜는 아니다)',
+  corridorHalf * 2 > sloopBeam,
+  `통로 ${(corridorHalf * 2).toFixed(2)} m vs 선폭 ${sloopBeam.toFixed(2)} m`);
+
+// ── 규칙표 — 임계는 전부 **읽는다** ──────────────────────────────────────
+const ruleOf = (id) => RULES.find((r) => r.id === id);
+const ironMelts = ruleOf('iron-melts');
+const ironMeltsDown = ruleOf('iron-melts-down');
+const lavaTemp = VOLCANO_MAP.fields.temperature[0].value;
+check('★ 철이 녹는 임계는 용암보다 위다 — 3장의 교훈(철은 용암에 안 탄다)이 그대로 산다',
+  ironMelts && ironMelts.when.gte > lavaTemp,
+  `iron-melts ${ironMelts?.when.gte}° > 용암 ${lavaTemp}°`);
+
+const beamValue = BOSS_PHASES.find((p) => p.beam)?.beam.value;
+check('빔은 모든 재질의 발화 임계 위다 — 재질 검사가 아니라 회피 아니면 죽음이다',
+  ['iron-melts', 'wood-ignites', 'cloth-ignites'].every((id) => beamValue >= ruleOf(id).when.gte),
+  `빔 ${beamValue}° ≥ max(${['iron-melts', 'wood-ignites', 'cloth-ignites'].map((id) => ruleOf(id).when.gte).join(', ')})`);
+
+check('★ 철의 파괴 조건은 "1.2초 뒤에도 레인 안" 이다 — 빠져나오면 산다',
+  ironMeltsDown?.when.field === 'temperature' && ironMeltsDown.when.gte >= ironMelts.when.gte
+    && ironMeltsDown.when.elapsed > 0,
+  `state+elapsed ${ironMeltsDown?.when.elapsed}s + field ≥ ${ironMeltsDown?.when.gte}°`);
+
+// ── 부채꼴 스케줄러 ────────────────────────────────────────────────────
+const fanSpec = [{ x: 0, y: 0, angle: -90, count: 7, spread: 96, period: 1.4, spin: 30 }];
+const fanDense = createTurrets(fanSpec, 0);
+const fanSparse = createTurrets(fanSpec, 0);
+const denseShots = [];
+for (let t = 0; t <= 10; t += FIXED_DT) denseShots.push(...fanDense.step(t));
+const sparseShots = [];
+for (let t = 0; t <= 10; t += 0.37) sparseShots.push(...fanSparse.step(t));
+const sameAngles = denseShots.length === sparseShots.length
+  && denseShots.every((s, i) => Math.abs(s.angle - sparseShots[i].angle) < 1e-12
+    && Math.abs(s.firedAt - sparseShots[i].firedAt) < 1e-12);
+check('★ 부채꼴 발사는 각도까지 now 의 순수 함수다 (호출을 걸러 내도 같은 열)',
+  sameAngles && denseShots.length > 0,
+  `${denseShots.length}발 · 각도 오차 0 (spin 을 now 로 재면 여기서 깨진다)`);
+
+const oneVolley = createTurrets(fanSpec, 0);
+const burst = oneVolley.step(10);   // 10초를 통째로 건너뛴 뒤 한 번 — 설정창을 열어 둔 상황
+check('★ 시계를 멈췄다 재개해도 볼리가 폭발하지 않는다 (페이즈마다 스케줄러를 새로 만든다)',
+  createTurrets(fanSpec, 10).step(10 + 1.4).length === fanSpec[0].count,
+  `건너뛴 스케줄러 ${burst.length}발 vs 새로 만든 것 ${createTurrets(fanSpec, 10).step(10 + 1.4).length}발`);
+
+const fanGeom = createTurrets([{ x: 0, y: 5, angle: -90, count: 5, spread: 80, period: 1, radius: 6, projectileRadius: 0.3 }], 0).step(1);
+const fanSpan = (Math.max(...fanGeom.map((s) => s.angle)) - Math.min(...fanGeom.map((s) => s.angle))) * (180 / Math.PI);
+const muzzleOut = fanGeom.every((s) => Math.hypot(s.x - 0, s.y - 5) > 6);
+check('부채는 기준 방위를 가운데 두고 spread 만큼 펴지며, 총구가 전부 몸체 밖이다',
+  Math.abs(fanSpan - 80) < 1e-9 && fanGeom.length === 5 && muzzleOut,
+  `${fanGeom.length}발 · 폭 ${fanSpan.toFixed(1)}° · 총구 반경 밖 ${muzzleOut}`);
+
+// ── 흡입 — 방사 벡터장 ─────────────────────────────────────────────────
+const suckField = createFields({ current: [] });
+suckField.setSource('current', 'test:suck', {
+  shape: 'disc', mode: 'radial', at: { x: 0, y: 0 }, radius: 40, falloff: 0.85, strength: -5,
+});
+const suckAt = (x, y) => suckField.sampleVector('current', x, y, 0);
+const sRight = suckAt(20, 0);
+const sUp = suckAt(0, 20);
+check('방사장은 어느 자리에서든 중심을 향한다 (흡입) · 중심에서는 0 이다',
+  sRight.x < 0 && Math.abs(sRight.y) < 1e-9 && sUp.y < 0 && Math.abs(sUp.x) < 1e-9
+    && Math.hypot(...Object.values(suckAt(0, 0))) === 0,
+  `(20,0)→(${sRight.x.toFixed(2)}, ${sRight.y.toFixed(2)}) · (0,20)→(${sUp.x.toFixed(2)}, ${sUp.y.toFixed(2)})`);
+
+check('오버레이를 빼면 필드가 즉시 비고, isEmpty 가 그것을 따라온다 (getter 여야 한다)',
+  (() => {
+    const f = createFields({});
+    if (!f.isEmpty) return false;
+    f.setSource('current', 'k', { shape: 'uniform', x: 1, y: 0 });
+    if (f.isEmpty || f.sampleVector('current', 0, 0, 0).x !== 1) return false;
+    f.setSource('current', 'k', null);
+    return f.isEmpty && f.sampleVector('current', 0, 0, 0).x === 0;
+  })(),
+  '빈 맵 → 추가 → 제거 왕복');
+
+/** 흡입 켠 채로 선체를 놓아 두고 표류시킨다. 재질만 바꿔 두 번 돌린다. */
+function suckDrift(material) {
+  const { world, body } = spawn('sloop', { devices: false, material });
+  body.setPosition(new Vec2(0, -26));
+  const f = createFields({ current: [] });
+  f.setSource('current', 'boss:suck', {
+    shape: 'disc', mode: 'radial', at: { x: 0, y: 0 }, radius: 40, falloff: 0.85, strength: -5,
+  });
+  let t = 0;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => { applyHydroToWorld(world, dt); applyFieldsToWorld(world, f, dt, t); t += dt; },
+  });
+  for (let i = 0; i < Math.round(3 / FIXED_DT); i++) stepper.advance(FIXED_DT);
+  return body.getPosition().y + 26;   // 중심(0,0) 쪽으로 올라온 거리
+}
+const suckWood = suckDrift('wood');
+const suckIron = suckDrift('iron');
+check('★ 흡입은 물체를 끌어당기고 **재질을 가리지 않는다** (drag ∝ mass 라 종단이 같다)',
+  suckWood > 1 && suckIron > 1 && Math.abs(suckWood - suckIron) / suckWood < 0.02,
+  `나무 ${suckWood.toFixed(2)} m · 철 ${suckIron.toFixed(2)} m (차이 ${(Math.abs(suckWood - suckIron) / suckWood * 100).toFixed(1)}%)`);
+
+// 포탄은 hull 이 없어 필드를 안 탄다 — 탄도가 휘면 "먼저 경고, 그 다음 회피"가 성립 안 한다.
+const shotWorld = createWorld();
+const shotFields = createFields({ current: [] });
+shotFields.setSource('current', 'boss:suck', {
+  shape: 'disc', mode: 'radial', at: { x: 0, y: 20 }, radius: 60, falloff: 0.5, strength: -8,
+});
+const straight = spawnProjectile(shotWorld, {
+  x: -20, y: 0, angle: 0, speed: 30, radius: 0.3, mass: 12, bornAt: 0, lifetime: 9,
+});
+{
+  let t = 0;
+  const st = new FixedStepper(shotWorld, {
+    onPreStep: (dt) => { applyHydroToWorld(shotWorld, dt); applyFieldsToWorld(shotWorld, shotFields, dt, t); t += dt; },
+  });
+  for (let i = 0; i < 60; i++) st.advance(FIXED_DT);
+}
+check('포탄은 흡입에 안 끌린다 (hull 키가 없어 필드·항력을 통째로 건너뛴다)',
+  Math.abs(straight.getPosition().y) < 1e-9
+    && Math.abs(straight.getLinearVelocity().x - 30) < 1e-9,
+  `y ${straight.getPosition().y.toFixed(9)} · vx ${straight.getLinearVelocity().x.toFixed(6)}`);
+
+// ── 실제로 돌려 본 전투 ────────────────────────────────────────────────
+// ★ 여기가 이 절의 심장이다. 위의 데이터 검사는 전부 규칙 엔진도 파손 경로도 빠진 채
+//   통과할 수 있다 (3장에서 실제로 그 틈으로 샜다). 아래는 배를 띄우고 포탄을 먹여
+//   **결과**를 본다.
+
+/**
+ * 보스를 세우고 아래에서 조준 사격한다.
+ *
+ * 취약 창 게이트가 없으므로 `boss.open` 은 손상에 영향이 없다 — `forceOpen` 은 그 사실을
+ * 직접 대조하기 위한 인자일 뿐이다(기본은 건드리지 않는다).
+ * @param {{shells:number, forceOpen:boolean|null}} opts
+ */
+function bossFight({ shells = 40, forceOpen = null } = {}) {
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  // 팔도 `createBoss` 가 만든다 (예전엔 여기서 `createObstacle` 을 돌렸다 — 이제 팔은 선체다).
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  const coreBody = [...boss.parts][0];
+  const startArea = coreBody.getUserData().hull.params.area;
+  const stepper = new FixedStepper(world, {
+    onPreStep: () => {
+      simTime += FIXED_DT;
+      boss.pin();
+      if (forceOpen !== null) boss.open = forceOpen;
+    },
+  });
+  const lane = [0, -1.2, 1.2, -0.6, 0.6, -1.5, 1.5, 0.3];
+  let fired = 0;
+  let landed = 0;
+  while (fired < shells && !boss.fallen) {
+    spawnProjectile(world, {
+      x: lane[fired % lane.length], y: BULGASARI_MAP.boss.core.y - 11, angle: Math.PI / 2,
+      speed: 55, radius: 0.15, mass: 12, material: 'iron', bornAt: simTime, lifetime: 2,
+    });
+    fired += 1;
+    for (let i = 0; i < 26 && !boss.fallen; i++) {
+      stepper.advance(FIXED_DT);
+      for (const im of impacts.drain()) {
+        if (!boss.parts.has(im.body)) continue;
+        // 화면(`sail/screen.js#carveBoss`)과 같은 공식 — 핵은 절대 안 깎고, 근사 면적만 뺀다.
+        if (boss.applyDamage((Math.PI * im.radius * im.radius) / boss.launchArea)) landed += 1;
+      }
+      impacts.drainGlances();
+    }
+  }
+  return { boss, fired, landed, startArea, coreBody, seconds: simTime };
+}
+
+const openFight = bossFight({ shells: 60 });
+check('★ 핵에 맞으면 체력이 줄고, 문턱 아래로 내려가면 쓰러진다 (핵 폴리곤은 안 건드린다)',
+  openFight.landed > 0 && openFight.boss.health < 1
+    && openFight.boss.health <= BOSS_TUNING.fallAt && openFight.boss.fallen,
+  `${openFight.fired}발 · 명중 ${openFight.landed} · 잔여 ${(openFight.boss.health * 100).toFixed(1)}%`);
+
+// ★ 취약 창 게이트를 없앤 핵심 요구 — 입을 강제로 계속 닫아 둬도 **완전히 같은** 결과가
+//   나와야 게이트가 진짜 사라진 것이다(같은 조준·같은 탄으로 대조해야 몰래 남은 분기가 샌다).
+const shutMouthFight = bossFight({ shells: 60, forceOpen: false });
+check('★ 입을 계속 닫아 둬도 핵은 똑같이 맞는다 (취약 창 게이트가 완전히 사라졌다)',
+  shutMouthFight.fired === openFight.fired && shutMouthFight.landed === openFight.landed
+    && shutMouthFight.boss.fallen
+    && Math.abs(shutMouthFight.boss.health - openFight.boss.health) < 1e-12,
+  `닫힌 입으로 ${shutMouthFight.fired}발 · 명중 ${shutMouthFight.landed} · ` +
+  `잔여 ${(shutMouthFight.boss.health * 100).toFixed(1)}% (입 연 경우와 비트 일치)`);
+
+// ★ "몸통은 절대 부서지지 않되 항상 유효타여야 한다" — 사람 판정(2026-08-10, 세 번째 라운드).
+check('★ 핵 폴리곤은 몇 발을 맞아도 절대 안 바뀐다 (몸통 무형태 유지)',
+  openFight.boss.parts.size === 1 && [...openFight.boss.parts][0] === openFight.coreBody
+    && openFight.coreBody.getUserData().hull.params.area === openFight.startArea,
+  `${openFight.landed}발 명중 후에도 핵 강체·면적(${openFight.startArea.toFixed(1)} m²) 그대로`);
+
+// ⚠ 바닥은 이제 게이트가 아니라 `applyDamage` 의 `fallen` 가드와 `Math.max(0, …)` 클램프다.
+//   200발을 퍼부어도 문턱 바로 아래에서 멈추고 더 안 내려가는지, 핵 폴리곤도 그대로인지 잰다.
+{
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  const coreBody = [...boss.parts][0];
+  const startArea = coreBody.getUserData().hull.params.area;
+  const stepper = new FixedStepper(world, { onPreStep: () => { simTime += FIXED_DT; boss.pin(); } });
+  let landed = 0;
+  for (let fired = 0; fired < 200; fired++) {
+    spawnProjectile(world, {
+      x: (fired % 5 - 2) * 0.4, y: BULGASARI_MAP.boss.core.y - 11, angle: Math.PI / 2,
+      speed: 55, radius: 0.15, mass: 12, material: 'iron', bornAt: simTime, lifetime: 2,
+    });
+    for (let i = 0; i < 26; i++) {
+      stepper.advance(FIXED_DT);
+      for (const im of impacts.drain()) {
+        if (!boss.parts.has(im.body)) continue;
+        if (boss.applyDamage((Math.PI * im.radius * im.radius) / boss.launchArea)) landed += 1;
+      }
+      impacts.drainGlances();
+    }
+  }
+  check('★ 200발을 쏴도 체력은 쓰러짐 문턱 바로 아래에서 멈추고 더 안 내려간다 (핵은 여전히 그 폴리곤 그대로)',
+    boss.fallen && boss.health > 0 && boss.health <= BOSS_TUNING.fallAt
+      && boss.health > BOSS_TUNING.fallAt - 0.05 && landed > 0
+      && boss.parts.size === 1 && [...boss.parts][0] === coreBody
+      && coreBody.getUserData().hull.params.area === startArea,
+    `명중 ${landed}발 · 잔여 ${(boss.health * 100).toFixed(1)}% (문턱 ${(BOSS_TUNING.fallAt * 100).toFixed(1)}%) · 핵 폴리곤 불변`);
+}
+
+// 페이즈가 체력 문턱에서 갈리는가 — 문턱을 리터럴이 아니라 표에서 읽는다.
+check('페이즈는 체력 문턱에서 순서대로 넘어가고 패턴이 누적된다',
+  BOSS_PHASES.length === 3
+    && BOSS_PHASES[0].until > BOSS_PHASES[1].until && BOSS_PHASES[1].until > BOSS_TUNING.fallAt
+    && BOSS_PHASES.every((p) => p.suck) && !BOSS_PHASES[0].beam && BOSS_PHASES[1].beam
+    && !BOSS_PHASES[1].wreck && BOSS_PHASES[2].beam && BOSS_PHASES[2].wreck,
+  `문턱 ${BOSS_PHASES.map((p) => p.until).join(' → ')} · 쓰러짐 ${BOSS_TUNING.fallAt}`);
+
+// ★ 쓰러지면 도착 지점이 생기고 주인공이 들어가 클리어한다. `game/goal.js` 는 한 줄도 안 고쳤다.
+const fallen = openFight.boss;
+const essence = createGoal({ x: fallen.coreAt.x, y: fallen.coreAt.y, radius: 5, label: '정수' });
+check('★ 쓰러진 자리가 도착 지점이 되고 주인공이 들어가면 클리어다 (goal.js 무수정)',
+  fallen.fallen && essence !== null
+    && goalReached(essence, { x: fallen.coreAt.x, y: fallen.coreAt.y })
+    && !goalReached(essence, { x: fallen.coreAt.x, y: BULGASARI_MAP.start.y })
+    && Number.isFinite(goalDistance(essence, { x: 0, y: BULGASARI_MAP.start.y }))
+    && rateTravelTime(90, BULGASARI_MAP.scoring) >= 1,
+  `입까지 ${goalDistance(essence, { x: 0, y: BULGASARI_MAP.start.y }).toFixed(1)} m · ` +
+  `별 ${rateTravelTime(90, BULGASARI_MAP.scoring)}개`);
+
+// 쓰러지면 필드 오버레이가 **둘 다** 걷힌다 — 늘어진 보스가 계속 빨아들이면 안 된다.
+check('쓰러지면 흡입·빔이 걷히고 발사가 멈춘다',
+  !fallen.sucking && fallen.beam === null && fallen.turrets === null
+    && fallen.step(fallen.clock + 5).length === 0,
+  '흡입·빔·발사 전부 정지');
+
+// 한 발이 뜯는 면적이 캡에 물려 고른가 — 잔여 면적 바가 계기판 노릇을 하려면 필요하다.
+check('한 발이 뜯는 면적이 재질 캡에 물려 널뛰지 않는다 (잔여 면적 바가 읽히는 조건)',
+  MATERIALS.flesh.maxCarveRadius > 0
+    && carveRadiusFromImpact({
+      impulse: 12 * 55, effectiveMass: 12, material: MATERIALS.flesh,
+      hullArea: openFight.startArea, strikeEnergy: 0.5 * 12 * 55 * 55,
+    }) === MATERIALS.flesh.maxCarveRadius,
+  `캡 ${MATERIALS.flesh.maxCarveRadius} m → 발당 최대 ${(Math.PI * MATERIALS.flesh.maxCarveRadius ** 2).toFixed(2)} m²`);
+
+// ★ 보스 포탄이 **두 재질 임계 사이**에 있는가. 아래로 내려가면 철 선체가 완전 면역이 되어
+//   탄막이 통째로 무의미해진다 (실측으로 그 값이었다: 120발 맞고 흠집 0). 위로 너무 올리면
+//   철의 §7.4 "함몰만" 성질이 사라진다. 임계는 MATERIALS 에서 **읽는다**.
+const bossShellEnergies = BOSS_PHASES.flatMap((p) => p.emitters)
+  .map((e) => 0.5 * e.mass * e.speed * e.speed);
+check('★ 보스 포탄은 나무 임계 위·철 임계 위다 (철이 면역이 되면 탄막이 무의미해진다)',
+  bossShellEnergies.every((E) => E > MATERIALS.iron.impactThreshold
+    && E > MATERIALS.wood.impactThreshold),
+  `${Math.min(...bossShellEnergies) / 1000}~${Math.max(...bossShellEnergies) / 1000} kJ > ` +
+  `철 ${MATERIALS.iron.impactThreshold / 1000} kJ · 나무 ${MATERIALS.wood.impactThreshold / 1000} kJ`);
+
+// ── 팔도 형태를 지킨다 ──────────────────────────────────────────────────────
+//
+// ★ 팔은 한때(2026-08-10 세 번째 라운드) 깎이는 선체였지만, "보스 형태 전체가 안 부서지게"
+//   사람 판정 이후 핵과 완전히 같은 취급을 받는다 — 폴리곤은 절대 안 바뀌고, 맞은 만큼
+//   같은 체력 풀만 준다. 앞의 데이터 검사로는 이걸 하나도 못 잡는다 — 배를 세우고 포탄을
+//   먹여 결과를 봐야 나온다.
+
+/** 보스를 세우고 팔을 겨눠 쏜다. 취약 창 게이트가 없으니 입 상태는 신경 쓰지 않는다. */
+function armFight({ shots = [], steps = 26 } = {}) {
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  const armBody = boss.armGroups[3].body;
+  const startArmArea = armBody.getUserData().hull.params.area;
+  const stepper = new FixedStepper(world, {
+    onPreStep: (dt) => {
+      simTime += FIXED_DT;
+      applyFieldsToWorld(world, fields, dt, simTime);
+      boss.pin();
+    },
+  });
+  let landed = 0;
+  for (const shot of shots) {
+    spawnProjectile(world, {
+      x: shot.x, y: shot.y, angle: shot.angle, speed: 55, radius: 0.15, mass: 12,
+      material: 'iron', bornAt: simTime, lifetime: 2,
+    });
+    for (let i = 0; i < steps; i++) {
+      stepper.advance(FIXED_DT);
+      for (const im of impacts.drain()) {
+        // 화면(`sail/screen.js#carveBoss`)과 같은 규칙 — 팔도 근사 면적만 체력에서 뺀다.
+        if (!boss.armParts.has(im.body)) continue;
+        if (boss.applyDamage((Math.PI * im.radius * im.radius) / boss.launchArea)) landed += 1;
+      }
+      impacts.drainGlances();
+      cullProjectiles(world, simTime, BULGASARI_MAP.bounds);
+    }
+  }
+  const armArea = armBody.getUserData().hull.params.area;
+  return { boss, armBody, landed, startArmArea, armArea, simTime };
+}
+
+// 팔 하나(인덱스 3, 218°·reach 12.5 짧은 팔)의 허리 근처를 조준한다.
+const cutArm = BULGASARI_MAP.boss.arms[3];
+const mid2 = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+const rootMid = mid2(cutArm.points[0], cutArm.points[5]);
+const waistMid = mid2(cutArm.points[1], cutArm.points[4]);
+const cutAt = mid2(rootMid, waistMid);
+
+// ① 실제 포탄을 여러 발 날려도 팔은 맞기만 하고 형태는 그대로인가.
+const armShot = armFight({
+  shots: Array.from({ length: 6 }, (_, i) => ({
+    x: cutAt[0] + (i - 2.5) * 0.3, y: BULGASARI_MAP.bounds.minY + 2, angle: Math.PI / 2,
+  })),
+});
+check('★ 팔은 몇 발을 맞아도 폴리곤이 절대 안 바뀐다 (핵과 같은 무형태 유지)',
+  armShot.landed > 0 && armShot.armArea === armShot.startArmArea
+    && armShot.boss.armGroups[3].body === armShot.armBody,
+  `${armShot.landed}발 명중 후에도 팔 강체·면적(${armShot.startArmArea.toFixed(1)} m²) 그대로`);
+
+// ② 팔 피해가 핵과 같은 체력 풀에 합산된다 — 핵은 한 발도 안 맞았는데 준다.
+check('★ 팔만 맞혀도 같은 체력 풀이 준다 (핵은 안 건드렸는데도, 핵과 같은 π·radius² 공식과 정확히 일치)',
+  armShot.boss.health < 1 && !armShot.boss.fallen
+    && Math.abs((1 - armShot.boss.health) - armShot.landed
+      * (Math.PI * MATERIALS.sinew.maxCarveRadius ** 2) / armShot.boss.launchArea) < 1e-6,
+  `${armShot.landed}발 → HP ${(armShot.boss.health * 100).toFixed(2)}% (공식과 정확히 일치)`);
+
+// ③ ★ **보스는 자기 팔을 쏴도 스스로 체력이 안 준다.** 부채꼴 총구가 팔 안에서 열리므로
+//    (3페이즈 자탄의 48%가 팔에 닿는다) 이게 안 지켜지면 아무도 안 쐈는데 체력이 샌다.
+//    지키는 것은 새 코드가 아니라 `contact.js` 의 무장 지연이다 — 팔에 닿는 자탄은 태어난
+//    지 0.1초가 안 됐고, `begin-contact` 가 그 자리에서 `spent` 로 죽인다.
+{
+  const world = createWorld();
+  const fields = createFields(BULGASARI_MAP.fields);
+  let simTime = 0;
+  const impacts = installImpactListener(world, { now: () => simTime });
+  installProjectileContacts(world);
+  const boss = createBoss(world, BULGASARI_MAP.boss, fields, {});
+  boss.phaseIndex = BOSS_PHASES.length - 1;              // 탄이 가장 촘촘한 마지막 페이즈
+  boss.enterPhase(0);
+  const stepper = new FixedStepper(world, { onPreStep: () => { simTime += FIXED_DT; boss.pin(); } });
+  let fired = 0;
+  let selfHits = 0;
+  for (let i = 0; i < Math.round(40 / FIXED_DT); i++) {
+    for (const req of boss.step(simTime)) if (spawnProjectile(world, { ...req, bornAt: simTime })) fired += 1;
+    stepper.advance(FIXED_DT);
+    for (const im of impacts.drain()) {
+      if (!boss.armParts.has(im.body) && !boss.parts.has(im.body)) continue;
+      selfHits += 1;
+    }
+    impacts.drainGlances();
+    cullProjectiles(world, simTime, BULGASARI_MAP.bounds);
+  }
+  check('★ 보스가 자기 팔을 쏴도 체력이 안 준다 (총구가 팔 안에서 열리는데도 — 무장 지연이 막는다)',
+    selfHits === 0 && boss.health === 1,
+    `${fired}발 40초 · 자해 명중 ${selfHits}회 · 잔여 체력 ${(boss.health * 100).toFixed(0)}%`);
+}
+
+// 살에는 온도 규칙이 없다 — 자기 빔에 자기가 녹지 않는 것이 **규칙 부재**로 성립한다.
+check('★ 살은 규칙표에 한 줄도 없어서 자기 빔(1400°)에 안 녹는다 (철의 내화와 같은 원리)',
+  RULES.every((r) => r.material !== 'flesh')
+    && !Object.keys(MATERIALS).filter((k) => k === 'flesh').some(() => false),
+  `flesh 관련 규칙 ${RULES.filter((r) => r.material === 'flesh').length}줄`);
+
+console.log(`  전투 실측: ${openFight.fired}발 · 명중 ${openFight.landed} · ` +
+  `${openFight.seconds.toFixed(0)}s 만에 쓰러짐 (취약 창 게이트 없이 항상 유효타 기준)`);
+
 console.log('\n\x1b[36m▌D0 "프레임 드랍 없이 도는가?" · D1 "형상이 조작감을 만드는가?" · ' +
   'D2 "배치에서 조향이 창발하는가?"\x1b[0m\n');
 if (failures.length === 0) {

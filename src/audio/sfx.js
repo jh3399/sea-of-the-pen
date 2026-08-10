@@ -44,6 +44,29 @@ export const SFX = {
     noiseHit(ctx, dest, 62, t, 0.18, 0.15);
   },
 
+  /**
+   * 빔 충전 — 낮은 데서 높이 치솟는 스윕. **경고선이 켜지는 순간 한 번만** 부른다.
+   * 프레임마다 부르면 스윕이 겹쳐 쌓여 화이트노이즈가 된다.
+   */
+  charge(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'sawtooth', 180, 1600, t, 0.9, 0.16);
+  },
+
+  /** 빨아들이기 — 높은 데서 낮게 꺼지는 스윕 + 저역 럼블. charge 의 정확한 반대 방향이다. */
+  suck(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'triangle', 700, 90, t, 1.2, 0.22);
+    noiseHit(ctx, dest, 46, t, 1.0, 0.14, 0.2);
+  },
+
+  /** 포효 — 페이즈가 넘어갈 때. 아주 낮게 떨어지는 스윕 + 거친 노이즈. */
+  roar(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'sawtooth', 120, 58, t, 0.8, 0.3);
+    noiseHit(ctx, dest, 52, t, 0.5, 0.22, 0.06);
+  },
+
   /** 전투 승리 징글 — 장조 아르페지오 상행 */
   win(ctx, dest) {
     const t = ctx.currentTime;
@@ -81,5 +104,49 @@ export const SFX = {
     const t = ctx.currentTime;
     sweep(ctx, dest, 'triangle', 150, 55, t, 0.2, 0.45);
     noiseHit(ctx, dest, 46, t + 0.05, 0.35, 0.1);
+  },
+
+  /**
+   * 노 젓기 — 노깃이 물에 들어가는 짧은 물보라 + 낮은 삑. 스트로크 사이클이 시작될 때마다.
+   * midi 를 밝게(58) 잡아야 highpass 노이즈가 걸려 "찰박" 소리가 또렷이 들린다 —
+   * 낮은 midi(<55)는 lowpass 라 저역 웅얼거림이 되어 BGM 에 묻힌다.
+   */
+  row(ctx, dest) {
+    const t = ctx.currentTime;
+    noiseHit(ctx, dest, 58, t, 0.08, 0.34, 0.004);
+    sweep(ctx, dest, 'triangle', 260, 150, t, 0.11, 0.3);
+  },
+
+  /** 부스터 점화 — 트리거를 누르는 순간 한 번. 상승 스윕 + 거친 노이즈로 추력을 표현. */
+  booster(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'sawtooth', 110, 340, t, 0.24, 0.42);
+    noiseHit(ctx, dest, 62, t, 0.22, 0.32, 0.015);
+  },
+
+  /**
+   * 대포 발사 — 저역 쿵(body) + 고역 크랙(crack) 두 겹. 저역 노이즈 하나만으로는
+   * lowpass 가 에너지를 깎아 먹어 "쿵"이 아니라 "웅"으로 들린다 — 밝은 크랙 층이
+   * 귀에 꽂히는 어택을 담당하고 저역은 무게만 보탠다.
+   */
+  cannon(ctx, dest) {
+    const t = ctx.currentTime;
+    noiseHit(ctx, dest, 72, t, 0.05, 0.4, 0.002);
+    noiseHit(ctx, dest, 42, t, 0.18, 0.48, 0.004);
+    sweep(ctx, dest, 'square', 280, 55, t, 0.17, 0.36);
+  },
+
+  /** 레이저 빔 발사 — charge(충전)의 반대 극. 아주 밝고 빠른 하강 지그재그 스윕. */
+  laser(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'sawtooth', 2200, 320, t, 0.24, 0.44);
+    sweep(ctx, dest, 'square', 1400, 200, t + 0.02, 0.18, 0.28);
+  },
+
+  /** 난파선 투척 — 나무가 회전하며 날아가는 덜그럭 스윕 + 물에 떨어지는 저역 첨벙. */
+  wreck(ctx, dest) {
+    const t = ctx.currentTime;
+    sweep(ctx, dest, 'square', 520, 120, t, 0.24, 0.36);
+    noiseHit(ctx, dest, 46, t + 0.07, 0.32, 0.4, 0.05);
   },
 };

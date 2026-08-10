@@ -75,64 +75,108 @@ export const ICON_PALETTE = {
   e: '#2a1f14', // 눈
 };
 
+// 서양 대포를 위에서 내려다본 실루엣 — 몸체는 검은 무쇠(K) 하나로, 포구(+X, 오른쪽)
+// 끝에만 철 테두리(I/i)를 얹어 포신임을 읽게 한다. 위아래 한 칸 튀어나온 부분은 포이(砲耳,
+// trunnion) — 포가에 걸리는 축이라 위에서 봐도 옆으로 도드라진다.
 const CANNON_GRID = [
-  '............',
-  '.......IIIII',
-  '.....IIIIIII',
-  '...WwIIIIIII',
-  '...WwwwwII..',
-  '...WwwwwK...',
-  '...wKKKKK...',
-  '..wKKKKKKw..',
-  '..wKKKKKKw..',
-  '...wKKKKw...',
-  '....wwww....',
-  '............',
+  '....KK...........',
+  '..KKKKKKKKKKKK...',
+  '.KKKKKKKKKKKKKK..',
+  'KKKKKKKKKKKKKKKKi',
+  'KKKKKKKKKKKKKKKKI',
+  '.KKKKKKKKKKKKKK..',
+  '..KKKKKKKKKKKK...',
+  '....KK...........',
 ];
 
+// 키 — 오른쪽의 철제 축을 부착점에 두고, 나무 막대가 선미(-X) 쪽으로 뻗는 틸러 형태다.
+// 항해 화면에서는 이 축을 중심으로 `control.rudder` 만큼 회전한다.
 const RUDDER_GRID = [
-  '....WWWW....',
-  '..WW....WW..',
-  '.W..W..W..W.',
-  'W...W..W...W',
-  'W...WwwW...W',
-  'WWWWWwwWWWWW',
-  'WWWWWwwWWWWW',
-  'W...WwwW...W',
-  'W...W..W...W',
-  '.W..W..W..W.',
-  '..WW....WW..',
-  '....WWWW....',
+  '............',
+  '............',
+  '............',
+  '............',
+  'WW..........',
+  'WWWWWWWWWI..',
+  'wwwwwwwwwI..',
+  '.........ii.',
+  '............',
+  '............',
+  '............',
+  '............',
 ];
+const RUDDER_PIVOT = { x: 9.5, y: 6.5 };
 
+// 위에서 내려다본 돛 — 활 모양 단면(캠버)을 가진 흰 초승달. 옆에서 본 삼각돛(돛대·붐)이
+// 아니라 위에서 본 돛의 두께다: 활대를 잇는 선(가로, 좌우 두 점에서 만난다)과 바람을 받아
+// 부푼 볼록면(아래) 사이에 얇은 초승달 모양의 틈이 진다.
+// ★ 다른 방향성 그리드(부스터·노)와 같은 규약 — 그리드 기준 방향(+Y, 아래)이 곧 돛의
+//   법선(`item.angle`, 바람을 미는 방향)이다(`markerAngleToward` 가 이 축을 돌린다).
+//   그래서 볼록한 배(캠버)를 위가 아니라 **아래**(+Y)에 둔다. 순풍을 받아 부풀 때의 모양
+//   (`sail/render.js#drawSail`)과 같은 활 두 개로 만들어 정지 아이콘과 항해 중 렌더가
+//   같은 실루엣 문법을 쓴다.
 const SAIL_GRID = [
-  '......C.....',
-  '.....CC.....',
-  '....CCC.....',
-  '....CCCC....',
-  '....CCCCC...',
-  '....CCCCCC..',
-  '....CCCCCCC.',
-  '....w.......',
-  '....w.......',
-  '..WWWWWWW...',
-  '............',
-  '............',
+  '..C..........................................C..',
+  '...CCC....................................CCC...',
+  '....CCCCC..............................CCCCC....',
+  '.....CCCCCCCC......................CCCCCCCC.....',
+  '......CCCCCCCCCCCCC..........CCCCCCCCCCCCC......',
+  '........CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC........',
+  '.........CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC.........',
+  '...........CCCCCCCCCCCCCCCCCCCCCCCCCC...........',
+  '.............CCCCCCCCCCCCCCCCCCCCCC.............',
+  '................CCCCCCCCCCCCCCCC................',
+  '...................CCCCCCCCCC...................',
 ];
 
+// ★ 그리드 기준 방향(+Y, 아래)이 곧 추진 방향이다(`markerAngleToward` 가 이 축을 부착
+//   각도로 돌린다). 로켓은 코가 향하는 쪽으로 밀리고 불꽃은 그 반대(뒤)로 뿜는다 —
+//   그래서 몸체를 아래(+Y), 불꽃을 위(−Y)에 둔다.
 const BOOSTER_GRID = [
-  '.....RR.....',
-  '....RRRR....',
-  '....RCCR....',
-  '....RCCR....',
-  '....RCCR....',
-  '....RCCR....',
-  '...RRCCRR...',
-  '...R....R...',
-  '....FfFf....',
-  '...FfFfFf...',
-  '....F..F....',
   '............',
+  '....F..F....',
+  '...FfFfFf...',
+  '....FfFf....',
+  '...R....R...',
+  '...RRCCRR...',
+  '....RCCR....',
+  '....RCCR....',
+  '....RCCR....',
+  '....RCCR....',
+  '....RRRR....',
+  '.....RR.....',
+];
+
+// 노 — 기본 장치라 카탈로그에는 없지만 그리기 화면·항해 화면이 마커로 쓴다.
+//
+// ★ 기준 방향은 **노깃(둥근 면)이 아래(+Y)** 다. 좌현·우현 노는 이 그리드를 회전시켜
+//   노깃이 현측 바깥을 향하게 그린다 (`drawItemMarker` 의 angle). 그리드를 좌우 두 벌로
+//   두지 않는 이유는 §4.1 과 같다 — 방향은 데이터지 별도 에셋이 아니다.
+// 자루 15칸 : 노깃 7칸. 호출부가 그리드를 부착점보다 **바깥으로 밀어** 그리므로(OAR_PUSH),
+// 자루 안쪽 끝만 선체 안에 남고 노깃은 통째로 물에 나간다.
+const OAR_GRID = [
+  '....ww....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '....WW....',
+  '...wWWw...',
+  '..wWWWWw..',
+  '..WWWWWW..',
+  '.WWWWWWWW.',
+  '.WWWWWWWW.',
+  '..wWWWWw..',
+  '...wwww...',
 ];
 
 const CREW_GRID = [
@@ -150,12 +194,14 @@ const CREW_GRID = [
   '............',
 ];
 
-/** 아이템 카탈로그 id → 아이콘 그리드. `draw/screen.js` 의 PALETTE_ITEMS 순서와 맞춰 둔다. */
+/** 아이템 카탈로그 id → 아이콘 그리드. `draw/screen.js` 의 PALETTE_ITEMS 순서와 맞춰 둔다.
+ *  `oar` 만 카탈로그가 아닌 기본 장치(items/defaults.js)다. */
 export const ITEM_ICON_GRIDS = {
   cannon: CANNON_GRID,
   rudder: RUDDER_GRID,
   sail: SAIL_GRID,
   booster: BOOSTER_GRID,
+  oar: OAR_GRID,
 };
 
 export function itemIconSVG(type, opts) {
@@ -168,13 +214,68 @@ export function crewIconSVG(opts) {
   return pixelIconSVG(CREW_GRID, ICON_PALETTE, opts);
 }
 
-/** 아이템 마커를 캔버스에 (cx, cy) 중심으로 직접 찍는다. */
-export function drawItemMarker(ctx, type, cx, cy, pixel = 3) {
+/**
+ * 아이템 마커를 캔버스에 (cx, cy) 중심으로 직접 찍는다.
+ *
+ * @param {number} angle 그리드를 돌릴 각 (rad). 노가 현측 바깥을 향하게 하는 데 쓴다 —
+ *   기준(0)은 그리드가 쓰인 그대로, 즉 노깃이 +Y 쪽이다. 세로가 긴 그리드가 있으므로
+ *   중심은 폭이 아니라 **행 수로도** 잡는다 (정사각 그리드에서는 결과가 같다).
+ */
+export function drawItemMarker(ctx, type, cx, cy, pixel = 3, angle = 0) {
   const grid = ITEM_ICON_GRIDS[type];
   if (!grid) return;
-  const size = grid[0].length * pixel;
-  drawPixelGrid(ctx, grid, ICON_PALETTE, cx - size / 2, cy - size / 2, pixel);
+  const w = grid[0].length * pixel;
+  const h = grid.length * pixel;
+  if (!angle) {
+    drawPixelGrid(ctx, grid, ICON_PALETTE, cx - w / 2, cy - h / 2, pixel);
+    return;
+  }
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  drawPixelGrid(ctx, grid, ICON_PALETTE, -w / 2, -h / 2, pixel);
+  ctx.restore();
 }
+
+/** 키의 철제 축을 (cx, cy)에 고정하고 막대만 `angle` 만큼 회전시킨다. */
+export function drawRudderMarker(ctx, cx, cy, pixel = 3, angle = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  drawPixelGrid(ctx, RUDDER_GRID, ICON_PALETTE,
+    -RUDDER_PIVOT.x * pixel, -RUDDER_PIVOT.y * pixel, pixel);
+  ctx.restore();
+}
+
+/**
+ * ★ 그리드의 +Y(노 기준 방향 = 노깃)가 (dx, dy) 를 향하게 하는 회전각.
+ *
+ * 좌현·우현 노가 같은 방향으로 그려지면 "양쪽에서 물을 젓는다"가 그림에서 읽히지 않는다.
+ * 좌우 스프라이트를 따로 두는 대신 **방향 벡터 하나**로 가른다 (§4.1 과 같은 이유 —
+ * 방향은 데이터지 별도 에셋이 아니다).
+ *
+ * 좌표계는 **호출부의 현재 프레임**이다. 그래서 그리기 화면(캔버스 Y-down)과 항해 화면
+ * (drawUprightIcon 이 Y 를 뒤집어 둔 프레임) 양쪽이 같은 함수를 쓴다.
+ */
+export function markerAngleToward(dx, dy) {
+  return Math.atan2(-dx, dy);
+}
+
+/** 마커 스프라이트의 실제 크기 (px 또는 m — pixel 단위를 따라간다). */
+export function itemMarkerSize(type, pixel = 3) {
+  const grid = ITEM_ICON_GRIDS[type];
+  if (!grid) return { w: 0, h: 0 };
+  return { w: grid[0].length * pixel, h: grid.length * pixel };
+}
+
+/**
+ * 노를 부착점보다 바깥으로 미는 비율 (스프라이트 길이 기준).
+ *
+ * 마커를 부착점에 그대로 **중심 정렬하면 노가 배 안에 처박힌다** — 부착점은 반폭의 0.8
+ * 지점이라 현측까지 남은 여유가 반폭의 20% 뿐이고, 스프라이트 절반은 그보다 훨씬 길다.
+ * 0.25 를 밀면 자루 안쪽 끝은 선체 안(노잡이 자리)에 남고 노깃은 현측 밖 물에 놓인다.
+ */
+export const OAR_PUSH = 0.25;
 
 /** 주인공 스프라이트를 캔버스에 (cx, cy) 중심으로 직접 찍는다. */
 export function drawCrewSprite(ctx, cx, cy, pixel = 3) {
