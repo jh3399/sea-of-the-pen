@@ -12,7 +12,7 @@ import { stars, glitter } from '../scene/bgkit.js';
 import { initAudio, playBgm, sfx, setBgmVolume, setSfxVolume } from '../audio/audio.js';
 import { runDialogue, setDialogueBlip, skipDialogue } from '../story/dialogue.js';
 import { SCRIPT, INTRO_BEATS, INTERLUDES, ENDING } from '../story/script.js';
-import { advanceStage, resetStage, stageIndex } from '../game/progress.js';
+import { advanceStage, resetStage, stageIndex, jumpToStage, STAGES } from '../game/progress.js';
 
 const INTRO_SEEN_KEY = 'shipwright:introSeen'; // session — 처음 온 사람은 항상 인트로를 본다
 const MUTED_KEY = 'shipwright:muted';          // local — 취향은 남는다
@@ -159,6 +159,24 @@ function canContinue() {
  */
 function continueVoyage() {
   location.href = sessionStorage.getItem(HANDOFF_KEY) ? 'sail.html' : 'draw.html';
+}
+
+/**
+ * 개발자용 숨은 기능 — 숫자 키(1~STAGES.length)로 그 스테이지의 그리기 화면으로 곧장 간다.
+ *
+ * 맵 하나를 고치고 확인하려면 매번 인트로부터 다시 밟아야 하는 게 번거로워 넣었다.
+ * `advanceStage()`(막간 전용, 한 칸씩만) 대신 `jumpToStage()`(임의 인덱스)를 쓴다 — 뒤로도
+ * 가야 하고, 대사를 다시 재생할 이유도 없다.
+ *
+ * ⚠ `toDraw()` 를 그대로 쓰지 않는다 — 그쪽은 `resetStage()` 로 진행을 0으로 되돌리므로
+ *   숫자 키를 눌러도 늘 연습 해역만 열린다. 진행만 원하는 인덱스로 맞추고 나머지
+ *   (설계 비우기·인트로 완료 표시)는 `toDraw()` 와 같게 해 정상 경로와 같은 상태로 만든다.
+ */
+function devJumpToDraw(index) {
+  jumpToStage(index);
+  sessionStorage.setItem(INTRO_SEEN_KEY, '1');
+  sessionStorage.removeItem(HANDOFF_KEY);
+  location.href = 'draw.html';
 }
 
 /**
@@ -390,6 +408,16 @@ function init() {
   els.skip.addEventListener('click', onSkip);
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') onSkip();
+  });
+
+  // 개발자용 숨은 기능: 컷신·확인창이 떠 있지 않은 타이틀에서 숫자 키로 스테이지 점프.
+  window.addEventListener('keydown', (e) => {
+    const m = /^Digit([1-9])$/.exec(e.code);
+    if (!m) return;
+    if (!els.confirm.hidden || !els.skip.hidden) return; // 컷신·확인창 중엔 무시
+    const index = Number(m[1]) - 1;
+    if (index >= STAGES.length) return;
+    devJumpToDraw(index);
   });
 
   // 항해 중간에 들른 것이라면 메뉴를 보여 주지 않고 곧바로 막간·엔딩을 재생한다.
