@@ -43,6 +43,7 @@ import {
   drawWater, drawObstacle, drawHullBody, drawWake, drawGoal, drawGoalCompass, drawCombatEffects,
   drawWeather, drawDarkness,
 } from './render.js';
+import { createSpray, stepSpray, drawSpray } from './spray.js';
 import { drawBoss, drawBeam } from './bossart.js';
 import { MAPS, boundaryWalls } from './map.js';
 
@@ -188,6 +189,8 @@ class SailScreen {
     this.pressed = {};
     this.keys = new Set();
     this.wake = [];
+    /** 물보라 입자 — 항적(`wake`)이 지나온 자리라면 이쪽은 지금 튀는 물이다 (`sail/spray.js`). */
+    this.spray = createSpray();
     this.cleared = false;
     this.clearTime = null;
 
@@ -212,6 +215,9 @@ class SailScreen {
         applyHydroToWorld(this.world, dt);
         applyFieldsToWorld(this.world, this.fields, dt, this.simTime);
         this.engine.tick(this.world, dt, this.simTime);
+        // 물보라도 항적과 같은 자리에서 — 이 스텝의 속도와 스트로크 세기를 그대로 읽는다.
+        // 렌더 프레임에 두면 주사율에 따라 양이 달라진다 (추력을 렌더에 넣었을 때와 같은 함정).
+        stepSpray(this.spray, this.sprayBodies(), this.simTime, this.stepIndex, dt);
         if (this.stepIndex % WAKE_EVERY_STEPS === 0) this.sampleWake();
       },
     });
@@ -910,6 +916,15 @@ class SailScreen {
     if (at) this.view.follow(at);
   }
 
+  /**
+   * 물보라를 뿌리는 강체 — 내 배의 조각들과 해적선. 물을 가르는 것은 전부 같은 규칙을 탄다.
+   * (해적선도 `setLinearVelocity` 로 진짜 속도를 들고 다니므로 `spray.js` 가 구분하지 않는다.)
+   */
+  * sprayBodies() {
+    yield* this.bodies;
+    yield* this.pirates.keys();
+  }
+
   sampleWake() {
     const body = findCrewBody(this.bodies);
     if (!body) return;
@@ -1080,6 +1095,9 @@ class SailScreen {
         ctx.restore();
       }
     }
+    // 물보라는 **배보다 위**다. 뱃머리와 노깃에서 나오는 물이라 선체 가장자리를 덮어야
+    // "배가 물을 가른다"로 읽힌다 — 밑에 깔면 항적과 구분되지 않는 옅은 띠가 된다.
+    drawSpray(ctx, this.spray, this.simTime, { surface });
     // ★ 보스의 콜라이더는 **배보다 위**다. 배가 팔을 덮으면 지나갈 수 있다고 읽히는데,
     //   물리적으로 겹칠 수 없으니 팔이 위에 있어도 잃는 것이 없고 불변식을 산다.
     if (this.boss) drawBoss(ctx, view, this.boss, { sec: this.simTime, pass: 'solid', surface });

@@ -99,8 +99,8 @@ function shade(hex, amt) {
   return `#${((1 << 24) + (rr << 16) + (gg << 8) + bb).toString(16).slice(1)}`;
 }
 
-/** #rrggbb + 알파 → rgba(). */
-function rgba(hex, a) {
+/** #rrggbb + 알파 → rgba(). `sail/spray.js` 도 같은 팔레트 규약을 쓰므로 export 다. */
+export function rgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a.toFixed(3)})`;
 }
@@ -615,7 +615,7 @@ function drawUprightIcon(ctx, x, y, draw) {
  *   그 자리에 있어야 한다. 회전 방향은 스트로크의 `dir` 이 그대로 정하므로 ↓·← 처럼 한쪽
  *   노를 뒤로 젓는 입력에서는 그 노만 반대로 돈다. 렌더 전용 상태는 0개다.
  */
-function drawOar(ctx, item, control) {
+function oarGeometry(item, control) {
   const outward = item.side === 'port' ? 1 : -1;
   const h = itemMarkerSize('oar', OAR_PIXEL).h;
   const push = h * OAR_PUSH;
@@ -626,12 +626,33 @@ function drawOar(ctx, item, control) {
   // 밀려야 하므로 한 번 뒤집는다. 좌우 노는 기준 회전이 서로 반대(π vs 0)라 같은 각을 주면
   // 서로 반대로 젓는 것처럼 보이므로, 넘길 때 outward 로 한 번 더 뒤집는다.
   const swing = -OAR_SWEEP * strokeSwing(control, item.side);
-  drawUprightIcon(ctx, item.x, item.y - outward * pivot, () => {
+  return { outward, h, pivot, swing, pivotY: item.y - outward * pivot };
+}
+
+/**
+ * 노깃(물에 잠기는 끝)의 **선체 로컬 좌표** — `drawOar` 이 실제로 그리는 그 자리다.
+ *
+ * 물보라(`sail/spray.js`)가 이 함수를 같이 쓴다. 스윙 각을 따로 재현하면 그림과 물보라가
+ * 어긋나므로(노는 앞으로 나갔는데 물은 뒤에서 튄다) 자리는 한 곳에서만 계산한다.
+ * 위 회전(Y 뒤집힌 프레임 안의 φ = base + outward·swing, 스프라이트를 +h/2 로 밀기)을
+ * 그대로 접으면 좌·우현이 같은 식으로 정리된다.
+ */
+export function oarBladeLocal(item, control) {
+  const g = oarGeometry(item, control);
+  return {
+    x: item.x + (g.h / 2) * Math.sin(g.swing),
+    y: g.pivotY + g.outward * (g.h / 2) * Math.cos(g.swing),
+  };
+}
+
+function drawOar(ctx, item, control) {
+  const g = oarGeometry(item, control);
+  drawUprightIcon(ctx, item.x, g.pivotY, () => {
     ctx.save();
-    ctx.rotate(markerAngleToward(0, -outward) + outward * swing);
+    ctx.rotate(markerAngleToward(0, -g.outward) + g.outward * g.swing);
     // 축을 원점에 두고 스프라이트를 노깃 쪽으로 h/2 밀어 그린다 (프레임을 이미 돌려 뒀으므로
     // 마커 자체의 각은 0). swing = 0 이면 회전 전과 **같은 자리**다.
-    drawItemMarker(ctx, 'oar', 0, h / 2, OAR_PIXEL, 0);
+    drawItemMarker(ctx, 'oar', 0, g.h / 2, OAR_PIXEL, 0);
     ctx.restore();
   });
 }
