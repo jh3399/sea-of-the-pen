@@ -10,7 +10,7 @@
 //
 // ★ 팔레트는 분홍이되 **지도 노드의 `abyss` 보라 계열**에 못 박혀 있다
 //   (`scene/voyagemap.js`: abyss #241640 · abyssRim #6a3fb0 · eye #f2ccff).
-//   연속성을 지는 것은 몸이 아니라 **입 색**이다 — `MAW_GLOW` 가 지도의 `eye` 와 같은 값이라,
+//   연속성을 지는 것은 몸이 아니라 **빔 색**이다 — `MAW_GLOW` 가 지도의 `eye` 와 같은 값이라,
 //   몸이 분홍이어도 "지도에서 눈을 뜬 그것"으로 읽힌다.
 import { hash2 } from './render.js';
 
@@ -21,8 +21,7 @@ const ARM_DARK = '#3d1440';   // 팔 밑·그림자 — abyss 보라를 유지�
 const ARM_MID = '#9c2f6e';    // 팔 중간 (MATERIALS.flesh.color 와 같은 값)
 const ARM_LIT = '#f06fa8';    // 윗면 림에만 쓰는 진분홍
 const TUBERCLE = '#ffc2dd';   // 돌기 점묘
-const CORE_INK = '#2a0f33';   // 핵 — 팔보다 어둡게. 대포 표적이 읽혀야 한다
-const MAW_GLOW = '#f2ccff';   // ★ 지도 노드의 `eye` 와 같은 색
+const MAW_GLOW = '#f2ccff';   // ★ 지도 노드의 `eye` 와 같은 색 — 빔 발사 색에 쓴다
 const BEAM_WARN = '#ff3b30';
 const BEAM_FIRE = '#fff1a8';
 
@@ -101,7 +100,7 @@ export function drawBoss(ctx, view, boss, { sec = 0, pass = 'solid', surface = n
   // ── 팔과 핵 ── **완전히 같은 그리기다.** 팔이 암초였을 때는 스펙의 점 목록을 상수처럼
   //   깔았지만, 이제 둘 다 선체 강체라 각자의 변환으로 그린다 — 폴리곤은 스폰된 그대로
   //   고정이라(§"보스 형태 전체가 안 부서지게") 매 프레임 같은 모양이 나올 뿐이다.
-  //   순서는 팔이 먼저다 — 뿌리가 핵에 겹쳐 있어 핵이 위로 와야 입이 안 가린다.
+  //   순서는 팔이 먼저다 — 뿌리가 핵에 겹쳐 있어 핵이 위로 와야 위에 온다.
   for (const set of [boss.armParts, boss.parts]) {
     for (const body of set ?? []) {
       const hull = body.getUserData()?.hull;
@@ -115,8 +114,6 @@ export function drawBoss(ctx, view, boss, { sec = 0, pass = 'solid', surface = n
       ctx.restore();
     }
   }
-
-  drawMaw(ctx, view, boss, sec);
 }
 
 /**
@@ -148,43 +145,6 @@ function drawSubmerged(ctx, boss, sec, surface) {
       ctx.fillRect(x, y, CELL, CELL);
     }
   }
-}
-
-/**
- * 입 — **취약 창의 유일한 표시다.** 조준이 없는 대신 플레이어가 할 일은 "열렸을 때 쏘기"라,
- * 이게 안 보이면 보스는 퍼즐이 아니라 무작위 피해가 된다 (`turrets.js#charge` 와 같은 이유).
- */
-function drawMaw(ctx, view, boss, sec) {
-  const { x: cx, y: cy } = boss.coreAt;
-  const open = boss.open;
-  const r = open ? 3.4 + Math.sin(sec * 6) * 0.22 : 2.0;
-
-  ctx.fillStyle = CORE_INK;
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, r, r * 0.78, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  if (boss.fallen) {
-    // 쓰러졌다 — 죽은 것이 아니라 벌어진 채 늘어졌다. 그 안이 곧 도착 지점이다.
-    ctx.fillStyle = rgba(MAW_GLOW, 0.55);
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, r * 1.25, r * 0.98, 0, 0, Math.PI * 2);
-    ctx.fill();
-    return;
-  }
-  if (!open) return;
-
-  // 열린 동안만 빛난다. 지도 노드의 눈과 같은 색이라 "그것"으로 읽힌다.
-  const glow = 0.35 + 0.25 * Math.sin(sec * 5);
-  ctx.fillStyle = rgba(MAW_GLOW, glow);
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, r * 0.72, r * 0.56, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = rgba(MAW_GLOW, 0.8);
-  ctx.lineWidth = view.px(2);
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, r, r * 0.78, 0, 0, Math.PI * 2);
-  ctx.stroke();
 }
 
 /**
